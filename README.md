@@ -1,3 +1,12 @@
+---
+title: MobileMonero
+emoji: 🏴
+colorFrom: gray
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # mobilemonero
 
 [![🤗 HF Space](https://img.shields.io/badge/🤗%20HF%20Space-blue)](https://huggingface.co/spaces/XMRTDAO/mobilemonero)
