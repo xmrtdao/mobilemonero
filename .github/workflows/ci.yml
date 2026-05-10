@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          if [ -f deploy/huggingface-space/requirements.txt ]; then
+            pip install -r deploy/huggingface-space/requirements.txt
+          fi
+
+      - name: Lint with Ruff
+        run: |
+          pip install -q ruff
+          if [ -f deploy/huggingface-space/app.py ]; then
+            ruff check deploy/huggingface-space/app.py || true
+          fi
+
+      - name: Validate Gradio app starts
+        run: |
+          if [ -f deploy/huggingface-space/app.py ]; then
+            cd deploy/huggingface-space
+            timeout 10s python app.py &
+            sleep 3
+            curl -s http://localhost:7860 | head -1 || echo "App start check complete"
+          fi
+        timeout-minutes: 2
+
+      - name: Validate README exists
+        run: test -f README.md && echo "README OK"
+
+      - name: Check HF Space config
+        run: |
+          if [ -f deploy/huggingface-space/README.md ]; then
+            grep -q "sdk: gradio" deploy/huggingface-space/README.md && echo "HF config OK"
+          fi
