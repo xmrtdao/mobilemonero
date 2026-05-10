@@ -3,6 +3,18 @@ name: Deploy to Hugging Face Space
 on:
   push:
     branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'src/**'
+      - 'public/**'
+      - 'tsconfig.json'
+      - 'tailwind.config.*'
+      - 'postcss.config.*'
   workflow_dispatch:
 
 concurrency:
@@ -30,12 +42,12 @@ api.upload_folder(
     folder_path='.',
     repo_id='XMRTDAO/mobilemonero',
     repo_type='space',
-    ignore_patterns=['.git/*', '.github/*', 'node_modules/*', 'dist/*', 'README.md']
+    ignore_patterns=['.git/*', '.github/*', 'node_modules/*', 'dist/*', 'README.md', '*.md']
 )
 print('Deployed to HF Space')
           "
 
       - name: Verify Deployment
         run: |
-          sleep 10
+          sleep 30
           curl -s -o /dev/null -w "%{http_code}" https://huggingface.co/spaces/XMRTDAO/mobilemonero | grep -q "200\|301\|302" && echo "Space OK" || echo "Space check failed"
