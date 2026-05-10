@@ -1,0 +1,27 @@
+{
+  "name": "MobileMonero",
+  "short_name": "MobileXMR",
+  "description": "Mine Monero XMR on Android with XMRT DAO",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2e1065",
+  "theme_color": "#f97316",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "192x192",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "512x512",
+      "type": "image/x-icon"
+    }
+  ],
+  "categories": [
+    "utilities",
+    "finance"
+  ],
+  "prefer_related_applications": false
+}
