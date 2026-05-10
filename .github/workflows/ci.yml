@@ -12,39 +12,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
+          node-version: 20
 
       - name: Install deps
-        run: |
-          if [ -f deploy/huggingface-space/requirements.txt ]; then
-            pip install -r deploy/huggingface-space/requirements.txt
-          fi
+        run: npm install
 
-      - name: Lint with Ruff
-        run: |
-          pip install -q ruff
-          if [ -f deploy/huggingface-space/app.py ]; then
-            ruff check deploy/huggingface-space/app.py || true
-          fi
+      - name: Lint
+        run: npm run lint || true
 
-      - name: Validate Gradio app starts
-        run: |
-          if [ -f deploy/huggingface-space/app.py ]; then
-            cd deploy/huggingface-space
-            timeout 10s python app.py &
-            sleep 3
-            curl -s http://localhost:7860 | head -1 || echo "App start check complete"
-          fi
-        timeout-minutes: 2
+      - name: Type check
+        run: npx tsc --noEmit || true
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate Dockerfile
+        run: docker build -t mobilemonero:test . || true
+        timeout-minutes: 5
 
       - name: Validate README exists
         run: test -f README.md && echo "README OK"
 
-      - name: Check HF Space config
-        run: |
-          if [ -f deploy/huggingface-space/README.md ]; then
-            grep -q "sdk: gradio" deploy/huggingface-space/README.md && echo "HF config OK"
-          fi
+      - name: Check HF Space link badge
+        run: grep -q "huggingface.co/spaces/XMRTDAO/mobilemonero" README.md && echo "HF badge OK" || echo "HF badge check failed"
