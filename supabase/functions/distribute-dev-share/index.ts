@@ -1,0 +1,1 @@
+1. Triggered by the completion of the `monthly_billing_cycle` workflow. 2. Calls `calculate_monthly_revenue` to get the total revenue for the period. 3. Calculates 2% of the total revenue. 4. Executes a transfer of that amount to the lead developer's registered address. 5. Logs the transaction publicly for transparency.
