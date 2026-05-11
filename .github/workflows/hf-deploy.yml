@@ -26,28 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install Hugging Face Hub
-        run: pip install -q huggingface-hub
-
-      - name: Push to HF Space (Docker)
+      - name: Push to HF Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python3 -c "
-import os
-from huggingface_hub import HfApi
-api = HfApi(token=os.environ['HF_TOKEN'])
-api.upload_folder(
-    folder_path='.',
-    repo_id='XMRTDAO/mobilemonero',
-    repo_type='space',
-    ignore_patterns=['.git/*', '.github/*', 'node_modules/*', 'dist/*', 'README.md', '*.md']
-)
-print('Deployed to HF Space')
-          "
-
-      - name: Verify Deployment
-        run: |
-          sleep 30
-          curl -s -o /dev/null -w "%{http_code}" https://huggingface.co/spaces/XMRTDAO/mobilemonero | grep -q "200\|301\|302" && echo "Space OK" || echo "Space check failed"
+          git remote add hf https://token:${HF_TOKEN}@huggingface.co/spaces/XMRTDAO/mobilemonero
+          git filter-branch --force --index-filter 'git rm -rf --cached --ignore-unmatch .github/' HEAD
+          git push --force hf main:main
+          echo "Deployed to HF Space"
