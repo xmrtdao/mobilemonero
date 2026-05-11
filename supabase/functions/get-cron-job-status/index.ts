@@ -1,0 +1,1 @@
+Query Supabase's internal pg_cron tables or system views to retrieve cron job definitions, last execution times, and any associated logs or errors. Requires appropriate database permissions.
