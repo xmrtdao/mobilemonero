@@ -1,0 +1,1 @@
+1. Monitor conversation for factual claims about system state 2. Query relevant edge functions to verify actual state 3. Compare claimed vs actual state 4. Generate correction when discrepancies detected 5. Log accuracy patterns for continuous improvement
