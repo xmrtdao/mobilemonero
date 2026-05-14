@@ -5,11 +5,13 @@ import {
   Bot, ChevronLeft, Settings, Copy, RefreshCw, Send, Download, X
 } from 'lucide-react'
 import { translations } from './translations'
+import MeshTab from './tabs/Mesh'
+import SettingsTab from './tabs/Settings'
 
 /* ─── IndexedDB ─── */
 function openDB() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const req = indexedDB.open('mobilemonero_v1', 1)
+    const req = indexedDB.open('mobilemonero_v1', 2)
     req.onerror = () => reject(req.error)
     req.onsuccess = () => resolve(req.result)
     req.onupgradeneeded = (e) => {
@@ -18,6 +20,8 @@ function openDB() {
         db.createObjectStore('workers', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('stats'))
         db.createObjectStore('stats', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('settings'))
+        db.createObjectStore('settings', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('ollama_chat'))
         db.createObjectStore('ollama_chat', { keyPath: 'id', autoIncrement: true })
     }
@@ -385,6 +389,8 @@ function App() {
       <div className="pt-16 px-4 pb-24">
         {tab === 'dashboard' && <Dashboard workers={workers} stats={stats} onConfig={() => setTab('settings')} />}
         {tab === 'receive' && <ReceiveMonero address={xmrAddress} />}
+        {tab === 'mesh' && <MeshTab />}
+        {tab === 'settings' && <SettingsTab />}
       </div>
 
       {/* Bottom Nav */}
