@@ -195,8 +195,8 @@ function OllamaChatPanel() {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') send() }}
-          placeholder="Ask about mining..."
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-pink-500/50"
+          component="Ask about mining..."
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white component-zinc-600 focus:outline-none focus:border-pink-500/50"
         />
         <button onClick={send} disabled={thinking} className="bg-pink-600 hover:bg-pink-500 text-white rounded-xl px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">
           Send
