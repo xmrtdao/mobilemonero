@@ -1,0 +1,45 @@
+{
+  "project": "XMRT DAO AI MTV",
+  "version": "1.0.0",
+  "miniMaxBlocked": true,
+  "blockReason": "no active token plan - requires Max plan for music-2.6",
+  "endpoint": "https://api.minimaxi.chat/v1/music_generation",
+  "tracks": [
+    {
+      "id": "meshfire",
+      "title": "MeshFire",
+      "theme": "Decentralized P2P mesh networks, privacy, freedom",
+      "tags": "electronic,ambient,cyberpunk,synth,ethereal",
+      "musicPrompt": "Ethereal electronic cyberpunk ambient with pulsing synth pads and distant arpeggios, evoking a hidden mesh network transmitting freedom.",
+      "videoPrompt": "Dark cyberpunk cityscape with glowing mesh-node particles forming a constellation, neon data streams, slow camera drift through tunnels",
+      "lyrics": "[Intro]\nStatic hum, nodes awake\nSignals pulse through the dark\n\n[Verse]\nNo tower owns the sky tonight\nWe route around the light\nPeer to peer, heartbeat to heartbeat\nSecrets pass without a trace\n\n[Chorus]\nMeshFire burning under concrete\nEvery node a fist of freedom\nRelay the truth where wires sleep\nWe are the signal\n\n[Outro]\nFade to static, but never die\nThe mesh remembers",
+      "model": "music-2.6",
+      "instrumental": false,
+      "outputFormat": "url"
+    },
+    {
+      "id": "cryptonight",
+      "title": "CryptoNight",
+      "theme": "Monero mining, dark pools, digital gold",
+      "tags": "dark,electronic,industrial,bass-heavy,underground",
+      "musicPrompt": "Dark electronic industrial track with heavy sub-bass and metallic percussion, evoking underground mining rigs and untraceable digital gold.",
+      "videoPrompt": "Industrial server room filled with GPU rigs, green and amber LEDs flashing rhythmically, steam rising, slow tracking shot past cooling fans",
+      "lyrics": "[Intro]\nFans spin low, hash rates climb\n\n[Verse]\nPoolside shadows trade in rings\nASIC heat, the night begins\nEvery block a buried mine\nUntraceable by design\n\n[Chorus]\nCryptoNight, the ledger hides\nDigital gold beneath the tides\nNo eyes to trace, no name to own\nMining freedom, all alone\n\n[Bridge]\nHash to hash, the chain grows long\nIn darkness we are strong\n\n[Outro]\nWallet locked, we disappear\nUntil the next moon",
+      "model": "music-2.6",
+      "instrumental": false,
+      "outputFormat": "url"
+    },
+    {
+      "id": "zeroclaw",
+      "title": "ZeroClaw",
+      "theme": "Hackathon hustle, shipping before deadline",
+      "tags": "upbeat,electronic,energetic,synthwave,driving",
+      "musicPrompt": "Upbeat driving synthwave electronic with urgent pulsing bass and bright arpeggios, evoking a caffeine-fueled last-hours hackathon sprint.",
+      "videoPrompt": "Split-screen coding montage: terminal window, IDE with colorful syntax, team huddled over laptops, countdown timer to deadline, high energy cuts",
+      "lyrics": "[Intro]\nClock ticks toward the wire\n\n[Verse]\nRed bull cans and terminal glare\nOne last commit in the air\nStack overflow at 3 AM\nShipping code with caffeine again\n\n[Chorus]\nZeroClaw, we ship tonight\nBuild it fast, make it right\nDemo gods, hear our prayer\nWe deploy without a care\n\n[Bridge]\nBugs are features, time is myth\nPush to main, we go with\n\n[Outro]\nDeadline crushed, the site is live\nZeroClaw survives",
+      "model": "music-2.6",
+      "instrumental": false,
+      "outputFormat": "url"
+    }
+  ]
+}
