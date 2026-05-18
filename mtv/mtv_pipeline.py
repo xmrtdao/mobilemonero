@@ -8,7 +8,8 @@ Usage:
     python3 mtv_pipeline.py --check-balance          # verify MiniMax plan first
     python3 mtv_pipeline.py --track meshfire         # generate one track
     python3 mtv_pipeline.py --tracks all             # generate all tracks
-    python3 mtv_pipeline.py --tracks all --video     # also generate video clips
+    python3 mtv_pipeline.py --track meshfire --lyrics   # regenerate lyrics via CF Worker first
+    python3 mtv_pipeline.py --tracks all --lyrics --video  # lyrics + music + video
     python3 mtv_pipeline.py --sync                   # sync assets to HF Spaces
 
 After MiniMax top-up: edit MINIMAX_API_KEY below or set env var.
@@ -21,6 +22,7 @@ import time
 import subprocess
 import urllib.request
 import urllib.error
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +31,11 @@ MINIMAX_API_KEY = os.environ.get(
     "MINIMAX_API_KEY",
     "sk-api-9AmCqBqZHHUO7LPlM-AWrjsPEIhWOzToga4p_2SHZCTk-s-G7u8ULu9y9z-V8dDvb-LCjGhBkyyfN9whRmGLk80T-r-7OyIaeTi5ijwsOnz9vdnAb-157qk",
 )
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN", "")
+CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "ef8e3637c4a00a43860b679ecd138a05")
+WORKER_DOMAIN = "mtv-lyrics.mobilemonero.com"
+WORKER_ENDPOINT = f"https://{WORKER_DOMAIN}"
+WORKER_IP_FALLBACK = "104.21.17.92"   # Cloudflare anycast IP; used when local DNS fails
 API_BASE = "https://api.minimaxi.chat"
 TRACKS_FILE = Path(__file__).with_name("mtv_tracks.json")
 AUDIO_DIR = Path.home() / "mtt" / "audio"
@@ -37,7 +44,6 @@ IMAGES_DIR = Path.home() / "mtt" / "images"
 POLL_INTERVAL = 5  # seconds between status polls
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-
 
 def api_post(path: str, payload: dict) -> dict:
     url = f"{API_BASE}{path}"
@@ -64,6 +70,74 @@ def api_get(path: str) -> dict:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
+
+
+def worker_post(path: str, payload: dict, cf_token: str) -> dict:
+    """Call CF Worker with automatic curl fallback when local DNS fails."""
+    url = f"{WORKER_ENDPOINT}{path}"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cf_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())
+    except urllib.error.URLError as e:
+        err = str(e)
+        if "getaddrinfo" in err or "No address associated" in err or "Errno 7" in err:
+            # Fallback to curl with explicit resolve for Termux / Android
+            with tempfile.NamedTemporaryFile(mode='w+b', delete=False, suffix='.json') as f:
+                f.write(data)
+                tmp = f.name
+            try:
+                result = subprocess.run([
+                    "curl", "-s", "-L",
+                    "--resolve", f"{WORKER_DOMAIN}:443:{WORKER_IP_FALLBACK}",
+                    "-H", "Content-Type: application/json",
+                    "-H", f"Authorization: Bearer {cf_token}",
+                    "-d", f"@{tmp}",
+                    url
+                ], capture_output=True, text=True, timeout=60)
+                os.unlink(tmp)
+                return json.loads(result.stdout)
+            except Exception:
+                os.unlink(tmp)
+                raise
+        raise
+
+
+def generate_lyrics(track: dict, cf_token: str, dry_run: bool = False) -> str:
+    """Generate lyrics via CF Worker and return raw lyrics text."""
+    if not cf_token:
+        print("⚠️  CF_API_TOKEN not set; skipping lyric generation.")
+        return track.get("lyrics", "")
+    if dry_run:
+        print(f"📝 DRY RUN would generate lyrics for '{track['title']}' via worker")
+        return track.get("lyrics", "")
+
+    print(f"✍️  Generating lyrics for '{track['title']}' via worker ...")
+    tags = track.get("tags", "electronic")
+    genre = tags.split(",")[1] if "," in tags else "electronic"
+    payload = {
+        "theme": track.get("theme", ""),
+        "genre": genre,
+        "title": track.get("title", ""),
+        "vibe": track.get("vibe", "dark tech-noir"),
+    }
+    r = worker_post("/generate", payload, cf_token)
+    if r.get("error"):
+        print(f"❌ Worker error: {r['error']}")
+        return track.get("lyrics", "")
+    raw = r.get("lyrics_raw", "")
+    sections = r.get("sections", [])
+    print(f"✅ Lyrics generated ({len(sections)} sections, raw chars={len(raw)})")
+    return raw
 
 
 def check_balance() -> bool:
@@ -206,6 +280,8 @@ def main():
     ap.add_argument("--sync", action="store_true", help="Sync assets to HF Spaces")
     ap.add_argument("--dry-run", action="store_true", help="Print payloads, skip API calls")
     ap.add_argument("--model", default="music-2.6", choices=["music-2.6","music-2.5+","music-2.5"], help="Music model")
+    ap.add_argument("--lyrics", action="store_true", help="Regenerate lyrics via CF Worker before music gen")
+    ap.add_argument("--update-tracks", action="store_true", help="Write generated lyrics back into mtv_tracks.json")
     args = ap.parse_args()
 
     if not TRACKS_FILE.exists():
@@ -234,6 +310,17 @@ def main():
 
     for t in selected:
         print(f"\n=== 🎵 {t['title']} : {t['theme']} ===")
+
+        # ── Lyrics via CF Worker ────────────────────────────────────────────
+        if args.lyrics:
+            new_lyrics = generate_lyrics(t, CF_API_TOKEN, dry_run=args.dry_run)
+            if new_lyrics:
+                t["lyrics"] = new_lyrics
+                if args.update_tracks and not args.dry_run:
+                    # Update the in-memory tracks list, then commit all
+                    pass  # handled after loop
+
+        # ── Music via MiniMax ──────────────────────────────────────────────
         audio_url = generate_music(t, model=args.model, dry_run=args.dry_run)
         if audio_url and not args.dry_run:
             if audio_url.startswith("http"):
@@ -248,6 +335,13 @@ def main():
                 video_url = poll_video_task(video_task)
                 if video_url:
                     download_video(t["id"], video_url, VIDEO_DIR)
+
+    # ── Persist updated tracks ────────────────────────────────────────
+    if args.lyrics and args.update_tracks and not args.dry_run:
+        new_data = json.loads(TRACKS_FILE.read_text())
+        new_data["tracks"] = tracks
+        TRACKS_FILE.write_text(json.dumps(new_data, indent=2, ensure_ascii=False) + "\n")
+        print(f"📝 Updated {TRACKS_FILE}")
 
     if args.sync:
         sync_hf_spaces()
