@@ -1,0 +1,11 @@
+name = "mtv-lyrics"
+main = "src/index.js"
+compatibility_date = "2025-05-17"
+
+[ai]
+binding = "AI"
+
+# Optional: route under your custom domain (add your zone_id + DNS later)
+# routes = [
+#   { pattern = "mtv-api.mobilemonero.com", custom_domain = true }
+# ]
