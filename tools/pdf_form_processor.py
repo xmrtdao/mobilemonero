@@ -239,7 +239,7 @@ def create_vendor_data(client_email: str, event_name: str = "") -> dict:
         
         # Signature fields
         "Signature_Date": datetime.now().strftime("%Y-%m-%d"),
-        "Authorized_Signature": "[SIGNATURE]",
+        "Authorized_Signature": "Joseph Andrew Lee",
         
         # Custom overrides
         "Client_Email": client_email,

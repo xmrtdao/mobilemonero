@@ -29,6 +29,7 @@ VENDOR_FORM_FIELDS = {
     "Two_Day_Rate": (155, 120),
     "Overtime_Rate": (155, 85),
     "Signature_Date": (105, 45),
+    "Authorized_Signature": (205, 108),  # Added signature line
 }
 
 def fill_flat_pdf(input_path: str, output_path: str, data: dict, signature_path: str = None) -> str:
@@ -64,14 +65,26 @@ def fill_flat_pdf(input_path: str, output_path: str, data: dict, signature_path:
             c.drawString(x, y_from_bottom, str(value))
             print(f"✓ Filled: {field_name} = {value}")
     
-    # Add signature if provided
+    # Add signature if provided or use text
     if signature_path and "Signature_Date" in data:
-        # Draw signature line
+        # Draw signature text
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, 45, "Joseph Andrew Lee")
+        c.drawString(205, 108, "Joseph Andrew Lee")
         c.setFont("Helvetica-Oblique", 9)
-        c.drawString(50, 35, "Party Favor Photo")
-        print(f"✓ Added signature")
+        c.drawString(205, 98, "Party Favor Photo")
+        print(f"✓ Added signature: Joseph Andrew Lee")
+    
+    # Add date
+    if "Signature_Date" in data:
+        c.setFont("Helvetica", 10)
+        c.drawString(105, 45, data["Signature_Date"])
+        print(f"✓ Added date: {data['Signature_Date']}")
+    else:
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        c.setFont("Helvetica", 10)
+        c.drawString(105, 45, today)
+        print(f"✓ Added date: {today}")
     
     c.save()
     overlay_buffer.seek(0)
