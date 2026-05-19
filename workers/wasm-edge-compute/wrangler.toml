@@ -1,0 +1,3 @@
+name = "wasm-edge-compute"
+main = "src/index.js"
+compatibility_date = "2025-05-17"

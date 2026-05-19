@@ -1,56 +1,48 @@
 /**
  * ZKP Verification Stub Worker
- * Stub endpoints for transaction and balance proof verification.
- * Real verification WASM not yet compiled.
+ * Converted to addEventListener syntax for API deployment.
  */
 
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-
-    // POST /verify/tx
-    if (url.pathname === "/verify/tx" && request.method === "POST") {
-      try {
-        const proof = await request.json();
-        console.log("[stub] received tx proof:", JSON.stringify(proof));
-        return new Response(
-          JSON.stringify({ valid: false, note: "stub — real verification WASM not yet compiled" }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    // POST /verify/balance
-    if (url.pathname === "/verify/balance" && request.method === "POST") {
-      try {
-        const proof = await request.json();
-        console.log("[stub] received balance proof:", JSON.stringify(proof));
-        return new Response(
-          JSON.stringify({ valid: false, note: "stub — real verification WASM not yet compiled" }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
-  },
+var CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
+
+function jsonResponse(data, status) {
+  status = status || 200;
+  var h = { "Content-Type": "application/json" };
+  for (var k in CORS) { h[k] = CORS[k]; }
+  return new Response(JSON.stringify(data), { status: status, headers: h });
+}
+
+addEventListener("fetch", function(event) {
+  event.respondWith(handleRequest(event.request));
+});
+
+async function handleRequest(request) {
+  var url = new URL(request.url);
+  var path = url.pathname;
+
+  // POST /verify/tx
+  if (path === "/verify/tx" && request.method === "POST") {
+    try {
+      var proof = await request.json();
+      return jsonResponse({ valid: false, note: "stub — real verification WASM not yet compiled" });
+    } catch (e) {
+      return jsonResponse({ error: e.message }, 500);
+    }
+  }
+
+  // POST /verify/balance
+  if (path === "/verify/balance" && request.method === "POST") {
+    try {
+      var proof = await request.json();
+      return jsonResponse({ valid: false, note: "stub — real verification WASM not yet compiled" });
+    } catch (e) {
+      return jsonResponse({ error: e.message }, 500);
+    }
+  }
+
+  return jsonResponse({ error: "Not found", paths: ["/verify/tx", "/verify/balance"] }, 404);
+}

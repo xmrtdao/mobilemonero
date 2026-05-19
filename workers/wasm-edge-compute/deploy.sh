@@ -1,20 +1,32 @@
 #!/bin/bash
-set -e
+# Deploy WASM Edge Compute Worker via Cloudflare REST API
+# Termux-compatible (no wrangler)
+set -euo pipefail
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKER_NAME="wasm-edge-compute"
+INDEX_JS="$SCRIPT_DIR/src/index.js"
 
-if [ -z "$CF_ACCOUNT_ID" ]; then
-  echo "Error: CF_ACCOUNT_ID not set"
+echo "[1/3] Check env..."
+if [ -z "${CF_ACCOUNT_ID:-}" ]; then
+  echo "ERROR: Set CF_ACCOUNT_ID env var"
+  exit 1
+fi
+if [ -z "${CF_API_TOKEN:-}" ]; then
+  echo "ERROR: Set CF_API_TOKEN env var"
   exit 1
 fi
 
-if [ -z "$CF_API_TOKEN" ]; then
-  echo "Error: CF_API_TOKEN not set"
-  exit 1
-fi
+echo "[2/3] Uploading worker '$WORKER_NAME'..."
+curl -sS --fail \
+  "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$WORKER_NAME" \
+  -X PUT \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/javascript" \
+  --data-binary @"$INDEX_JS"
 
-echo "Deploying WASM Edge Compute Stub Worker..."
-wrangler deploy src/index.js --name wasm-edge-compute \
-  --compatibility-date $(date +%Y-%m-%d)
-
-echo "Done."
+echo ""
+echo "[3/3] Deployed!"
+echo "→ Worker: $WORKER_NAME"
+echo "→ Dashboard: https://dash.cloudflare.com/$CF_ACCOUNT_ID/workers/services/view/$WORKER_NAME"
+echo "→ Test: https://$WORKER_NAME.xmrtdao-xmrt-dao-nb.workers.dev/health"

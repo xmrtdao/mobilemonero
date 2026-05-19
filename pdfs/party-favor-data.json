@@ -1,0 +1,18 @@
+{
+  "Business_Name": "Party Favor Photo",
+  "Business_Type": "Photo Booth Services",
+  "Contact_Name": "Joseph Andrew Lee",
+  "Email": "bookings@partyfavorphoto.com",
+  "Phone": "(202) 555-0123",
+  "Website": "https://partyfavorphoto.com",
+  "Insurance_Carrier": "Event Liability Insurance",
+  "Policy_Number": "PFP-2026-001",
+  "Coverage_Amount": "$1,000,000",
+  "Equipment_Type": "Professional Photo Booth with DSLR Camera",
+  "Power_Requirements": "110V, 15A circuit",
+  "Setup_Space": "8ft x 8ft minimum",
+  "Setup_Time": "2 hours before event start",
+  "Standard_Rate": "$498/day",
+  "Two_Day_Rate": "$992 (save $4)",
+  "Overtime_Rate": "$150/hour"
+}
