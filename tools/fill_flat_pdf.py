@@ -11,25 +11,26 @@ import io
 import json
 
 # Field positions for vendor form (x, y in points from bottom-left)
+# Calculated from create_sample_form.py - these match the rect() positions
 VENDOR_FORM_FIELDS = {
-    "Business_Name": (155, 685),
-    "Business_Type": (155, 650),
-    "Contact_Name": (155, 615),
-    "Email": (155, 580),
-    "Phone": (155, 545),
-    "Website": (155, 510),
-    "Insurance_Carrier": (155, 450),
-    "Policy_Number": (155, 415),
-    "Coverage_Amount": (155, 380),
-    "Equipment_Type": (155, 320),
-    "Power_Requirements": (155, 285),
-    "Setup_Space": (155, 250),
-    "Setup_Time": (155, 215),
-    "Standard_Rate": (155, 155),
-    "Two_Day_Rate": (155, 120),
-    "Overtime_Rate": (155, 85),
-    "Signature_Date": (105, 45),
-    "Authorized_Signature": (205, 108),  # Added signature line
+    "Business_Name": (155, 637),      # y=642-5
+    "Business_Type": (155, 602),      # y=607-5
+    "Contact_Name": (155, 567),       # y=572-5
+    "Email": (155, 532),              # y=537-5
+    "Phone": (155, 497),              # y=502-5
+    "Website": (155, 462),            # y=467-5
+    "Insurance_Carrier": (155, 407),  # y=412-5
+    "Policy_Number": (155, 372),      # y=377-5
+    "Coverage_Amount": (155, 337),    # y=342-5
+    "Equipment_Type": (155, 277),     # y=282-5
+    "Power_Requirements": (155, 242), # y=247-5
+    "Setup_Space": (155, 207),        # y=212-5
+    "Setup_Time": (155, 172),         # y=177-5
+    "Standard_Rate": (155, 112),      # y=117-5
+    "Two_Day_Rate": (155, 77),        # y=82-5
+    "Overtime_Rate": (155, 42),       # y=47-5
+    "Signature_Date": (105, 45),      # Signature line date
+    "Authorized_Signature": (205, 108), # Signature line
 }
 
 def fill_flat_pdf(input_path: str, output_path: str, data: dict, signature_path: str = None) -> str:
