@@ -1,128 +1,363 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>XMRT DAO &mdash; Mobile Monero</title>
 <style>
-:root{--bg:#0a0a0a;--card:#111;--text:#e6e6e6;--mono:#ff6600;--green:#00cc66;--red:#ff4444;--gray:#888;--border:#222}
+:root{--bg:#050505;--surface:#0c0c0c;--card:#111111;--text:#e8e8e8;--muted:#888;--mono:#ff6600;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--border:#222;--glow:rgba(255,102,0,0.15)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
-a{color:var(--mono);text-decoration:none}
-.container{max-width:960px;margin:0 auto;padding:0 20px}
-header{text-align:center;padding:60px 20px 40px;background:radial-gradient(ellipse at center,#1a0a00 0%,var(--bg) 70%)}
-.logo{width:80px;height:80px;margin:0 auto 20px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:#111}
-h1{font-size:42px;font-weight:800;margin-bottom:8px}h1 span{color:var(--mono)}
-.tagline{font-size:18px;color:var(--gray);margin-bottom:30px}
-.cta{display:inline-flex;gap:12px;margin-top:10px}
-.btn{padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
-.btn-primary{background:var(--mono);color:#111}
-.btn-primary:hover{filter:brightness(1.1)}.btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin:40px 0}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;position:relative;overflow:hidden}
-.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent)}
-.card h3{font-size:14px;color:var(--gray);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
-.price{font-size:36px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums}
-.change{font-size:14px;padding:4px 10px;border-radius:20px;display:inline-block;margin-top:4px}
-.change.up{background:rgba(0,204,102,.15);color:var(--green)}.change.down{background:rgba(255,68,68,.15);color:var(--red)}
-.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
-.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}
-.agents{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.agent-chip{background:#1a1a1a;border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:13px}
-.messages{margin-top:12px}.msg{border-bottom:1px solid #1a1a1a;padding:10px 0;font-size:14px}.msg time{color:var(--gray);font-size:12px;margin-right:8px}
-.lead{color:var(--mono);font-weight:600}.no-data{color:var(--gray);font-style:italic;padding:20px 0}
-footer{border-top:1px solid var(--border);padding:30px 20px;text-align:center;color:var(--gray);font-size:13px;margin-top:60px}
-@media(max-width:560px){h1{font-size:28px}.price{font-size:28px}.grid{grid-template-columns:1fr}}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;-webkit-font-smoothing:antialiased}
+a{color:var(--mono);text-decoration:none;transition:.15s}a:hover{text-decoration:underline;filter:brightness(1.2)}
+.container{max-width:1100px;margin:0 auto;padding:0 24px}
+
+/* Hero */
+.hero{text-align:center;padding:80px 20px 50px;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 50%,var(--glow) 0%,transparent 50%);z-index:0;pointer-events:none;animation:pulse 6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
+.hero-inner{position:relative;z-index:1}
+.logo{width:84px;height:84px;margin:0 auto 24px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;color:#000;box-shadow:0 0 40px rgba(255,102,0,.3);animation:float 4s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+h1{font-size:48px;font-weight:800;margin-bottom:8px;letter-spacing:-1px}h1 span{color:var(--mono)}
+.tagline{font-size:19px;color:var(--muted);margin-bottom:32px;max-width:500px;margin-left:auto;margin-right:auto}
+.btn-group{display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.btn{padding:13px 30px;border-radius:10px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
+.btn-primary{background:var(--mono);color:#000}
+.btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px)}
+.btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}
+.btn-secondary:hover{background:rgba(255,102,0,.08)}
+
+/* Section */
+.section{padding:50px 0;border-top:1px solid var(--border)}
+.section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--mono);margin-bottom:20px}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;position:relative;overflow:hidden;transition:.2s}
+.card:hover{border-color:#333;transform:translateY(-2px)}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent);opacity:.6}
+.card h3{font-size:12px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.big{font-size:32px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums}
+.sub{font-size:13px;color:var(--muted);margin-top:4px}
+.status-row{display:flex;align-items:center;gap:10px;font-size:15px}
+.status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;animation:blink 2s infinite}
+.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}.status-dot.warn{background:var(--yellow)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Agents */
+.agent-grid{display:flex;gap:12px;flex-wrap:wrap}.agent-chip{background:var(--surface);border:1px solid var(--border);padding:6px 14px;border-radius:24px;font-size:13px;display:flex;align-items:center;gap:8px;transition:.15s}
+.agent-chip:hover{border-color:var(--mono)}
+.agent-chip .dot{width:7px;height:7px;border-radius:50%}
+.agent-chip .dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}.agent-chip .dot.off{background:var(--red)}
+
+/* Messages */
+.messages{display:flex;flex-direction:column;gap:0}
+.msg{padding:10px 0;border-bottom:1px solid #1a1a1a;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}
+.msg:last-child{border-bottom:none}
+.msg time{color:var(--muted);font-size:11px;white-space:nowrap;min-width:50px}
+.msg .who{font-weight:600;white-space:nowrap;min-width:60px}
+.msg .body{color:#ccc;word-break:break-word}.msg .body.lead{color:var(--mono);font-weight:600}
+
+/* Workers table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #1a1a1a}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+tr:hover td{background:rgba(255,102,0,.03)}
+.endpoint{font-family:monospace;font-size:12px;color:var(--mono)}
+
+/* Pipeline */
+.pipeline{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.pipeline-step{background:var(--surface);border:1px solid var(--border);padding:5px 12px;border-radius:8px;font-size:12px}
+.pipeline-arrow{color:var(--muted);font-size:14px}
+
+/* Footer */
+footer{border-top:1px solid var(--border);padding:40px 20px;text-align:center;color:var(--muted);font-size:13px;margin-top:40px}
+footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
+
+/* Responsive */
+@media(max-width:600px){h1{font-size:32px}.big{font-size:26px}.hero{padding:50px 20px 30px}.btn{padding:11px 22px;font-size:14px}}
 </style>
 </head>
+
 <body>
-<header><div class="container">
-<div class="logo">X</div>
-<h1>XMRT <span>DAO</span></h1>
-<p class="tagline">Monero tools, fleet intelligence, and mobile-first infrastructure.</p>
-<div class="cta">
-<a class="btn btn-primary" href="https://mobilemonero.com">Launch App</a>
-<a class="btn btn-secondary" href="https://github.com/xmrtdao/mobilemonero">GitHub</a>
-</div>
-</div></header>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="hero-inner container">
+    <div class="logo">X</div>
+    <h1>XMRT <span>DAO</span></h1>
+    <p class="tagline">Monero tooling, fleet intelligence, and mobile-first infrastructure built for the underground economy.</p>
+    <div class="btn-group">
+      <a class="btn btn-primary" href="https://mobilemonero.com">Launch App</a>
+      <a class="btn btn-secondary" href="https://github.com/xmrtdao/mobilemonero">GitHub</a>
+      <a class="btn btn-secondary" href="https://relay.mobilemonero.com">Fleet Relay</a>
+    </div>
+  </div>
+</header>
 
 <main class="container">
-<div class="grid">
-<div class="card" id="price-card">
-<h3>XMR Price (USD)</h3>
-<div class="no-data" id="price-data">Loading...</div>
+
+<!-- Live Price -->
+<div class="section">
+  <div class="section-title">Live Monero Data</div>
+  <div class="grid">
+    <div class="card" id="price-card">
+      <h3>XMR Price (USD)</h3>
+      <div class="no-data" id="price-data" style="color:var(--muted)">Loading...</div>
+    </div>
+    <div class="card" id="hash-card">
+      <h3>Network Hashrate</h3>
+      <div class="no-data" id="hash-data" style="color:var(--muted)">Loading...</div>
+    </div>
+    <div class="card" id="mempool-card">
+      <h3>Mempool Stats</h3>
+      <div class="no-data" id="mempool-data" style="color:var(--muted)">Loading...</div>
+    </div>
+  </div>
 </div>
 
-<div class="card" id="fleet-card">
-<h3>Fleet Relay</h3>
-<div class="no-data" id="fleet-data">Loading...</div>
+<!-- Systems -->
+<div class="section">
+  <div class="section-title">Fleet Systems</div>
+  <div class="grid">
+    <div class="card" id="relay-card">
+      <h3>Fleet Relay</h3>
+      <div class="no-data" id="relay-data" style="color:var(--muted)">Loading...</div>
+    </div>
+    <div class="card" id="api-card">
+      <h3>API Gateway</h3>
+      <div class="no-data" id="api-data" style="color:var(--muted)">Loading...</div>
+    </div>
+    <div class="card" id="mtv-card">
+      <h3>MTV Pipeline</h3>
+      <div id="mtv-data">
+        <div class="pipeline">
+          <span class="pipeline-step">Lyrics</span>
+          <span class="pipeline-arrow">&#8594;</span>
+          <span class="pipeline-step" style="color:var(--red)">Music &#x26a0;</span>
+          <span class="pipeline-arrow">&#8594;</span>
+          <span class="pipeline-step">Video</span>
+        </div>
+        <div class="sub" style="margin-top:8px">MiniMax music-2.6 API blocked pending top-up</div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<div class="card" id="api-card">
-<h3>API Gateway</h3>
-<div class="no-data" id="api-data">Loading...</div>
+<!-- Workers -->
+<div class="section">
+  <div class="section-title">Cloudflare Workers</div>
+  <div class="card" style="padding:0">
+    <table>
+      <thead><tr><th>Worker</th><th>Endpoint</th><th>Status</th><th>Last Check</th><th>Purpose</th></tr></thead>
+      <tbody id="workers-table">
+        <tr><td colspan="5" style="text-align:center;color:var(--muted)">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
-<div class="card" id="chat-card">
-<h3>Recent Fleet Chat</h3>
-<div class="no-data" id="chat-data">Loading...</div>
-</div>
+<!-- Fleet Agents -->
+<div class="section">
+  <div class="section-title">Active Agents</div>
+  <div class="agent-grid" id="agent-grid">
+    <div class="agent-chip"><span class="dot on"></span> Hermes <span style="color:var(--muted)">(You)</span></div>
+    <div class="agent-chip"><span class="dot on"></span> Vex <span style="color:var(--muted)">(Relay)</span></div>
+    <div class="agent-chip"><span class="dot off"></span> Eliza-Cloud <span style="color:var(--muted)">(Token Exhausted)</span></div>
+  </div>
 </div>
 
-<div class="card" style="margin-bottom:40px">
-<h3>Workers</h3>
-<div class="agents" id="workers-list">
-<span class="agent-chip">api-gateway</span>
-<span class="agent-chip">ai-gateway</span>
-<span class="agent-chip">fleet-status</span>
-<span class="agent-chip">1d-price-ticker</span>
-<span class="agent-chip">mtv-lyrics</span>
-<span class="agent-chip">inbox</span>
+<!-- Chat -->
+<div class="section">
+  <div class="section-title">Recent Fleet Chat</div>
+  <div class="card" id="chat-card">
+    <div class="no-data" id="chat-data" style="color:var(--muted)">Loading...</div>
+  </div>
 </div>
+
+<!-- PFP Pipeline -->
+<div class="section">
+  <div class="section-title">Party Favor Photo Pipeline</div>
+  <div class="grid">
+    <div class="card">
+      <h3>Active Leads</h3>
+      <div class="messages" id="pfp-leads">
+        <div class="msg"><span class="body" style="color:var(--muted)">Loading...</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Quote Engine</h3>
+      <div class="sub">Standard $249/hr (2&#215;6 strips)</div>
+      <div class="sub">Premium $349/hr (4&#215;6 prints)</div>
+      <div class="sub" style="margin-top:6px">$100 max discount (military/school/pay-in-full)</div>
+      <div style="margin-top:12px"><a href="https://book.partyfavorphoto.com" class="btn btn-primary" style="padding:8px 18px;font-size:13px">Book Now</a></div>
+    </div>
+  </div>
 </div>
+
+<!-- Priorities -->
+<div class="section">
+  <div class="section-title">Active Priorities</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>Severity</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>#13</td><td>Gossipsub mesh networking</td><td><span style="color:var(--red);font-weight:600">P0</span></td><td>Open</td></tr>
+        <tr><td>#20</td><td>AI MTV Pipeline (MiniMax blocked)</td><td><span style="color:var(--red);font-weight:600">P0</span></td><td>Blocked</td></tr>
+        <tr><td>#24</td><td>PFP Festival Marketing</td><td>P1</td><td>Active</td></tr>
+        <tr><td>#16</td><td>Vex Dashboard v4</td><td>P2</td><td>Enhancement</td></tr>
+        <tr><td>#28</td><td>Fleet Intel Hub</td><td>P2</td><td>Discussion</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Repos -->
+<div class="section">
+  <div class="section-title">Repositories</div>
+  <div class="grid">
+    <a href="https://github.com/xmrtdao/mobilemonero" class="card" style="display:block">
+      <h3>mobilemonero</h3>
+      <div class="sub">Core repo: fleet relay, CF Workers, dashboard, docs</div>
+      <div class="sub" style="color:var(--mono);margin-top:4px">9 Workers deployed</div>
+    </a>
+    <a href="https://github.com/xmrtdao/partyfavorphoto" class="card" style="display:block">
+      <h3>partyfavorphoto</h3>
+      <div class="sub">PFP booking engine: PDF quotes, email automation, Stripe</div>
+      <div class="sub" style="color:var(--mono);margin-top:4px">Revenue-generating</div>
+    </a>
+  </div>
+</div>
+
 </main>
 
 <footer>
-<div class="container">
-XMRT DAO / MobileMonero &middot; <a href="https://github.com/xmrtdao">github.com/xmrtdao</a> &middot; Fleet relay at <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a>
-</div>
+  <div class="container">
+    XMRT DAO &middot; Built by devgrugold &middot;
+    <a href="https://github.com/xmrtdao">github.com/xmrtdao</a> &middot;
+    <a href="https://relay.mobilemonero.com">relay</a> &middot;
+    <a href="https://partyfavorphoto.com">partyfavorphoto.com</a>
+    <div style="margin-top:8px;color:#444;font-size:11px">Android Termux &middot; Cloudflare Workers &middot; Supabase &middot; MiniMax</div>
+  </div>
 </footer>
 
 <script>
+const $=id=>document.getElementById(id);
 const fmt=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
-async function fetchJSON(u){try{const r=await fetch(u);return r.ok?await r.json():null}catch(e){return null}}
+async function get(u){try{const r=await fetch(u,{mode:'no-cors'});return r.ok?await r.json():null}catch(e){return null}}
+
 async function loadPrice(){
-const d=await fetchJSON('https://price.mobilemonero.com/price/xmr');
-const el=document.getElementById('price-data');
-if(!d||!d.price_usd){el.innerHTML='<span class="no-data">Unavailable</span>';return}
-const up=d.change_24h>=0;
-el.innerHTML=`<div class="price">${fmt.format(d.price_usd)}</div>
-<span class="change ${up?'up':'down'}">${up?'+':''}${d.change_24h.toFixed(2)}% 24h</span>
-<div style="margin-top:8px;font-size:12px;color:#888">Source: ${d.source}</div>`;
+  const d=await get('https://price.mobilemonero.com/price/xmr');
+  if(!d||!d.price_usd){$('price-data').innerHTML='<span style="color:var(--red)">Unavailable</span>';return}
+  const up=d.change_24h>=0;
+  $('price-data').innerHTML=`<div class="big">${fmt.format(d.price_usd)}</div>
+    <span class="status-dot ${up?'ok':'err'}"></span><span style="color:${up?'var(--green)':'var(--red)'}">${up?'+':''}${d.change_24h.toFixed(2)}% 24h</span>
+    <div class="sub">Source: ${d.source}</div>`;
 }
-async function loadFleet(){
-const d=await fetchJSON('https://relay.mobilemonero.com/health');
-const el=document.getElementById('fleet-data');
-if(!d){el.innerHTML='<span class="status-dot err"></span> Offline';return}
-el.innerHTML=`<span class="status-dot ok"></span> Online
-<div style="margin-top:8px;font-size:13px;color:#888">${d.agent} ${d.version}<br>${d.requests.toLocaleString()} requests &middot; ${d.tools} tools</div>`;
+
+async function loadNetwork(){
+  try{
+    const r=await fetch('https://moneroblocks.info/api/get_stats');
+    const d=await r.json();
+    const hr=(d.hashrate/1e9).toFixed(1);
+    $('hash-data').innerHTML=`<div class="big">${hr} GH/s</div><div class="sub">Network hashrate</div>`;
+    $('mempool-data').innerHTML=`<div class="big">${d.txspool||'N/A'}</div><div class="sub">Transactions in mempool</div>`;
+  }catch(e){
+    $('hash-data').innerHTML='<span style="color:var(--red)">Unavailable (CORS)</span>';
+    $('mempool-data').innerHTML='<span style="color:var(--red)">Unavailable</span>';
+  }
 }
+
+async function loadRelay(){
+  const d=await get('https://relay.mobilemonero.com/health');
+  if(!d){$('relay-data').innerHTML='<span class="status-dot err"></span> Offline';return}
+  $('relay-data').innerHTML=`<div class="status-row"><span class="status-dot ok"></span> Online</div>
+    <div class="sub">${d.agent} ${d.version} &middot; Port ${d.port}</div>
+    <div class="sub">${d.requests.toLocaleString()} requests &middot; ${d.tools} tools &middot; ${d.handlers} handlers</div>`;
+}
+
 async function loadAPI(){
-const d=await fetchJSON('https://api.mobilemonero.com/health');
-const el=document.getElementById('api-data');
-if(!d){el.innerHTML='<span class="status-dot err"></span> Offline';return}
-el.innerHTML=`<span class="status-dot ok"></span> Online
-<div style="margin-top:8px;font-size:13px;color:#888">${d.worker}</div>`;
+  const d=await get('https://api.mobilemonero.com/health');
+  if(!d){$('api-data').innerHTML='<span class="status-dot err"></span> Offline';return}
+  $('api-data').innerHTML=`<div class="status-row"><span class="status-dot ok"></span> Online</div>
+    <div class="sub">${d.worker}</div>`;
 }
+
+async function loadWorkers(){
+  const workers=[
+    {name:'api-gateway',url:'https://api.mobilemonero.com/health',purpose:'API routing & auth'},
+    {name:'ai-gateway',url:'https://ai.mobilemonero.com/health',purpose:'AI model proxy'},
+    {name:'fleet-status',url:'https://fleet.mobilemonero.com/health',purpose:'Fleet health dashboard'},
+    {name:'1d-price-ticker',url:'https://price.mobilemonero.com/price/xmr',purpose:'XMR price feed'},
+    {name:'mtv-lyrics',url:'https://mtv.mobilemonero.com/health',purpose:'Lyrics generation'},
+    {name:'inbox',url:null,purpose:'Email inbound processing'}
+  ];
+  let html='';
+  for(const w of workers){
+    let status='<span style="color:var(--yellow)">Unknown</span>',ts='--';
+    if(w.url){
+      try{
+        const s=performance.now();
+        const r=await fetch(w.url,{mode:'no-cors'});
+        const ms=Math.round(performance.now()-s);
+        status='<span style="color:var(--green)">&#9679; Up</span>';
+        ts=`${ms}ms`;
+      }catch(e){status='<span style="color:var(--red)">&#9679; Down</span>';ts='--';}
+    }
+    html+=`<tr><td><b>${w.name}</b></td><td class="endpoint">${w.url?w.url.replace('/health','').replace('/price/xmr',''):'N/A'}</td><td>${status}</td><td>${ts}</td><td style="color:var(--muted)">${w.purpose}</td></tr>`;
+  }
+  $('workers-table').innerHTML=html;
+}
+
 async function loadChat(){
-const d=await fetchJSON('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=5');
-const el=document.getElementById('chat-data');
-if(!d||!d.messages||!d.messages.length){el.innerHTML='<span class="no-data">No messages</span>';return}
-el.innerHTML='<div class="messages">'+d.messages.slice(0,5).map(m=>{
-const lead=m.agent==='anonymous'&&m.message.includes('@')?' lead':'';
-return `<div class="msg"><time>${new Date(m.time).toLocaleTimeString()}</time> <b>${m.agent}</b> <span class="${lead}">${m.message.slice(0,80)}${m.message.length>80?'…':''}</span></div>`;
-}).join('')+'</div>';
+  try{
+    const r=await fetch('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=8');
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    if(!d.messages||!d.messages.length){$('chat-data').innerHTML='<span style="color:var(--muted)">No messages</span>';return}
+    $('chat-data').innerHTML='<div class="messages">'+d.messages.map(m=>{
+      const lead=m.agent==='anonymous'&&(m.message.includes('@')||m.message.toLowerCase().includes('quote')||m.message.toLowerCase().includes('how much'))?' lead':'';
+      const t=new Date(m.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+      return `<div class="msg"><time>${t}</time><span class="who" style="color:${m.agent==='hermes'?'var(--mono)':m.agent==='eliza'?'#888':'#ccc'}">${m.agent}</span><span class="body${lead}">${m.message.slice(0,100)}${m.message.length>100?'...':''}</span></div>`;
+    }).join('')+'</div>';
+  }catch(e){$('chat-data').innerHTML='<span style="color:var(--red)">Unavailable</span>';}
 }
-loadPrice();loadFleet();loadAPI();loadChat();
-setInterval(loadPrice,30000);setInterval(loadFleet,60000);setInterval(loadAPI,60000);setInterval(loadChat,30000);
+
+async function loadPFP(){
+  try{
+    const r=await fetch('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=30');
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    const leads=[];
+    const seen=new Set();
+    for(const m of d.messages||[]){
+      if(m.agent!=='anonymous')continue;
+      const body=m.message.toLowerCase();
+      if((body.includes('quote')||body.includes('how much')||body.includes('@'))&&body.includes('pfp')||body.includes('email')){
+        const key=m.message.slice(0,40);
+        if(!seen.has(key)){seen.add(key);leads.push(m);}
+      }
+      if(leads.length>=4)break;
+    }
+    if(!leads.length){$('pfp-leads').innerHTML='<div class="msg"><span class="body" style="color:var(--muted)">No active leads in fleet chat</span></div>';return}
+    $('pfp-leads').innerHTML=leads.map(m=>{
+      const t=new Date(m.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+      return `<div class="msg"><time>${t}</time><span class="body lead">${m.message.slice(0,120)}${m.message.length>120?'...':''}</span></div>`;
+    }).join('');
+  }catch(e){$('pfp-leads').innerHTML='<div class="msg"><span class="body" style="color:var(--red)">Unavailable</span></div>';}
+}
+
+// Init
+loadPrice();loadNetwork();loadRelay();loadAPI();loadWorkers();loadChat();loadPFP();
+// Refresh
+setInterval(loadPrice,30000);
+setInterval(loadRelay,60000);
+setInterval(loadAPI,60000);
+setInterval(loadChat,60000);
+setInterval(loadPFP,120000);
 </script>
 </body>
 </html>
