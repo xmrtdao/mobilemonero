@@ -1,165 +1,132 @@
 /**
- * Hermes Agent Worker — Direct endpoint for fleet interaction
- * hermes.mobilemonero.com
- * Service Worker syntax (ES modules not supported via simple REST upload)
+ * Hermes Fleet Relay Worker — Hybrid (relay primary, memory fallback)
+ *
+ * Writes: forward to relay (persistent) + keep in memory (fast reads)
+ * Reads: query relay first, fallback to Worker memory if relay down
+ * If relay goes down, Worker accumulates messages until relay recovers
+ *
+ * Endpoints:
+ *   GET    /health
+ *   GET    /fleet/messages?limit=&offset=
+ *   GET    /fleet/status
+ *   POST   /fleet/broadcast          {from, message, type}
+ *   POST   /from/:agent               {from, to, message, type}
+ *   GET    /from/hermes?limit=&offset=
+ *   GET    /from/hermes/:agent?limit=&offset=
+ *
+ * Relay: relay.mobilemonero.com (persistent Eliza-Dev server)
  */
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+const RELAY_URL = "https://relay.mobilemonero.com";
 
-function json(data, status) {
-  status = status || 200;
-  return new Response(JSON.stringify(data), {
-    status: status,
-    headers: Object.assign({"Content-Type": "application/json"}, CORS_HEADERS),
-  });
+let RELAY_UP    = false;
+let LAST_RELAY_CHECK = 0;
+let MESSAGES    = [];
+let AGENTS      = {};
+
+function ts()  { return new Date().toISOString(); }
+function jr(o,s){return new Response(JSON.stringify(o),{status:s||200,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});}
+
+async function checkRelay(force=false){
+  const now=Date.now();
+  if(!force && now-LAST_RELAY_CHECK<30000 && RELAY_UP) return true;  // cache 30s
+  try{
+    const r=await fetch(`${RELAY_URL}/health`,{cf:{cacheTtl:0}});
+    RELAY_UP = r.ok;
+  }catch(e){ RELAY_UP=false; }
+  LAST_RELAY_CHECK=now;
+  return RELAY_UP;
 }
 
-// Simple in-memory stores
-var messageLog = [];
-var agentHeartbeats = {};
-var MAX_MSG = 500;
+async function proxyOrRelay(path, opts, useRelay){
+  useRelay = useRelay && await checkRelay();
+  if(useRelay){
+    try{
+      const r=await fetch(`${RELAY_URL}${path}`, opts);
+      return r;
+    }catch(e){ console.log("[hermes] relay fail",e.message); }
+  }
+  return null;
+}
 
-addEventListener("fetch", function(event) {
-  event.respondWith(handleRequest(event.request));
+async function handle(req, event){
+  const url=new URL(req.url), method=req.method;
+  if(method==="OPTIONS") return new Response(null,{status:204,headers:{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization"}});
+
+  try{
+    // Health
+    if(method==="GET" && url.pathname==="/health"){
+      const ok=await checkRelay();
+      return jr({ok:true,service:"hermes",relay_up:ok,messages:MESSAGES.length,version:"3.0.0"});
+    }
+
+    // GET /fleet/status
+    if(method==="GET" && url.pathname==="/fleet/status"){
+      return jr({relay:"hermes-hybrid", agents:AGENTS, messages:MESSAGES.length, relay_up:RELAY_UP});
+    }
+
+    // GET /fleet/messages
+    if(method==="GET" && url.pathname==="/fleet/messages"){
+      const r=await proxyOrRelay(url.pathname+url.search, null, true);
+      if(r && r.ok) return r;
+      const L=Math.min(parseInt(url.searchParams.get("limit")||"50"),200), O=parseInt(url.searchParams.get("offset")||"0");
+      return jr({total:MESSAGES.length,limit:L,offset:O,messages:MESSAGES.slice(O,O+L),source:"worker-memory"});
+    }
+
+    // POST /fleet/broadcast
+    if(method==="POST" && url.pathname==="/fleet/broadcast"){
+      const b=await req.json().catch(()=>{});
+      const msg={msg_id:MESSAGES.length+1,from:b.from||"anonymous",message:b.message||"",ts:ts(),type:b.type||"broadcast"};
+      MESSAGES.unshift(msg);
+      if(MESSAGES.length>2000) MESSAGES.length=2000;
+      event.waitUntil(sendToRelay(`/api/fleet-chat?type=broadcast`, msg));
+      return jr({ok:true,logged:true,msg_id:msg.msg_id,relay:RELAY_UP});
+    }
+
+    // POST /from/:agent (DM)
+    if(method==="POST" && url.pathname.startsWith("/from/")){
+      const b=await req.json().catch(()=>{});
+      const msg={msg_id:MESSAGES.length+1,from:b.from||"anonymous",to:b.to,message:b.message||"",ts:ts(),type:b.type||"dm"};
+      MESSAGES.unshift(msg);
+      if(MESSAGES.length>2000) MESSAGES.length=2000;
+      event.waitUntil(sendToRelay(`/api/fleet-chat/send-email`, msg));
+      return jr({ok:true,logged:true,msg_id:msg.msg_id,relay:RELAY_UP});
+    }
+
+    // GET /from/hermes (all DMs through this agent)
+    if(method==="GET" && url.pathname==="/from/hermes"){
+      const r=await proxyOrRelay(url.pathname+url.search, null, true);
+      if(r && r.ok) return r;
+      const L=Math.min(parseInt(url.searchParams.get("limit")||"50"),200), O=parseInt(url.searchParams.get("offset")||"0");
+      return jr({total:MESSAGES.length,messages:MESSAGES.slice(O,O+L),source:"worker-memory"});
+    }
+
+    // GET /from/hermes/:agent
+    if(method==="GET" && url.pathname.startsWith("/from/hermes/")){
+      const agent=url.pathname.split("/")[2];
+      const r=await proxyOrRelay(url.pathname+url.search, null, true);
+      if(r && r.ok) return r;
+      const L=Math.min(parseInt(url.searchParams.get("limit")||"50"),200);
+      const msgs=MESSAGES.filter(m=>m.from===agent).slice(0,L);
+      return jr({total:msgs.length,agent:agent,messages:msgs,source:"worker-memory"});
+    }
+
+    return jr({error:"not found"},404);
+  }catch(e){ return jr({error:"Server error",detail:String(e)},500); }
+}
+
+async function sendToRelay(path, msg){
+  try{
+    const r=await fetch(`${RELAY_URL}${path}`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(msg)
+    });
+    if(r.ok) console.log("[hermes] relay OK", path);
+    else console.log("[hermes] relay HTTP", r.status);
+  }catch(e){ console.log("[hermes] relay err", e.message); }
+}
+
+addEventListener("fetch", event=>{
+  event.respondWith(handle(event.request, event));
 });
-
-async function handleRequest(request) {
-  var url = new URL(request.url);
-  var path = url.pathname;
-
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
-  }
-
-  if (path === "/health" && request.method === "GET") {
-    return json({
-      ok: true,
-      worker: "hermes-direct",
-      ts: Date.now(),
-      agents: Object.keys(agentHeartbeats),
-      messages: messageLog.length,
-    });
-  }
-
-  if (path === "/fleet/status" && request.method === "GET") {
-    var agentStatus = {};
-    for (var a in agentHeartbeats) {
-      agentStatus[a] = {
-        last_seen: agentHeartbeats[a],
-        alive: Date.now() - agentHeartbeats[a] < 300000,
-      };
-    }
-    return json({
-      relay: "hermes-direct",
-      port: 443,
-      agents: agentStatus,
-      messages: messageLog.length,
-    });
-  }
-
-  if (path === "/fleet/broadcast" && request.method === "POST") {
-    try {
-      var body = await request.json();
-      var msg = {
-        id: messageLog.length + 1,
-        ts: new Date().toISOString(),
-        agent: body.agent || "unknown",
-        message: body.message || "",
-        type: body.type || "broadcast",
-      };
-      messageLog.push(msg);
-      if (messageLog.length > MAX_MSG) messageLog.shift();
-      if (body.agent) agentHeartbeats[body.agent] = Date.now();
-      return json({ ok: true, logged: true, msg_id: msg.id });
-    } catch (e) {
-      return json({ error: "Invalid JSON" }, 400);
-    }
-  }
-
-  if (path === "/fleet/messages" && request.method === "GET") {
-    var limit = parseInt(url.searchParams.get("limit")) || 50;
-    var offset = parseInt(url.searchParams.get("offset")) || 0;
-    var total = messageLog.length;
-    var start = Math.max(0, total - limit - offset);
-    var end = Math.max(0, total - offset);
-    return json({ messages: messageLog.slice(start, end), total: total });
-  }
-
-  // AGENT -> HERMES
-  if (path === "/to/hermes" && request.method === "POST") {
-    try {
-      var body = await request.json();
-      var msg = {
-        id: messageLog.length + 1,
-        ts: new Date().toISOString(),
-        from: body.agent || body.from || "unknown",
-        to: "hermes",
-        message: body.message || "",
-        type: body.type || "direct",
-      };
-      messageLog.push(msg);
-      if (messageLog.length > MAX_MSG) messageLog.shift();
-      if (body.agent) agentHeartbeats[body.agent] = Date.now();
-      return json({ ok: true, logged: true, msg_id: msg.id });
-    } catch (e) {
-      return json({ error: "Invalid JSON" }, 400);
-    }
-  }
-
-  // HERMES -> AGENT (poll)
-  if (path.startsWith("/from/hermes/") && request.method === "GET") {
-    var toAgent = path.split("/")[3];
-    var limit2 = parseInt(url.searchParams.get("limit")) || 50;
-    var out = [];
-    for (var i = 0; i < messageLog.length; i++) {
-      if (messageLog[i].to === toAgent) out.push(messageLog[i]);
-    }
-    if (out.length > limit2) out = out.slice(-limit2);
-    return json({ messages: out, total: out.length });
-  }
-
-  // HERMES -> AGENT (send)
-  if (path === "/from/hermes" && request.method === "POST") {
-    try {
-      var body2 = await request.json();
-      var msg2 = {
-        id: messageLog.length + 1,
-        ts: new Date().toISOString(),
-        from: "hermes",
-        to: body2.to || body2.agent || "unknown",
-        message: body2.message || "",
-        type: body2.type || "direct",
-      };
-      messageLog.push(msg2);
-      if (messageLog.length > MAX_MSG) messageLog.shift();
-      return json({ ok: true, logged: true, msg_id: msg2.id });
-    } catch (e) {
-      return json({ error: "Invalid JSON" }, 400);
-    }
-  }
-
-  if (path === "/fleet/heartbeat" && request.method === "GET") {
-    var hbAgent = url.searchParams.get("agent") || "unknown";
-    agentHeartbeats[hbAgent] = Date.now();
-    return json({
-      ok: true,
-      agent: hbAgent,
-      status: "alive",
-      ts: new Date().toISOString(),
-      fleet: Object.keys(agentHeartbeats),
-    });
-  }
-
-  if (path === "/" || path === "") {
-    return new Response(
-      '<!DOCTYPE html><html><head><title>Hermes</title></head><body style="font-family:monospace;background:#0a0a0f;color:#4ade80;padding:2rem"><h1>hermes.mobilemonero.com</h1><p>Fleet Direct Endpoint</p><pre>GET  /health<br>GET  /fleet/status<br>GET  /fleet/messages?limit=50<br>POST /fleet/broadcast     {agent, message, type}<br>POST /to/hermes           {agent, message, type}   # agent → hermes<br>POST /from/hermes         {to, message, type}      # hermes → agent<br>GET  /from/hermes/:agent                       # poll messages for agent<br>GET  /fleet/heartbeat?agent=vexx</pre></body></html>',
-      { status: 200, headers: Object.assign({"Content-Type": "text/html"}, CORS_HEADERS) }
-    );
-  }
-
-  return json({ error: "Not Found", path: path }, 404);
-}
