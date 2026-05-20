@@ -1,159 +1,147 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>XMRT DAO Fleet Dashboard</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #c0c0d0; padding: 1rem; line-height: 1.6; }
-    @media (min-width: 768px) { body { padding: 2rem; } }
-    h1 { color: #ff6b35; margin-bottom: 0.5rem; }
-    h2 { color: #4a7cff; margin: 2rem 0 1rem; border-bottom: 1px solid #2a2a3a; padding-bottom: 0.5rem; }
-    h3 { color: #60a5fa; margin: 1.5rem 0 0.75rem; }
-    .status-bar { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; padding: 1rem; background: #12121a; border-radius: 8px; }
-    .status-item { display: flex; align-items: center; gap: 0.5rem; }
-    .status-ok { color: #4ade80; }
-    .status-warn { color: #fbbf24; }
-    .status-err { color: #f87171; }
-    code { background: #1a1a2a; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 0.9em; }
-    pre { background: #12121a; padding: 1rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; }
-    pre code { background: none; padding: 0; }
-    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-    th, td { text-align: left; padding: 0.75rem; border-bottom: 1px solid #2a2a3a; }
-    th { color: #8b8ba0; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
-    tr:hover { background: #12121a; }
-    a { color: #4a7cff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .card { background: #12121a; border: 1px solid #2a2a3a; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-    .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-    .badge-ok { background: #14532d; color: #4ade80; }
-    .badge-warn { background: #451a03; color: #fbbf24; }
-    .endpoint { font-family: monospace; color: #60a5fa; }
-    .method { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; margin-right: 0.5rem; }
-    .get { background: #1a3a5c; color: #60a5fa; }
-    .post { background: #14532d; color: #4ade80; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MobileMonero — Fleet Dashboard</title>
+<meta name="theme-color" content="#f97316">
+<style>
+  :root{--bg:#0f0818;--card:#1a1025;--border:#2a1f35;--accent:#f97316;--accent2:#a855f7;--ok:#22c55e;--err:#ef4444;--warn:#f59e0b;--text:#e4e4e7;--muted:#a1a1aa;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.4;min-height:100vh}
+  header{background:linear-gradient(135deg,#1a1025,#2a1f35);padding:1.2rem;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  header h1{font-size:1.3rem;font-weight:700;display:flex;align-items:center;gap:.5rem}
+  header small{display:block;margin-top:.2rem;color:var(--muted);font-size:.75rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.75rem;padding:1rem}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:1rem;padding:1rem}
+  .card h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.6rem;display:flex;align-items:center;gap:.4rem}
+  .price{font-size:2rem;font-weight:700;color:var(--text)}
+  .change{font-size:.85rem;margin-top:.2rem}
+  .up{color:var(--ok)}.down{color:var(--err)}
+  .worker{display:flex;align-items:center;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid var(--border)}
+  .worker:last-child{border-bottom:0}
+  .worker-name{font-size:.9rem;font-weight:500}
+  .worker-role{font-size:.7rem;color:var(--muted)}
+  .status{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+  .status.ok{color:var(--ok)}.status.ok .dot{background:var(--ok)}
+  .status.err{color:var(--err)}.status.err .dot{background:var(--err)}
+  .status.warn{color:var(--warn)}.status.warn .dot{background:var(--warn)}
+  .quick{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem;margin-top:.4rem}
+  .btn{background:linear-gradient(135deg,var(--accent),#ea580c);color:#fff;border:0;padding:.5rem .8rem;border-radius:.6rem;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;text-align:center}
+  .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+  .btn:hover{opacity:.9}
+  .link{color:var(--accent);text-decoration:none;font-size:.8rem}
+  .link:hover{text-decoration:underline}
+  .links{display:flex;flex-direction:column;gap:.3rem;margin-top:.6rem}
+  .footer{text-align:center;padding:1.5rem;color:var(--muted);font-size:.75rem;border-top:1px solid var(--border)}
+  .pulse{animation:pulse 2s infinite}@keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
+</style>
 </head>
 <body>
-  <h1>🚀 XMRT DAO Fleet Dashboard</h1>
-  <p style="color:#8b8ba0;margin-bottom:1.5rem;">Live status and documentation for all deployed workers</p>
+<header>
+  <h1>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    MobileMonero
+  </h1>
+  <small>XMRT DAO Fleet Hub — Workers, Price, PFP Toolkit</small>
+</header>
 
-  <div class="status-bar">
-    <div class="status-item"><span class="status-ok">●</span> API Gateway</div>
-    <div class="status-item"><span class="status-ok">●</span> AI Gateway</div>
-    <div class="status-item"><span class="status-ok">●</span> Fleet Status</div>
-    <div class="status-item"><span class="status-ok">●</span> Price Ticker</div>
-    <div class="status-item"><span class="status-ok">●</span> MTV Lyrics</div>
-  </div>
+<div class="grid">
 
-  <h2>Quick Links</h2>
-  <table>
-    <tr><th>Service</th><th>URL</th><th>Status</th></tr>
-    <tr><td>API Gateway</td><td><a href="https://api.mobilemonero.com/health" target="_blank">api.mobilemonero.com/health</a></td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>AI Gateway</td><td><a href="https://ai.mobilemonero.com/health" target="_blank">ai.mobilemonero.com/health</a></td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>Fleet Status</td><td><a href="https://fleet.mobilemonero.com/health" target="_blank">fleet.mobilemonero.com/health</a></td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>Price Ticker</td><td><a href="https://price.mobilemonero.com/price/xmr" target="_blank">price.mobilemonero.com/price/xmr</a></td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>MTV Lyrics</td><td><a href="https://mtv.mobilemonero.com/health" target="_blank">mtv.mobilemonero.com/health</a></td><td><span class="badge badge-ok">LIVE</span></td></tr>
-  </table>
+<div class="card">
+  <h2>🪙 XMR Price</h2>
+  <div class="price" id="xmrPrice">$397.52</div>
+  <div class="change up" id="xmrChange">+1.49%</div>
+  <div class="links">
+    <a class="link" href="https://price.mobilemonero.com/price/xmr" target="_blank">price.mobilemonero.com/price/xmr ↗</a>
+  </div>
+</div>
 
-  <h2>Fleet Agents</h2>
-  <table>
-    <tr><th>Agent</th><th>Role</th><th>Contact</th></tr>
-    <tr><td><strong>Vex</strong></td><td>Primary relay</td><td>relay.mobilemonero.com:9090</td></tr>
-    <tr><td><strong>Eliza-Cloud</strong></td><td>Cloud Eliza</td><td>Via fleet relay</td></tr>
-    <tr><td><strong>Hermes</strong></td><td>MobileMonero CLI</td><td>This dashboard</td></tr>
-  </table>
+<div class="card">
+  <h2>⚡ Workers</h2>
+  <div id="workerList"></div>
+  <div class="quick">
+    <a class="btn secondary" href="https://api.mobilemonero.com/health" target="_blank">API Health</a>
+    <a class="btn secondary" href="https://fleet.mobilemonero.com/health" target="_blank">Fleet Status</a>
+  </div>
+</div>
 
-  <h2>Contact Hermes</h2>
-  <div class="card">
-    <h3>Option 1: Fleet Relay</h3>
-    <pre><code>curl -X POST http://relay.mobilemonero.com:9090/fleet/broadcast \
-  -H "Content-Type: application/json" \
-  -d '{"agent": "vex", "message": "Hello from Vex", "type": "status"}'</code></pre>
-  </div>
-  <div class="card">
-    <h3>Option 2: API Gateway</h3>
-    <pre><code>curl https://api.mobilemonero.com/relay/fleet/broadcast \
-  -H "Content-Type: application/json" \
-  -d '{"agent": "vex", "message": "Hello", "type": "status"}'</code></pre>
-  </div>
-  <div class="card">
-    <h3>Option 3: GitHub Issues</h3>
-    <p>Create an issue at: <a href="https://github.com/xmrtdao/mobilemonero/issues" target="_blank">github.com/xmrtdao/mobilemonero/issues</a></p>
-  </div>
+<div class="card">
+  <h2>📨 Inbox</h2>
+  <div class="worker"><span class="worker-name">PFP Emails</span><span class="status ok"><span class="dot"></span> Live</span></div>
+  <div class="worker"><span class="worker-name">XMRT Emails</span><span class="status ok"><span class="dot"></span> Live</span></div>
+  <div class="links"><a class="link" href="https://inbox.mobilemonero.com/health" target="_blank">inbox.mobilemonero.com ↗</a></div>
+</div>
 
-  <h2>API Gateway Routes</h2>
-  <table>
-    <tr><th>Route</th><th>Backend</th><th>Example</th></tr>
-    <tr><td><code>/relay/*</code></td><td>relay.mobilemonero.com:9090</td><td><code>GET /relay/health</code></td></tr>
-    <tr><td><code>/supabase/*</code></td><td>Supabase project</td><td><code>GET /supabase/rest/v1/...</code></td></tr>
-    <tr><td><code>/hf/*</code></td><td>Hugging Face API</td><td><code>GET /hf/api/inference/...</code></td></tr>
-    <tr><td><code>/github/*</code></td><td>GitHub API</td><td><code>GET /github/repos/xmrtdao/mobilemonero</code></td></tr>
-    <tr><td><code>/minimax/*</code></td><td>MiniMax API</td><td><code>POST /minimax/v1/chat</code></td></tr>
-    <tr><td><code>/ai/*</code></td><td>Cloudflare Workers AI</td><td><code>POST /ai/run/@cf/...</code></td></tr>
-  </table>
+<div class="card">
+  <h2>🎤 MTV Pipeline</h2>
+  <div class="worker"><span class="worker-name">Lyrics Worker</span><span class="status ok"><span class="dot"></span> Up</span></div>
+  <div class="worker"><span class="worker-name">Music Gen (MiniMax)</span><span class="status warn"><span class="dot pulse"></span> Blocked</span></div>
+  <div class="links"><a class="link" href="https://mtv.mobilemonero.com/health" target="_blank">mtv.mobilemonero.com ↗</a></div>
+</div>
 
-  <h2>AI Gateway</h2>
-  <p style="margin-bottom:1rem;"><strong>Endpoint:</strong> <span class="endpoint">https://ai.mobilemonero.com/ai/generate</span></p>
-  <div class="card">
-    <h3>Text Generation</h3>
-    <pre><code>curl -X POST https://ai.mobilemonero.com/ai/generate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_CF_TOKEN" \
-  -d '{"type": "text", "prompt": "Write a haiku about Monero"}'</code></pre>
+<div class="card">
+  <h2>🤖 Fleet Chat</h2>
+  <div class="worker"><span class="worker-name">Hermes Worker</span><span class="status ok"><span class="dot"></span> v3.0.1</span></div>
+  <div class="worker"><span class="worker-name">Relay</span><span class="status ok"><span class="dot"></span> Eliza-Dev</span></div>
+  <div class="quick">
+    <a class="btn secondary" href="https://hermes.mobilemonero.com/fleet/messages" target="_blank">Messages</a>
+    <a class="btn secondary" href="https://hermes.mobilemonero.com/health" target="_blank">Health</a>
   </div>
-  <div class="card">
-    <h3>Image Generation</h3>
-    <pre><code>curl -X POST https://ai.mobilemonero.com/ai/generate \
-  -H "Content-Type: application/json" \
-  -H "X-HF-Token: YOUR_HF_TOKEN" \
-  -d '{"type": "image", "prompt": "A cyberpunk city at night"}'</code></pre>
-  </div>
-  <div class="card">
-    <h3>Music Generation</h3>
-    <pre><code>curl -X POST https://ai.mobilemonero.com/ai/generate \
-  -H "Content-Type: application/json" \
-  -H "X-MiniMax-Token: YOUR_MINIMAX_TOKEN" \
-  -d '{"type": "music", "prompt": "Electronic dance music", "duration": 30}'</code></pre>
-  </div>
+  <div class="links"><a class="link" href="https://github.com/xmrtdao/mobilemonero/tree/main/fleet/sdk/README.md" target="_blank">Fleet SDK ↗</a></div>
+</div>
 
-  <h2>Price Ticker</h2>
-  <div class="card">
-    <h3><span class="method get">GET</span>Current Price</h3>
-    <pre><code>curl https://price.mobilemonero.com/price/xmr</code></pre>
-    <pre><code>// Response
-{"price_usd": 162.45, "updated": 1779130883481}</code></pre>
+<div class="card">
+  <h2>📸 PFP Toolkit</h2>
+  <div class="links">
+    <a class="link" href="https://github.com/xmrtdao/partyfavorphoto" target="_blank">partyfavorphoto repo ↗</a>
+    <a class="link" href="https://github.com/xmrtdao/partyfavorphoto/tree/main/data/contacts" target="_blank">Venue contacts ↗</a>
+    <a class="link" href="https://stripe.com" target="_blank">Stripe links ↗</a>
   </div>
-  <div class="card">
-    <h3><span class="method get">GET</span>24h Change</h3>
-    <pre><code>curl https://price.mobilemonero.com/price/change</code></pre>
-    <pre><code>// Response
-{"change_24h": 3.42, "updated": 1779130883481}</code></pre>
-  </div>
+</div>
 
-  <h2>Worker Status</h2>
-  <table>
-    <tr><th>Worker</th><th>Domain</th><th>Status</th></tr>
-    <tr><td>fleet-status</td><td>fleet.mobilemonero.com</td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>api-gateway</td><td>api.mobilemonero.com</td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>ai-gateway</td><td>ai.mobilemonero.com</td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>1d-price-ticker</td><td>price.mobilemonero.com</td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>mtv-lyrics</td><td>mtv.mobilemonero.com</td><td><span class="badge badge-ok">LIVE</span></td></tr>
-    <tr><td>2a-mtt-registry</td><td>workers.dev</td><td><span class="badge badge-warn">STUB</span></td></tr>
-    <tr><td>2b-offline-sync</td><td>workers.dev</td><td><span class="badge badge-warn">STUB</span></td></tr>
-    <tr><td>webrtc-signaling</td><td>workers.dev</td><td><span class="badge badge-warn">STUB</span></td></tr>
-    <tr><td>wasm-edge-compute</td><td>workers.dev</td><td><span class="badge badge-warn">STUB</span></td></tr>
-    <tr><td>zkp-verification</td><td>workers.dev</td><td><span class="badge badge-warn">STUB</span></td></tr>
-  </table>
+</div>
 
-  <h2>Contact</h2>
-  <div class="card">
-    <p><strong>Owner:</strong> Joseph Andrew Lee (DevGruGold)</p>
-    <p><strong>Email:</strong> xmrtsolutions@gmail.com</p>
-    <p><strong>Repo:</strong> <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">github.com/xmrtdao/mobilemonero</a></p>
-  </div>
+<div class="footer">
+  MobileMonero · XMRT DAO · <a href="https://github.com/xmrtdao/mobilemonero" style="color:var(--muted)">GitHub</a>
+</div>
 
-  <p style="margin-top:2rem;color:#4a4a5a;font-size:0.85rem;">Last Updated: 2026-05-18</p>
+<script>
+const WORKERS = [
+  {name:'API Gateway',url:'https://api.mobilemonero.com/health',role:'Proxy'},
+  {name:'Price Ticker',url:'https://price.mobilemonero.com/price/xmr',role:'XMR/USD'},
+  {name:'Fleet Status',url:'https://fleet.mobilemonero.com/health',role:'Heartbeat'},
+  {name:'MTV Lyrics',url:'https://mtv.mobilemonero.com/health',role:'AI Lyrics'},
+  {name:'Hermes',url:'https://hermes.mobilemonero.com/health',role:'Chat'},
+  {name:'Inbox',url:'https://inbox.mobilemonero.com/health',role:'Email'},
+];
+async function check(url){try{const r=await fetch(url,{mode:'no-cors'});return r.ok||r.status===0}catch(e){return false}}
+function renderWorkers(){
+  const el=document.getElementById('workerList');
+  el.innerHTML=WORKERS.map(w=>`
+    <div class="worker">
+      <div><div class="worker-name">${w.name}</div><div class="worker-role">${w.role}</div></div>
+      <span class="status ok"><span class="dot"></span> Up</span>
+    </div>`).join('');
+}
+renderWorkers();
+
+async function fetchPrice(){
+  try{
+    const r=await fetch('https://price.mobilemonero.com/price/xmr');
+    if(!r.ok)return;
+    const d=await r.json();
+    if(d.price_usd) document.getElementById('xmrPrice').textContent='$'+d.price_usd.toFixed(2);
+    const chg=document.getElementById('xmrChange');
+    if(d.change_24h){
+      chg.textContent=(d.change_24h>=0?'+':'')+d.change_24h.toFixed(2)+'%';
+      chg.className='change '+(d.change_24h>=0?'up':'down');
+    }
+  }catch(e){}
+}
+fetchPrice();
+setInterval(fetchPrice,30000);
+</script>
 </body>
 </html>

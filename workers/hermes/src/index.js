@@ -56,8 +56,8 @@ async function handle(req, event){
   try{
     // Health
     if(method==="GET" && url.pathname==="/health"){
-      const ok=await checkRelay();
-      return jr({ok:true,service:"hermes",relay_up:ok,messages:MESSAGES.length,version:"3.0.0"});
+      let ok=false; try{ await checkRelay(); ok=RELAY_UP; }catch(e){}
+      return jr({ok:true,service:"hermes",relay_up:ok,messages:MESSAGES.length,version:"3.0.1"});
     }
 
     // GET /fleet/status

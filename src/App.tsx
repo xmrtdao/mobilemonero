@@ -64,12 +64,22 @@ interface Worker {
   wallet: string
 }
 
+interface FleetWorker {
+  id: string
+  route: string
+  url: string
+  role: string
+  status: 'up' | 'down' | 'unknown'
+  version?: string
+}
+
 interface Stats {
   totalHashrate: number
   totalAccepted: number
   totalRejected: number
   estimatedDailyXmr: number
   xmrPrice: number
+  xmrChange24h: number
   networkDifficulty: string
   blockHeight: number
 }
@@ -87,10 +97,20 @@ const DEMO_STATS: Stats = {
   totalAccepted: 8047,
   totalRejected: 16,
   estimatedDailyXmr: 0.00042,
-  xmrPrice: 178.34,
+  xmrPrice: 397.52,
+  xmrChange24h: 1.49,
   networkDifficulty: '2.34e11',
   blockHeight: 3284567,
 }
+
+const FLEET_WORKERS: FleetWorker[] = [
+  { id: 'api-gateway', route: 'api.mobilemonero.com', url: 'https://api.mobilemonero.com/health', role: 'API Proxy', status: 'up' },
+  { id: 'price-ticker', route: 'price.mobilemonero.com', url: 'https://price.mobilemonero.com/price/xmr', role: 'XMR Price', status: 'up' },
+  { id: 'hermes', route: 'hermes.mobilemonero.com', url: 'https://hermes.mobilemonero.com/health', role: 'Fleet Chat', status: 'up', version: '3.0.1' },
+  { id: 'inbox', route: 'inbox.mobilemonero.com', url: 'https://inbox.mobilemonero.com/health', role: 'Email Inbox', status: 'up', version: '1.0.0' },
+  { id: 'mtv-lyrics', route: 'mtv.mobilemonero.com', url: 'https://mtv.mobilemonero.com/health', role: 'MTV Pipeline', status: 'up' },
+  { id: 'fleet-status', route: 'fleet.mobilemonero.com', url: 'https://fleet.mobilemonero.com/health', role: 'Fleet Status', status: 'up' },
+]
 
 function formatHashrate(h: number): string {
   if (h >= 1000) return (h / 1000).toFixed(2) + ' KH/s'
