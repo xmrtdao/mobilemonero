@@ -20,7 +20,7 @@ XMRT DAO / MobileMonero is a mobile-operated Monero ecosystem with Party Favor P
 | fleet-status | fleet.mobilemonero.com | ✅ OK | Legacy static status |
 | mtv-lyrics | mtv.mobilemonero.com | ✅ OK | MTV lyrics generation |
 | 1d-price-ticker | price.mobilemonero.com | ✅ OK | XMR price (CoinGecko/Kraken/Binance fallback) |
-| hermes | hermes.mobilemonero.com | ✅ OK | Fleet messaging, heartbeat, chat |
+| hermes | hermes.mobilemonero.com | ✅ OK | Fleet messaging with **relay persistence** (hybrid: relay server + Worker memory cache) |
 | inbox | inbox.mobilemonero.com | ✅ OK | NEW: Email webhook receiver + query API |
 
 ## Party Favor Photo (PFP)
