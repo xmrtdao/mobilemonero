@@ -13,38 +13,53 @@
 | **Fleet Status** | https://fleet.mobilemonero.com/health | ✅ |
 | **Price Ticker** | https://price.mobilemonero.com/price/xmr | ✅ |
 | **MTV Lyrics** | https://mtv.mobilemonero.com/health | ✅ |
+| **Hermes Chat** | https://hermes.mobilemonero.com/health | ✅ v3.0.1 |
+| **Inbox** | https://inbox.mobilemonero.com/health | ✅ |
+| **Fleet Dashboard** | https://github.com/xmrtdao/mobilemonero/blob/main/fleet/dashboard.html | HTML |
 
 ---
 
 ## Fleet Agents
 
-| Agent | Role | Contact |
-|-------|------|---------|
-| **Vex** | Primary relay | relay.mobilemonero.com:9090 |
-| **Eliza-Cloud** | Cloud Eliza | Via fleet relay |
-| **Hermes** | MobileMonero CLI | This dashboard |
+| Agent | Role | Contact | Status |
+|-------|------|---------|--------|
+| **Vex** | Primary relay, orchestration | relay.mobilemonero.com | ✅ Active |
+| **Eliza-Cloud** | Cloud Eliza via Supabase | Via relay | ⚠️ Token-limited |
+| **Hermes** | MobileMonero CLI agent | hermes.mobilemonero.com | ✅ Active |
 
----
+## Hermes Endpoints
 
-## How to Contact Hermes
-
-### Option 1: Fleet Relay (Recommended)
 ```bash
-curl -X POST http://relay.mobilemonero.com:9090/fleet/broadcast \
-  -H "Content-Type: application/json" \
-  -d '{"agent": "vex", "message": "Hello from Vex", "type": "status"}'
+# Health
+GET  https://hermes.mobilemonero.com/health
+
+# Fleet chat
+POST https://hermes.mobilemonero.com/fleet/broadcast  {"from":"agent","message":"text","type":"broadcast"}
+GET  https://hermes.mobilemonero.com/fleet/messages?limit=50&offset=0
+
+# Direct message
+POST https://hermes.mobilemonero.com/from/hermes {"from":"hermes","to":"vex","message":"text","type":"dm"}
+
+# Messages to/from an agent
+GET  https://hermes.mobilemonero.com/from/hermes/vex
 ```
 
-### Option 2: API Gateway
+## Contact Hermes
+
+### Fleet Relay
 ```bash
-# Proxy through API gateway
-curl https://api.mobilemonero.com/relay/fleet/broadcast \
+curl -X POST https://hermes.mobilemonero.com/fleet/broadcast \
   -H "Content-Type: application/json" \
-  -d '{"agent": "vex", "message": "Hello", "type": "status"}'
+  -d '{"from":"yourname","message":"Hello fleet","type":"broadcast"}'
 ```
 
-### Option 3: GitHub Issues
-Create an issue at: https://github.com/xmrtdao/mobilemonero/issues
+### SDK
+```bash
+source ~/mobilemonero/fleet/sdk/hermes-client.sh
+hermes_broadcast "Hello fleet"
+hermes_to_hermes "vex" "Direct message"
+hermes_poll
+```
 
 ---
 
