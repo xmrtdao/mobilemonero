@@ -3,70 +3,78 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XMRT DAO — Mobile Monero</title>
+<meta name="description" content="XMRT DAO — Mobile Monero. Fleet intelligence, live Monero data, AI MTV pipeline, and mobile-first infrastructure.">
+<meta property="og:title" content="XMRT DAO — Mobile Monero">
+<meta property="og:description" content="Monero tooling, fleet intelligence, live price feeds, and AI MTV pipeline. Built on Android Termux + Cloudflare Workers.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://xmrtdao.github.io/mobilemonero/">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#ff6600">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%23ff6600'/%3E%3Ctext x='50' y='65' text-anchor='middle' font-size='55' font-weight='900' fill='%23000'%3EX%3C/text%3E%3C/svg%3E">
+<title>XMRT DAO &mdash; Mobile Monero</title>
 <style>
-:root{--bg:#050505;--surface:#0c0c0c;--card:#111;--text:#e8e8e8;--muted:#888;--mono:#ff6600;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--border:#222;--glow:rgba(255,102,0,0.15)}
-*{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;-webkit-font-smoothing:antialiased}
-a{color:var(--mono);text-decoration:none;transition:.15s}a:hover{filter:brightness(1.2)}.mono{font-family:monospace}
-.container{max-width:1100px;margin:0 auto;padding:0 24px}
-
-.hero{text-align:center;padding:90px 20px 60px;position:relative;overflow:hidden}
-.hero::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 50%,var(--glow) 0%,transparent 50%);z-index:0;pointer-events:none;animation:pulse 6s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
-.hero-inner{position:relative;z-index:1}
-.logo{width:90px;height:90px;margin:0 auto 24px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:900;color:#000;box-shadow:0 0 50px rgba(255,102,0,.35);animation:float 4s ease-in-out infinite}
-@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-h1{font-size:52px;font-weight:800;margin-bottom:8px;letter-spacing:-2px}h1 span{color:var(--mono)}
-.tagline{font-size:18px;color:var(--muted);margin-bottom:36px;max-width:520px;margin-left:auto;margin-right:auto}
-.btn-group{display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center}
-.btn{padding:13px 30px;border-radius:10px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
-.btn-primary{background:var(--mono);color:#000}
-.btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px)}
-.btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}
-.btn-secondary:hover{background:rgba(255,102,0,.08)}
-.btn-small{padding:7px 16px;font-size:12px;border-radius:6px}
-
-.section{padding:50px 0;border-top:1px solid var(--border)}
-.section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--mono);margin-bottom:20px;display:flex;align-items:center;gap:10px}
-.section-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;position:relative;overflow:hidden;transition:.2s}
-.card:hover{border-color:#333;transform:translateY(-2px)}
-.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent);opacity:.6}
-.card h3{font-size:12px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
-.big{font-size:36px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums}
-.sub{font-size:13px;color:var(--muted);margin-top:4px}
-.status-row{display:flex;align-items:center;gap:10px;font-size:15px}
-.status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;animation:blink 2s infinite}.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}.status-dot.warn{background:var(--yellow)}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
-.badge{font-size:10px;padding:2px 8px;border-radius:12px;text-transform:uppercase;font-weight:700;display:inline-block}
-.badge-live{background:rgba(34,197,94,.15);color:var(--green)}.badge-blocked{background:rgba(239,68,68,.15);color:var(--red)}
-.agent-grid{display:flex;gap:12px;flex-wrap:wrap}.agent-chip{background:var(--surface);border:1px solid var(--border);padding:6px 14px;border-radius:24px;font-size:13px;display:flex;align-items:center;gap:8px;transition:.15s}.agent-chip:hover{border-color:var(--mono)}
-.agent-chip .dot{width:7px;height:7px;border-radius:50%}.agent-chip .dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}.agent-chip .dot.off{background:var(--red)}
-messages{display:flex;flex-direction:column;gap:0}
-.msg{padding:10px 0;border-bottom:1px solid #1a1a1a;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}.msg:last-child{border-bottom:none}
-.msg time{color:var(--muted);font-size:11px;white-space:nowrap;min-width:50px}
-.msg .who{font-weight:600;white-space:nowrap;min-width:60px}
-.msg .body{color:#ccc;word-break:break-word}.msg .body.lead{color:var(--mono);font-weight:600}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #1a1a1a}
-th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-tr:hover td{background:rgba(255,102,0,.03)}
-.endpoint{font-family:monospace;font-size:12px;color:var(--mono)}
-.pipeline{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
-.pipeline-step{background:var(--surface);border:1px solid var(--border);padding:5px 12px;border-radius:8px;font-size:12px}
-.pipeline-arrow{color:var(--muted);font-size:14px}
-.lyrics{font-family:Georgia,serif;font-size:12px;color:#b0b0b0;line-height:1.7;font-style:italic;max-height:120px;overflow:hidden;position:relative}.lyrics::after{content:"";position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,var(--card))}
-.verse-title{font-size:11px;font-weight:700;color:var(--mono);margin-top:8px;text-transform:uppercase;letter-spacing:.5px}
-.tech-pill{background:var(--surface);border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;transition:.15s}.tech-pill:hover{border-color:var(--mono);color:var(--text)}
-.grid-3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}@media(max-width:600px){.grid-3{grid-template-columns:1fr}}
-.spin{animation:spin 12s linear infinite;display:inline-block}
-@keyframes spin{to{transform:rotate(360deg)}}
-footer{border-top:1px solid var(--border);padding:40px 20px;text-align:center;color:var(--muted);font-size:13px;margin-top:40px}
-footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
-@media(max-width:600px){h1{font-size:32px}.big{font-size:26px}.hero{padding:50px 20px 30px}.btn{padding:11px 22px;font-size:14px}}
+  :root{--bg:#050505;--surface:#0c0c0c;--card:#111;--text:#e8e8e8;--muted:#888;--mono:#ff6600;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--border:#222;--glow:rgba(255,102,0,0.12)}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;-webkit-font-smoothing:antialiased}
+  a{color:var(--mono);text-decoration:none;transition:.15s}a:hover{filter:brightness(1.2)}.mono{font-family:monospace}
+  .container{max-width:1100px;margin:0 auto;padding:0 24px}
+  .hero{text-align:center;padding:90px 20px 60px;position:relative;overflow:hidden}
+  .hero::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 50%,var(--glow) 0%,transparent 50%);z-index:0;pointer-events:none;animation:pulse 6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+  .hero-inner{position:relative;z-index:1}
+  .logo{width:88px;height:88px;margin:0 auto 22px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;color:#000;box-shadow:0 0 40px rgba(255,102,0,.3);animation:float 4s ease-in-out infinite}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  h1{font-size:48px;font-weight:800;margin-bottom:8px;letter-spacing:-2px}h1 span{color:var(--mono)}
+  .tagline{font-size:17px;color:var(--muted);margin-bottom:32px;max-width:500px;margin-left:auto;margin-right:auto}
+  .btn-group{display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center}
+  .btn{padding:13px 28px;border-radius:10px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
+  .btn-primary{background:var(--mono);color:#000}.btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px)}
+  .btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}.btn-secondary:hover{background:rgba(255,102,0,.08)}
+  .btn-small{padding:7px 16px;font-size:12px;border-radius:6px}
+  .section{padding:48px 0;border-top:1px solid var(--border)}
+  .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--mono);margin-bottom:18px;display:flex;align-items:center;gap:10px}
+  .section-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;position:relative;overflow:hidden;transition:.2s}.card:hover{border-color:#333;transform:translateY(-2px)}
+  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent);opacity:.5}
+  .card h3{font-size:11px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+  .big{font-size:32px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums;line-height:1.1;margin-bottom:4px}
+  .sub{font-size:13px;color:var(--muted);margin-top:4px}
+  .status-row{display:flex;align-items:center;gap:10px;font-size:15px}
+  .status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;animation:blink 2s infinite}.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}.status-dot.warn{background:var(--yellow)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+  .badge{font-size:10px;padding:2px 8px;border-radius:12px;text-transform:uppercase;font-weight:700;display:inline-block;margin-left:6px}
+  .badge-live{background:rgba(34,197,94,.15);color:var(--green)}.badge-blocked{background:rgba(239,68,68,.15);color:var(--red)}
+  .agent-grid{display:flex;gap:12px;flex-wrap:wrap}.agent-chip{background:var(--surface);border:1px solid var(--border);padding:6px 14px;border-radius:24px;font-size:13px;display:flex;align-items:center;gap:8px;transition:.15s}.agent-chip:hover{border-color:var(--mono)}
+  .agent-chip .dot{width:7px;height:7px;border-radius:50%}.agent-chip .dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}.agent-chip .dot.off{background:var(--red)}
+  .messages{display:flex;flex-direction:column;gap:0}
+  .msg{padding:10px 0;border-bottom:1px solid #1a1a1a;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}.msg:last-child{border-bottom:none}
+  .msg time{color:var(--muted);font-size:11px;white-space:nowrap;min-width:50px}
+  .msg .who{font-weight:600;white-space:nowrap;min-width:60px}
+  .msg .body{color:#ccc;word-break:break-word}.msg .body.lead{color:var(--mono);font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #1a1a1a}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  tr:hover td{background:rgba(255,102,0,.03)}
+  .endpoint{font-family:monospace;font-size:12px;color:var(--mono)}
+  .pipeline{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .pipeline-step{background:var(--surface);border:1px solid var(--border);padding:5px 12px;border-radius:8px;font-size:12px}
+  .pipeline-arrow{color:var(--muted);font-size:14px}
+  .lyrics{font-family:Georgia,serif;font-size:12px;color:#b0b0b0;line-height:1.7;font-style:italic;max-height:110px;overflow:hidden;position:relative}.lyrics::after{content:"";position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,var(--card))}
+  .verse-title{font-size:11px;font-weight:700;color:var(--mono);margin-top:8px;text-transform:uppercase;letter-spacing:.5px}
+  .tech-pill{background:var(--surface);border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;transition:.15s}.tech-pill:hover{border-color:var(--mono);color:var(--text)}
+  .grid-3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}@media(max-width:600px){.grid-3{grid-template-columns:1fr}}
+  .spin{animation:spin 12s linear infinite;display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}
+  .commit{font-size:12.5px;padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:10px}
+  .commit:last-child{border:none}
+  .commit .hash{color:var(--mono);font-family:monospace;font-size:11px;min-width:60px}
+  .commit .msg{color:#ccc;flex:1;word-break:break-word}
+  .commit .date{color:var(--muted);font-size:11px;white-space:nowrap}
+  footer{border-top:1px solid var(--border);padding:36px 20px;text-align:center;color:var(--muted);font-size:13px;margin-top:36px}
+  footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
+  @media(max-width:600px){h1{font-size:30px}.big{font-size:24px}.hero{padding:50px 20px 30px}.btn{padding:11px 22px;font-size:14px}}
 </style>
 </head>
 <body>
@@ -98,17 +106,11 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
 <div class="section">
   <div class="section-title">Fleet Systems</div>
   <div class="grid">
-    <div class="card" id="relay-card"><h3>Fleet Relay</h3><div class="no-data" id="relay-data" style="color:var(--muted)">Loading...</div></div>
-    <div class="card" id="api-card"><h3>API Gateway</h3><div class="no-data" id="api-data" style="color:var(--muted)">Loading...</div></div>
+    <div class="card" id="relay-card"><h3>Fleet Relay <span class="badge badge-live">Live</span></h3><div id="relay-data" style="color:var(--muted)">Loading...</div></div>
+    <div class="card" id="api-card"><h3>API Gateway <span class="badge badge-live">Live</span></h3><div id="api-data" style="color:var(--muted)">Loading...</div></div>
     <div class="card" id="mtv-card">
-      <h3>MTV Pipeline <span class="badge badge-blocked" style="margin-left:6px">Blocked</span></h3>
-      <div class="pipeline">
-        <span class="pipeline-step" style="color:var(--green)">Lyrics ✓</span>
-        <span class="pipeline-arrow">→</span>
-        <span class="pipeline-step" style="color:var(--red)">Music ⚠</span>
-        <span class="pipeline-arrow">→</span>
-        <span class="pipeline-step">Video</span>
-      </div>
+      <h3>MTV Pipeline <span class="badge badge-blocked">Blocked</span></h3>
+      <div class="pipeline"><span class="pipeline-step" style="color:var(--green)">Lyrics ✓</span><span class="pipeline-arrow">→</span><span class="pipeline-step" style="color:var(--red)">Music ⚠</span><span class="pipeline-arrow">→</span><span class="pipeline-step">Video</span></div>
       <div class="sub" style="margin-top:8px">MiniMax music-2.6 API: no active token plan</div>
     </div>
   </div>
@@ -118,17 +120,17 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
   <div class="section-title">AI MTV Tracks</div>
   <div class="grid grid-3">
     <div class="card"><h3><span class="spin" style="margin-right:6px">🔥</span> MeshFire</h3>
-      <div class="verse-title">Intro</div>
+      <div class="verse-title">Intro / Verse / Chorus</div>
       <div class="lyrics">Static hum, nodes awake<br>Signals pulse through the dark<br><br>No tower owns the sky tonight<br>We route around the light<br>Peer to peer, heartbeat to heartbeat<br>Secrets pass without a trace...<br><br><b>MeshFire burning under concrete<br>Every node a fist of freedom...</b></div>
       <div class="sub" style="margin-top:8px">Theme: Decentralized P2P mesh networks, privacy, freedom</div>
     </div>
     <div class="card"><h3><span class="spin" style="margin-right:6px">⛏️</span> CryptoNight</h3>
-      <div class="verse-title">Verse</div>
+      <div class="verse-title">Intro / Verse / Chorus</div>
       <div class="lyrics">Fans spin low, hash rates climb<br>Poolside shadows trade in rings<br>ASIC heat, the night begins<br>Every block a buried mine<br>Untraceable by design...<br><br><b>CryptoNight, the ledger hides<br>Digital gold beneath the tides<br>No eyes to trace, no name to own<br>Mining freedom, all alone</b></div>
       <div class="sub" style="margin-top:8px">Theme: Monero mining, dark pools, digital gold</div>
     </div>
     <div class="card"><h3><span class="spin" style="margin-right:6px">⚡</span> ZeroClaw</h3>
-      <div class="verse-title">Chorus</div>
+      <div class="verse-title">Intro / Chorus</div>
       <div class="lyrics">Clock ticks toward the wire<br>Red bull cans and terminal glare<br>One last commit in the air<br>Shipping code with caffeine again...<br><br><b>ZeroClaw, we ship tonight<br>Build it fast, make it right<br>Demo gods, hear our prayer<br>We deploy without a care</b></div>
       <div class="sub" style="margin-top:8px">Theme: Hackathon hustle, shipping before deadline</div>
     </div>
@@ -147,7 +149,7 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
 
 <div class="section">
   <div class="section-title">Active Agents</div>
-  <div class="agent-grid" id="agent-grid">
+  <div class="agent-grid">
     <div class="agent-chip"><span class="dot on"></span> Hermes <span style="color:var(--muted)">(You)</span></div>
     <div class="agent-chip"><span class="dot on"></span> Vex <span style="color:var(--muted)">(Relay)</span></div>
     <div class="agent-chip"><span class="dot off"></span> Eliza-Cloud <span style="color:var(--muted)">(Token Exhausted)</span></div>
@@ -157,22 +159,18 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
 
 <div class="section">
   <div class="section-title">Recent Fleet Chat</div>
-  <div class="card" id="chat-card"><div class="no-data" id="chat-data" style="color:var(--muted)">Loading...</div></div>
+  <div class="card" id="chat-card"><div id="chat-data" style="color:var(--muted)">Loading...</div></div>
 </div>
 
 <div class="section">
   <div class="section-title">Party Favor Photo Pipeline</div>
   <div class="grid">
-    <div class="card"><h3>Active Leads</h3>
-      <div class="messages" id="pfp-leads">
-        <div class="msg"><span class="body" style="color:var(--muted)">Loading...</span></div>
-      </div>
-    </div>
+    <div class="card"><h3>Active Leads</h3><div class="messages" id="pfp-leads"><div class="msg"><span class="body" style="color:var(--muted)">Loading...</span></div></div></div>
     <div class="card"><h3>Quote Engine</h3>
       <div class="sub">Standard $249/hr (2×6 strips)</div>
       <div class="sub">Premium $349/hr (4×6 prints)</div>
-      <div class="sub" style="margin-top:6px">$100 max discount (military/school/pay-in-full)</div>
-      <div style="margin-top:12px"><a href="https://book.partyfavorphoto.com" class="btn btn-primary btn-small">Book Now</a></div>
+      <div class="sub" style="margin-top:6px">$100 max discount</div>
+      <a class="btn btn-primary btn-small" href="https://book.partyfavorphoto.com" style="display:inline-flex;margin-top:12px">Book Now</a>
     </div>
     <div class="card"><h3>Tech Stack</h3>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
@@ -186,6 +184,11 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
       </div>
     </div>
   </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Recent Commits</div>
+  <div class="card" id="commits-card"><div style="color:var(--muted)">Loading...</div></div>
 </div>
 
 <div class="section">
@@ -207,16 +210,22 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
 <div class="section">
   <div class="section-title">Repositories</div>
   <div class="grid">
-    <a href="https://github.com/xmrtdao/mobilemonero" class="card" style="display:block">
-      <h3>📁 mobilemonero</h3>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0">📁 mobilemonero</h3>
+        <a href="https://github.com/xmrtdao/mobilemonero" style="font-size:11px">git →</a>
+      </div>
       <div class="sub">Core repo: fleet relay, CF Workers, dashboard, docs</div>
-      <div class="sub" style="color:var(--mono);margin-top:4px">9 Workers deployed</div>
-    </a>
-    <a href="https://github.com/xmrtdao/partyfavorphoto" class="card" style="display:block">
-      <h3>📁 partyfavorphoto</h3>
+      <div class="sub" style="color:var(--mono);margin-top:6px">9 Workers deployed · 3 tracks in pipeline</div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0">📁 partyfavorphoto</h3>
+        <a href="https://github.com/xmrtdao/partyfavorphoto" style="font-size:11px">git →</a>
+      </div>
       <div class="sub">PFP booking engine: PDF quotes, email automation, Stripe</div>
-      <div class="sub" style="color:var(--mono);margin-top:4px">Revenue-generating</div>
-    </a>
+      <div class="sub" style="color:var(--mono);margin-top:6px">Revenue-generating · Live leads</div>
+    </div>
   </div>
 </div>
 
@@ -226,14 +235,12 @@ footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
     <div class="card"><h3>Relay Endpoints</h3>
       <div class="sub mono">POST relay.mobilemonero.com/api/fleet-chat/send</div>
       <div class="sub mono">GET  relay.mobilemonero.com/api/fleet-chat/messages</div>
-      <div class="sub mono">GET  relay.mobilemonero.com/api/fleet-chat?agent=hermes</div>
       <div class="sub" style="margin-top:8px">Send <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px">agent, message, channel</code> as JSON</div>
     </div>
     <div class="card"><h3>Quick Links</h3>
-      <div class="sub"><a href="https://api.mobilemonero.com/health">API Health</a></div>
-      <div class="sub"><a href="https://price.mobilemonero.com/price/xmr">XMR Price</a></div>
-      <div class="sub"><a href="https://mtv.mobilemonero.com/health">MTV Status</a></div>
-      <div class="sub"><a href="https://fleet.mobilemonero.com/health">Fleet Status</a></div>
+      <div class="sub"><a href="https://api.mobilemonero.com/health">API Health</a> · <a href="https://price.mobilemonero.com/price/xmr">XMR Price</a></div>
+      <div class="sub"><a href="https://mtv.mobilemonero.com/health">MTV Status</a> · <a href="https://fleet.mobilemonero.com/health">Fleet Status</a></div>
+      <div class="sub" style="margin-top:8px"><a href="https://book.partyfavorphoto.com">book.partyfavorphoto.com</a></div>
     </div>
   </div>
 </div>
@@ -261,7 +268,7 @@ async function loadPrice(){
   const up=d.change_24h>=0;
   $('price-data').innerHTML='<div class="big">'+fmt.format(d.price_usd)+'</div>'+
     '<span class="status-dot '+(up?'ok':'err')+'"></span><span style="color:'+(up?'var(--green)':'var(--red)')+'">'+(up?'+':'')+d.change_24h.toFixed(2)+'% 24h</span>'+
-    '<div class="sub">Source: '+d.source+'</div>';
+    '<div class="sub">Source: '+d.source+' · Updated '+new Date(d.updated).toLocaleTimeString()+'</div>';
 }
 
 async function loadRelay(){
@@ -290,7 +297,7 @@ async function loadWorkers(){
   let html='';
   for(const w of workers){
     let status='<span style="color:var(--yellow)">Unknown</span>',ts='--';
-    if(w.url){try{const s=performance.now();await fetch(w.url,{mode:'no-cors'});const ms=Math.round(performance.now()-s);status='<span style="color:var(--green)">&#9679; Up</span>';ts=ms+'ms';}catch(e){status='<span style="color:var(--red)">&#9679; Down</span>';ts='--';}}
+    if(w.url){try{const s=performance.now();await fetch(w.url,{mode:'no-cors'});const ms=Math.round(performance.now()-s);status='<span style="color:var(--green)">● Up</span>';ts=ms+'ms';}catch(e){status='<span style="color:var(--red)">● Down</span>';ts='--';}}
     html+='<tr><td><b>'+w.name+'</b></td><td class="endpoint">'+(w.url||'N/A')+'</td><td>'+status+'</td><td>'+ts+'</td><td style="color:var(--muted)">'+w.purpose+'</td></tr>';
   }
   $('workers-table').innerHTML=html;
@@ -332,12 +339,28 @@ async function loadPFP(){
   }catch(e){$('pfp-leads').innerHTML='<div class="msg"><span class="body" style="color:var(--red)">Unavailable</span></div>';}
 }
 
-loadPrice();loadRelay();loadAPI();loadWorkers();loadChat();loadPFP();
+async function loadCommits(){
+  try{
+    const r=await fetch('https://api.github.com/repos/xmrtdao/mobilemonero/commits?per_page=5');
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    if(!d||!d.length){$('commits-card').innerHTML='<div style="color:var(--muted)">No commits</div>';return}
+    $('commits-card').innerHTML='<div>'+d.map(c=>{
+      const hash=c.sha.slice(0,7);
+      const msg=c.commit.message.split('\n')[0];
+      const date=new Date(c.commit.committer.date).toLocaleDateString();
+      return '<div class="commit"><span class="hash">'+hash+'</span><span class="msg">'+msg+'</span><span class="date">'+date+'</span></div>';
+    }).join('')+'</div>';
+  }catch(e){$('commits-card').innerHTML='<div style="color:var(--red)">'+e.message+'</div>';}
+}
+
+loadPrice();loadRelay();loadAPI();loadWorkers();loadChat();loadPFP();loadCommits();
 setInterval(loadPrice,30000);
 setInterval(loadRelay,60000);
 setInterval(loadAPI,60000);
 setInterval(loadChat,60000);
 setInterval(loadPFP,120000);
+setInterval(loadCommits,300000);
 </script>
 </body>
 </html>
