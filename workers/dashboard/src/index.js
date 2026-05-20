@@ -1,0 +1,164 @@
+const HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MobileMonero — Fleet Dashboard</title>
+<meta name="theme-color" content="#f97316">
+<style>
+  :root{--bg:#0f0818;--card:#1a1025;--border:#2a1f35;--accent:#f97316;--accent2:#a855f7;--ok:#22c55e;--err:#ef4444;--warn:#f59e0b;--text:#e4e4e7;--muted:#a1a1aa;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.4;min-height:100vh}
+  header{background:linear-gradient(135deg,#1a1025,#2a1f35);padding:1.2rem;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+  header h1{font-size:1.3rem;font-weight:700;display:flex;align-items:center;gap:.5rem}
+  header small{display:block;margin-top:.2rem;color:var(--muted);font-size:.75rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:.75rem;padding:1rem}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:1rem;padding:1rem}
+  .card h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.6rem;display:flex;align-items:center;gap:.4rem}
+  .price{font-size:2rem;font-weight:700;color:var(--text)}
+  .change{font-size:.85rem;margin-top:.2rem}
+  .up{color:var(--ok)}.down{color:var(--err)}
+  .worker{display:flex;align-items:center;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid var(--border)}
+  .worker:last-child{border-bottom:0}
+  .worker-name{font-size:.9rem;font-weight:500}
+  .worker-role{font-size:.7rem;color:var(--muted)}
+  .status{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+  .status.ok{color:var(--ok)}.status.ok .dot{background:var(--ok)}
+  .status.err{color:var(--err)}.status.err .dot{background:var(--err)}
+  .status.warn{color:var(--warn)}.status.warn .dot{background:var(--warn)}
+  .quick{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem;margin-top:.4rem}
+  .btn{background:linear-gradient(135deg,var(--accent),#ea580c);color:#fff;border:0;padding:.5rem .8rem;border-radius:.6rem;font-size:.8rem;font-weight:600;cursor:pointer;text-decoration:none;text-align:center}
+  .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+  .btn:hover{opacity:.9}
+  .link{color:var(--accent);text-decoration:none;font-size:.8rem}
+  .link:hover{text-decoration:underline}
+  .links{display:flex;flex-direction:column;gap:.3rem;margin-top:.6rem}
+  .footer{text-align:center;padding:1.5rem;color:var(--muted);font-size:.75rem;border-top:1px solid var(--border)}
+  .pulse{animation:pulse 2s infinite}@keyframes pulse{0%{opacity:1}50%{opacity:.5}100%{opacity:1}}
+</style>
+</head>
+<body>
+<header>
+  <h1>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    MobileMonero
+  </h1>
+  <small>XMRT DAO Fleet Hub — Workers, Price, PFP Toolkit</small>
+</header>
+
+<div class="grid">
+
+<div class="card">
+  <h2>XMR Price</h2>
+  <div class="price" id="xmrPrice">$397.52</div>
+  <div class="change up" id="xmrChange">+1.49%</div>
+  <div class="links">
+    <a class="link" href="https://price.mobilemonero.com/price/xmr" target="_blank">price.mobilemonero.com/price/xmr &uarr;</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Workers</h2>
+  <div id="workerList"></div>
+  <div class="quick">
+    <a class="btn secondary" href="https://api.mobilemonero.com/health" target="_blank">API Health</a>
+    <a class="btn secondary" href="https://fleet.mobilemonero.com/health" target="_blank">Fleet Status</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Inbox</h2>
+  <div class="worker"><span class="worker-name">PFP Emails</span><span class="status ok"><span class="dot"></span> Live</span></div>
+  <div class="worker"><span class="worker-name">XMRT Emails</span><span class="status ok"><span class="dot"></span> Live</span></div>
+  <div class="links"><a class="link" href="https://inbox.mobilemonero.com/health" target="_blank">inbox.mobilemonero.com &uarr;</a></div>
+</div>
+
+<div class="card">
+  <h2>MTV Pipeline</h2>
+  <div class="worker"><span class="worker-name">Lyrics Worker</span><span class="status ok"><span class="dot"></span> Up</span></div>
+  <div class="worker"><span class="worker-name">Music Gen (MiniMax)</span><span class="status warn"><span class="dot pulse"></span> Blocked</span></div>
+  <div class="links"><a class="link" href="https://mtv.mobilemonero.com/health" target="_blank">mtv.mobilemonero.com &uarr;</a></div>
+</div>
+
+<div class="card">
+  <h2>Fleet Chat</h2>
+  <div class="worker"><span class="worker-name">Hermes Worker</span><span class="status ok"><span class="dot"></span> v3.0.2</span></div>
+  <div class="worker"><span class="worker-name">Relay</span><span class="status ok"><span class="dot"></span> Eliza-Dev</span></div>
+  <div class="quick">
+    <a class="btn secondary" href="https://hermes.mobilemonero.com/fleet/messages" target="_blank">Messages</a>
+    <a class="btn secondary" href="https://hermes.mobilemonero.com/health" target="_blank">Health</a>
+  </div>
+  <div class="links"><a class="link" href="https://github.com/xmrtdao/mobilemonero/tree/main/fleet/sdk/README.md" target="_blank">Fleet SDK &uarr;</a></div>
+</div>
+
+<div class="card">
+  <h2>PFP Toolkit</h2>
+  <div class="links">
+    <a class="link" href="https://github.com/xmrtdao/partyfavorphoto" target="_blank">partyfavorphoto repo &uarr;</a>
+    <a class="link" href="https://github.com/xmrtdao/partyfavorphoto/tree/main/data/contacts" target="_blank">Venue contacts &uarr;</a>
+    <a class="link" href="https://stripe.com" target="_blank">Stripe links &uarr;</a>
+  </div>
+</div>
+
+</div>
+
+<div class="footer">
+  MobileMonero &middot; XMRT DAO &middot; <a href="https://github.com/xmrtdao/mobilemonero" style="color:var(--muted)">GitHub</a>
+</div>
+
+<script>
+var WORKERS = [
+  {name:'API Gateway',url:'https://api.mobilemonero.com/health',role:'Proxy'},
+  {name:'Price Ticker',url:'https://price.mobilemonero.com/price/xmr',role:'XMR/USD'},
+  {name:'Fleet Status',url:'https://fleet.mobilemonero.com/health',role:'Heartbeat'},
+  {name:'MTV Lyrics',url:'https://mtv.mobilemonero.com/health',role:'AI Lyrics'},
+  {name:'Hermes',url:'https://hermes.mobilemonero.com/health',role:'Chat'},
+  {name:'Inbox',url:'https://inbox.mobilemonero.com/health',role:'Email'},
+];
+async function check(url){try{var r=await fetch(url,{mode:'no-cors'});return r.ok||r.status===0}catch(e){return false}}
+function renderWorkers(){
+  var el=document.getElementById('workerList');
+  var html='';
+  for(var i=0;i<WORKERS.length;i++){
+    var w=WORKERS[i];
+    html+='<div class="worker"><div><div class="worker-name">'+w.name+'</div><div class="worker-role">'+w.role+'</div></div><span class="status ok"><span class="dot"></span> Up</span></div>';
+  }
+  el.innerHTML=html;
+}
+renderWorkers();
+
+async function fetchPrice(){
+  try{
+    var r=await fetch('https://price.mobilemonero.com/price/xmr');
+    if(!r.ok)return;
+    var d=await r.json();
+    if(d.price_usd) document.getElementById('xmrPrice').textContent='$'+d.price_usd.toFixed(2);
+    var chg=document.getElementById('xmrChange');
+    if(d.change_24h){
+      chg.textContent=(d.change_24h>=0?'+':'')+d.change_24h.toFixed(2)+'%';
+      chg.className='change '+(d.change_24h>=0?'up':'down');
+    }
+  }catch(e){}
+}
+fetchPrice();
+setInterval(fetchPrice,30000);
+</script>
+</body>
+</html>`;
+
+function json(o,s){
+  return new Response(JSON.stringify(o), {status:s||200, headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+}
+
+async function handle(req){
+  var url = new URL(req.url);
+  if(url.pathname === "/health"){
+    return json({ok:true, service:"dashboard", version:"1.0.0"});
+  }
+  return new Response(HTML, {status:200, headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"public, max-age=60"}});
+}
+
+addEventListener("fetch", function(event){
+  event.respondWith(handle(event.request));
+});
