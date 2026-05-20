@@ -1,0 +1,26 @@
+{
+  "Business_Name": "Party Favor Photo",
+  "Business_Type": "StudioStation Photo Services",
+  "Contact_Name": "Joe Lee",
+  "Email": "bookings@partyfavorphoto.com",
+  "Phone": "(202) 798-0610",
+  "Website": "https://partyfavorphoto.com",
+  "Insurance_Carrier": "Event Liability Insurance",
+  "Policy_Number": "PFP-2026-001",
+  "Coverage_Amount": "$1,000,000",
+  "Equipment_Type": "Professional StudioStation with DSLR Camera",
+  "Power_Requirements": "110V, 15A circuit",
+  "Setup_Space": "8ft x 8ft minimum",
+  "Setup_Time": "2 hours before event start",
+  "Standard_Rate": "$249/hour (2×6 strips)",
+  "Premium_Rate": "$349/hour (4×6 prints)",
+  "Discount": "$100 off (military, school, pay-in-full)",
+  "Overtime_Rate": "$249/hour (Standard) or $349/hour (Premium)",
+  "Signature_Date": "2026-05-20",
+  "Authorized_Signature": "Joe Lee",
+  "Stripe_Links": {
+    "2hr": "https://buy.stripe.com/8x25kD7ezg6h4iC15YbZe03",
+    "3hr": "https://buy.stripe.com/9B63cv9mH07j3eyeWObZe06",
+    "4hr": "https://buy.stripe.com/eVqcN556r4nz16qeWObZe04"
+  }
+}
