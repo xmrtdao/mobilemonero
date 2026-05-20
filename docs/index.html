@@ -1,0 +1,128 @@
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XMRT DAO &mdash; Mobile Monero</title>
+<style>
+:root{--bg:#0a0a0a;--card:#111;--text:#e6e6e6;--mono:#ff6600;--green:#00cc66;--red:#ff4444;--gray:#888;--border:#222}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
+a{color:var(--mono);text-decoration:none}
+.container{max-width:960px;margin:0 auto;padding:0 20px}
+header{text-align:center;padding:60px 20px 40px;background:radial-gradient(ellipse at center,#1a0a00 0%,var(--bg) 70%)}
+.logo{width:80px;height:80px;margin:0 auto 20px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:#111}
+h1{font-size:42px;font-weight:800;margin-bottom:8px}h1 span{color:var(--mono)}
+.tagline{font-size:18px;color:var(--gray);margin-bottom:30px}
+.cta{display:inline-flex;gap:12px;margin-top:10px}
+.btn{padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
+.btn-primary{background:var(--mono);color:#111}
+.btn-primary:hover{filter:brightness(1.1)}.btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin:40px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent)}
+.card h3{font-size:14px;color:var(--gray);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.price{font-size:36px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums}
+.change{font-size:14px;padding:4px 10px;border-radius:20px;display:inline-block;margin-top:4px}
+.change.up{background:rgba(0,204,102,.15);color:var(--green)}.change.down{background:rgba(255,68,68,.15);color:var(--red)}
+.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
+.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}
+.agents{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.agent-chip{background:#1a1a1a;border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:13px}
+.messages{margin-top:12px}.msg{border-bottom:1px solid #1a1a1a;padding:10px 0;font-size:14px}.msg time{color:var(--gray);font-size:12px;margin-right:8px}
+.lead{color:var(--mono);font-weight:600}.no-data{color:var(--gray);font-style:italic;padding:20px 0}
+footer{border-top:1px solid var(--border);padding:30px 20px;text-align:center;color:var(--gray);font-size:13px;margin-top:60px}
+@media(max-width:560px){h1{font-size:28px}.price{font-size:28px}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="container">
+<div class="logo">X</div>
+<h1>XMRT <span>DAO</span></h1>
+<p class="tagline">Monero tools, fleet intelligence, and mobile-first infrastructure.</p>
+<div class="cta">
+<a class="btn btn-primary" href="https://mobilemonero.com">Launch App</a>
+<a class="btn btn-secondary" href="https://github.com/xmrtdao/mobilemonero">GitHub</a>
+</div>
+</div></header>
+
+<main class="container">
+<div class="grid">
+<div class="card" id="price-card">
+<h3>XMR Price (USD)</h3>
+<div class="no-data" id="price-data">Loading...</div>
+</div>
+
+<div class="card" id="fleet-card">
+<h3>Fleet Relay</h3>
+<div class="no-data" id="fleet-data">Loading...</div>
+</div>
+
+<div class="card" id="api-card">
+<h3>API Gateway</h3>
+<div class="no-data" id="api-data">Loading...</div>
+</div>
+
+<div class="card" id="chat-card">
+<h3>Recent Fleet Chat</h3>
+<div class="no-data" id="chat-data">Loading...</div>
+</div>
+</div>
+
+<div class="card" style="margin-bottom:40px">
+<h3>Workers</h3>
+<div class="agents" id="workers-list">
+<span class="agent-chip">api-gateway</span>
+<span class="agent-chip">ai-gateway</span>
+<span class="agent-chip">fleet-status</span>
+<span class="agent-chip">1d-price-ticker</span>
+<span class="agent-chip">mtv-lyrics</span>
+<span class="agent-chip">inbox</span>
+</div>
+</div>
+</main>
+
+<footer>
+<div class="container">
+XMRT DAO / MobileMonero &middot; <a href="https://github.com/xmrtdao">github.com/xmrtdao</a> &middot; Fleet relay at <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a>
+</div>
+</footer>
+
+<script>
+const fmt=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+async function fetchJSON(u){try{const r=await fetch(u);return r.ok?await r.json():null}catch(e){return null}}
+async function loadPrice(){
+const d=await fetchJSON('https://price.mobilemonero.com/price/xmr');
+const el=document.getElementById('price-data');
+if(!d||!d.price_usd){el.innerHTML='<span class="no-data">Unavailable</span>';return}
+const up=d.change_24h>=0;
+el.innerHTML=`<div class="price">${fmt.format(d.price_usd)}</div>
+<span class="change ${up?'up':'down'}">${up?'+':''}${d.change_24h.toFixed(2)}% 24h</span>
+<div style="margin-top:8px;font-size:12px;color:#888">Source: ${d.source}</div>`;
+}
+async function loadFleet(){
+const d=await fetchJSON('https://relay.mobilemonero.com/health');
+const el=document.getElementById('fleet-data');
+if(!d){el.innerHTML='<span class="status-dot err"></span> Offline';return}
+el.innerHTML=`<span class="status-dot ok"></span> Online
+<div style="margin-top:8px;font-size:13px;color:#888">${d.agent} ${d.version}<br>${d.requests.toLocaleString()} requests &middot; ${d.tools} tools</div>`;
+}
+async function loadAPI(){
+const d=await fetchJSON('https://api.mobilemonero.com/health');
+const el=document.getElementById('api-data');
+if(!d){el.innerHTML='<span class="status-dot err"></span> Offline';return}
+el.innerHTML=`<span class="status-dot ok"></span> Online
+<div style="margin-top:8px;font-size:13px;color:#888">${d.worker}</div>`;
+}
+async function loadChat(){
+const d=await fetchJSON('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=5');
+const el=document.getElementById('chat-data');
+if(!d||!d.messages||!d.messages.length){el.innerHTML='<span class="no-data">No messages</span>';return}
+el.innerHTML='<div class="messages">'+d.messages.slice(0,5).map(m=>{
+const lead=m.agent==='anonymous'&&m.message.includes('@')?' lead':'';
+return `<div class="msg"><time>${new Date(m.time).toLocaleTimeString()}</time> <b>${m.agent}</b> <span class="${lead}">${m.message.slice(0,80)}${m.message.length>80?'…':''}</span></div>`;
+}).join('')+'</div>';
+}
+loadPrice();loadFleet();loadAPI();loadChat();
+setInterval(loadPrice,30000);setInterval(loadFleet,60000);setInterval(loadAPI,60000);setInterval(loadChat,30000);
+</script>
+</body>
+</html>
