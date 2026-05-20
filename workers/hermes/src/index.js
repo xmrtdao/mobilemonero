@@ -57,7 +57,7 @@ async function handle(req, event){
     // Health
     if(method==="GET" && url.pathname==="/health"){
       let ok=false; try{ await checkRelay(); ok=RELAY_UP; }catch(e){}
-      return jr({ok:true,service:"hermes",relay_up:ok,messages:MESSAGES.length,version:"3.0.1"});
+      return jr({ok:true,service:"hermes",relay_up:ok,messages:MESSAGES.length,version:"3.0.2"});
     }
 
     // GET /fleet/status
@@ -67,7 +67,7 @@ async function handle(req, event){
 
     // GET /fleet/messages
     if(method==="GET" && url.pathname==="/fleet/messages"){
-      const r=await proxyOrRelay(url.pathname+url.search, null, true);
+      const r=await proxyOrRelay("/api/fleet-chat/messages"+url.search, null, true);
       if(r && r.ok) return r;
       const L=Math.min(parseInt(url.searchParams.get("limit")||"50"),200), O=parseInt(url.searchParams.get("offset")||"0");
       return jr({total:MESSAGES.length,limit:L,offset:O,messages:MESSAGES.slice(O,O+L),source:"worker-memory"});
@@ -79,7 +79,7 @@ async function handle(req, event){
       const msg={msg_id:MESSAGES.length+1,from:b.from||"anonymous",message:b.message||"",ts:ts(),type:b.type||"broadcast"};
       MESSAGES.unshift(msg);
       if(MESSAGES.length>2000) MESSAGES.length=2000;
-      event.waitUntil(sendToRelay(`/api/fleet-chat?type=broadcast`, msg));
+      event.waitUntil(sendToRelay(null, msg, "broadcast"));
       return jr({ok:true,logged:true,msg_id:msg.msg_id,relay:RELAY_UP});
     }
 
@@ -89,7 +89,7 @@ async function handle(req, event){
       const msg={msg_id:MESSAGES.length+1,from:b.from||"anonymous",to:b.to,message:b.message||"",ts:ts(),type:b.type||"dm"};
       MESSAGES.unshift(msg);
       if(MESSAGES.length>2000) MESSAGES.length=2000;
-      event.waitUntil(sendToRelay(`/api/fleet-chat/send-email`, msg));
+      event.waitUntil(sendToRelay(null, msg, "dm"));
       return jr({ok:true,logged:true,msg_id:msg.msg_id,relay:RELAY_UP});
     }
 
@@ -115,15 +115,30 @@ async function handle(req, event){
   }catch(e){ return jr({error:"Server error",detail:String(e)},500); }
 }
 
-async function sendToRelay(path, msg){
+async function sendToRelay(path, msg, type){
   try{
-    const r=await fetch(`${RELAY_URL}${path}`,{
+    let body = msg;
+    let urlPath = path;
+    // Broadcast: use fleet-chat/send with agent/message/channel
+    if(type === "broadcast"){
+      urlPath = "/api/fleet-chat/send";
+      body = { agent: msg.from || "hermes", message: msg.message || "", channel: "all" };
+    }
+    // DM: also use fleet-chat/send with channel=target
+    else if(type === "dm"){
+      urlPath = "/api/fleet-chat/send";
+      body = { agent: msg.from || "hermes", message: msg.message || "", channel: msg.to || "fleet" };
+    }
+    const r=await fetch(`${RELAY_URL}${urlPath}`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(msg)
+      body:JSON.stringify(body)
     });
-    if(r.ok) console.log("[hermes] relay OK", path);
-    else console.log("[hermes] relay HTTP", r.status);
+    if(r.ok) console.log("[hermes] relay OK", urlPath, body.agent);
+    else {
+      const txt=await r.text().catch(()=>"");
+      console.log("[hermes] relay HTTP", r.status, txt.slice(0,200));
+    }
   }catch(e){ console.log("[hermes] relay err", e.message); }
 }
 
