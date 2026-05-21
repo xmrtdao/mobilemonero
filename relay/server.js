@@ -1432,10 +1432,7 @@ app.get('/', (req, res) => {
 
   // Load mesh peers from peer connector
   function loadMeshPeers() {
-    fetch('${supabaseUrl}/functions/v1/mesh-peer-connector', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: 'discover'}),
+    fetch('/api/mesh/peers', {
       signal: AbortSignal.timeout(5000)
     }).then(function(r){return r.json();}).then(function(data){
       var peers = data.peers || [];
@@ -3270,6 +3267,40 @@ app.get('/pfp/templates/:file', (req, res) => {
     return res.status(404).send('Not found');
   }
   res.sendFile(filepath);
+});
+
+// ── Mesh Peer Connector Proxy ─────────────────────────
+const MESH_PEER_URL = 'https://vawouugtzwmejxqkeqqj.supabase.co/functions/v1/mesh-peer-connector';
+const RELAY_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+app.get('/api/mesh/peers', async (req, res) => {
+  try {
+    const r = await fetch(MESH_PEER_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + RELAY_SERVICE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'discover' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/mesh/register', async (req, res) => {
+  try {
+    const r = await fetch(MESH_PEER_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + RELAY_SERVICE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'register', ...req.body }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message });
+  }
 });
 
 // ── Gossipsub Mesh Routes ────────────────────────────
