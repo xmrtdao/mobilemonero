@@ -3431,7 +3431,24 @@ app.listen(PORT, '0.0.0.0', () => {
             signal: AbortSignal.timeout(8000),
           });
           const regData = await reg.json();
-          if (regData.ok) console.log('[Mesh] Registered with peer connector');
+          if (regData.ok) {
+            console.log('[Mesh] Registered with peer connector');
+            // Start heartbeat — ping peer connector every 2 min to stay visible
+            const peerConnectorUrl = SUPABASE_URL + '/functions/v1/mesh-peer-connector';
+            const authHeader = 'Bearer ' + KEY;
+            setInterval(async () => {
+              try {
+                await fetch(peerConnectorUrl, {
+                  method: 'POST',
+                  headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'heartbeat', peer_id: result.peerId }),
+                  signal: AbortSignal.timeout(5000),
+                });
+              } catch (e) {
+                // heartbeat failure is non-critical
+              }
+            }, 120000);
+          }
         }
       } else {
         console.log('[Mesh] Auto-init failed:', result.error);
