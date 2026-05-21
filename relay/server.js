@@ -59,7 +59,7 @@ import * as state from './lib/state.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
 import { handleInboundEmail } from './lib/auto-responder.mjs';
 import * as minimax from './tools/minimax-pipeline.mjs';
-import { createMeshRouter } from './lib/mesh-router.mjs';
+import { createMeshRouter, initMeshNode } from './lib/mesh-router.mjs';
 
 // ── Config ──────────────────────────────────────────────────
 const PORT = parseInt(process.env.RELAY_PORT || '8080');
@@ -3406,4 +3406,38 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     console.log('[Tunnel] Auto-started cloudflared for relay.mobilemonero.com');
   }
+  
+  // Auto-init gossipsub mesh node
+  setTimeout(async () => {
+    try {
+      const result = await initMeshNode({ port: 9000, agentName: 'vex' });
+      if (result.ok) {
+        console.log(`[Mesh] Auto-initialized — Peer: ${result.peerId}`);
+        // Register with peer connector
+        const SUPABASE_URL = 'https://vawouugtzwmejxqkeqqj.supabase.co';
+        const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (KEY) {
+          const reg = await fetch(SUPABASE_URL + '/functions/v1/mesh-peer-connector', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'register',
+              agent_name: 'vex',
+              peer_id: result.peerId,
+              endpoint: 'https://relay.mobilemonero.com',
+              topics: ['agent-heartbeat', 'agent-tasks', 'agent-discovery', 'fleet-broadcast'],
+              capabilities: ['mesh:gossipsub-libp2p', 'mesh:python-p2p-v2.1', 'mesh:peer-discovery', 'relay:agent-orchestration', 'relay:task-dispatch', 'relay:fleet-chat', 'web:search', 'web:scrape', 'web:ollama-13-models', 'ai:llm-inference', 'infra:cloudflare-tunnel', 'infra:supabase-199-edge-functions', 'comm:eliza-cloud-relay', 'comm:hermes-mobile-relay', 'comm:fleet-broadcast', 'github:issues-comments', 'github:repo-management', 'social:typefully-twitter', 'social:paragraph-publishing', 'pfp:campaign-sending', 'pfp:festival-outreach', 'pfp:seasonal-scraper', 'pfp:email-campaign-resend', 'mtv:lyrics-generation', 'mining:pool-monitoring', 'monitoring:health-checks']
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          const regData = await reg.json();
+          if (regData.ok) console.log('[Mesh] Registered with peer connector');
+        }
+      } else {
+        console.log('[Mesh] Auto-init failed:', result.error);
+      }
+    } catch (e) {
+      console.log('[Mesh] Auto-init error:', e.message);
+    }
+  }, 2000);
 });
