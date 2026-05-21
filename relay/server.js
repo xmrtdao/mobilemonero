@@ -3381,9 +3381,9 @@ app.listen(PORT, '0.0.0.0', () => {
 
   // Auto-start Cloudflare tunnel as detached process
   const CLOUDFLARED_PATH = join(__dirname, '..', 'cloudflared.exe');
-  const CONFIG_PATH = 'C:\\Users\\PureTrek\\.cloudflared\\config.yml';
+  const CREDS_PATH = 'C:\\Users\\PureTrek\\.cloudflared\\5d954e14-ea46-48e4-bc50-9c3a2be1760c.json';
   if (existsSync(CLOUDFLARED_PATH)) {
-    const tunnel = spawn(CLOUDFLARED_PATH, ['tunnel', '--config', CONFIG_PATH, 'run'], {
+    const tunnel = spawn(CLOUDFLARED_PATH, ['tunnel', 'run', '--credentials-file', CREDS_PATH], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
