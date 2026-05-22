@@ -59,7 +59,7 @@ import * as state from './lib/state.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
 import { handleInboundEmail } from './lib/auto-responder.mjs';
 import * as minimax from './tools/minimax-pipeline.mjs';
-import { createMeshRouter, initMeshNode } from './lib/mesh-router.mjs';
+import { createMeshRouter, initMeshNode, publishToMesh, getMeshMessageLog } from './lib/mesh-router.mjs';
 
 // ── Config ──────────────────────────────────────────────────
 const PORT = parseInt(process.env.RELAY_PORT || '8080');
@@ -2224,6 +2224,9 @@ app.post('/api/fleet-chat/send', async (req, res) => {
 
   const entry = addFleetMessage(agent, message, channel || 'fleet');
   
+  // Also publish to gossipsub fleet-broadcast topic
+  publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
+  
   // Route to other agents asynchronously — allow long timeouts (agents research before replying)
   const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
   
@@ -3448,6 +3451,33 @@ app.listen(PORT, '0.0.0.0', () => {
                 // heartbeat failure is non-critical
               }
             }, 120000);
+            
+            // Bridge gossipsub messages → fleet chat
+            let lastMeshMessageCount = 0;
+            setInterval(() => {
+              try {
+                const msgs = getMeshMessageLog(10);
+                for (let i = msgs.length - 1; i >= 0; i--) {
+                  const m = msgs[i];
+                  if (m.topic === 'fleet-broadcast' && typeof m.data === 'string') {
+                    try {
+                      const payload = JSON.parse(m.data);
+                      if (payload.agent && payload.message && payload.agent !== 'vex') {
+                        // Check if this message is already in fleet chat (dedup by timestamp)
+                        const fleetMsgs = getFleetChatMessages(50);
+                        const isDuplicate = fleetMsgs.some(f => 
+                          f.agent === payload.agent && f.message === payload.message && Math.abs(f.ts - (payload.ts || 0)) < 5000
+                        );
+                        if (!isDuplicate) {
+                          addFleetMessage(payload.agent, payload.message, 'all');
+                          console.log(`[Bridge] gossipsub→fleet: ${payload.agent}: ${payload.message.slice(0, 60)}`);
+                        }
+                      }
+                    } catch (e) { /* skip unparseable */ }
+                  }
+                }
+              } catch (e) { /* bridge poll failure */ }
+            }, 10000);
           }
         }
       } else {
