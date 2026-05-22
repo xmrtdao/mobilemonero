@@ -24,6 +24,14 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { bootstrap } from '@libp2p/bootstrap';
 import { identify } from '@libp2p/identify';
+import { keys } from '@libp2p/crypto';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { existsSync, writeFileSync, readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const KEY_PATH = join(__dirname, '..', '..', 'relay-data', 'mesh-key.bin');
 
 
 // ── Config ──────────────────────────────────────────────────
@@ -105,8 +113,34 @@ export async function initMeshNode(opts = {}) {
 
   console.log(`[Mesh] Initializing gossipsub node "${agentName}" on port ${port}...`);
 
+  // ── Persistent private key ────────────────────────────
+  let privateKey;
+  try {
+    if (existsSync(KEY_PATH)) {
+      const buf = readFileSync(KEY_PATH);
+      privateKey = keys.privateKeyFromProtobuf(buf);
+      console.log('[Mesh] Loaded saved private key');
+    }
+  } catch (e) {
+    console.log('[Mesh] Could not load saved key, generating new one');
+  }
+  
+  if (!privateKey) {
+    privateKey = await keys.generateKeyPair('Ed25519');
+    try {
+      writeFileSync(KEY_PATH, keys.privateKeyToProtobuf(privateKey));
+      console.log('[Mesh] Generated and saved new private key');
+    } catch (e) {
+      console.log('[Mesh] Could not save private key:', e.message);
+    }
+  }
+  
+  const peerId = peerIdFromPrivateKey(privateKey);
+
   try {
     node = await createLibp2p({
+      privateKey,
+      peerId,
       addresses: {
         listen: [`/ip4/0.0.0.0/tcp/${port}`],
       },
@@ -303,6 +337,14 @@ export async function stopMeshNode() {
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+/**
+ * Get recent messages from the mesh message log.
+ * @param {number} [limit=50] - Max messages to return
+ */
+export function getMeshMessageLog(limit = 50) {
+  return messageLog.slice(0, Math.min(limit, 500));
 }
 
 // ── Express Route Factory ───────────────────────────────────
