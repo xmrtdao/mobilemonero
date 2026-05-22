@@ -2,15 +2,13 @@
  * ZKP Verification Worker
  * Verifies zero-knowledge proofs for transaction and balance privacy.
  * 
- * Expected proof format (Noir barretenberg):
- *   { proof: Uint8Array, public_inputs: string[], proof_type: "tx" | "balance" }
+ * When a WASM module is bound via Cloudflare Dashboard (Settings -> WASM),
+ * this worker will use it for real verification. Without WASM, it returns
+ * structured stubs describing the expected proof format.
  * 
- * When the Noir circuit is compiled to WASM via nargo compile,
- * this worker will load the verification WASM and verify proofs.
- * 
- * Circuit: circuits/main.nr (Noir)
- * Compile: cd circuits && nargo compile --package zero_claw
- * WASM: target/zero_claw.wasm
+ * WASM binding name: ZKP_WASM (set in Cloudflare Dashboard)
+ * Circuit: circuits/main.nr (Noir v0.33+)
+ * Compile: cd circuits && nargo compile && nargo prove
  */
 
 var CORS = {
@@ -37,55 +35,76 @@ async function handleRequest(request) {
 
   if (method === "OPTIONS") return new Response(null, { headers: CORS });
 
-  // Health check
+  // Health — detect if WASM is bound
   if (path === "/health") {
-    return jsonResponse({ ok: true, worker: "zkp-verification", circuit: "Noir/barretenberg", status: "stub" });
+    try {
+      var hasWasm = typeof ZKP_WASM !== 'undefined' && ZKP_WASM !== null;
+      return jsonResponse({ ok: true, worker: "zkp-verification", wasm_loaded: hasWasm });
+    } catch(e) {
+      return jsonResponse({ ok: true, worker: "zkp-verification", wasm_loaded: false });
+    }
   }
 
-  // POST /verify/tx — Verify a transaction proof
+  // POST /verify/tx — Verify a zero-knowledge transaction proof
   if (path === "/verify/tx" && method === "POST") {
     try {
       var body = await request.json();
       var proof = body.proof;
       var public_inputs = body.public_inputs || [];
-      var expected_schema = {
-        proof: "Uint8Array (hex or base64 encoded)",
-        public_inputs: ["proposal_hash (string)", "nullifier_hash (string)", "vote_commitment (string)"],
-        circuit: "zero_claw (Noir v0.33+)"
-      };
-      if (!proof) {
-        return jsonResponse({
-          valid: false,
-          error: "proof field required",
-          expected_schema: expected_schema,
-          note: "Compile Noir circuit and deploy verification WASM to activate"
-        }, 400);
+
+      try {
+        var hasWasm = typeof ZKP_WASM !== 'undefined' && ZKP_WASM !== null;
+      } catch(e) { var hasWasm = false; }
+
+      if (hasWasm) {
+        // Real verification with bound WASM module
+        var wasmInstance = await WebAssembly.instantiate(ZKP_WASM);
+        var valid = wasmInstance.exports.verify(proof, JSON.stringify(public_inputs));
+        return jsonResponse({ valid: Boolean(valid), proof_type: "zkp" });
       }
+
+      // No WASM bound — return schema info
       return jsonResponse({
         valid: false,
-        note: "Verification WASM not deployed. Run: cd circuits && nargo compile && cp target/*.wasm ../workers/zkp-verification/wasm/",
-        proof_received: typeof proof,
-        inputs_received: public_inputs.length,
-        expected_schema: expected_schema
-      });
+        error: "ZKP_WASM not bound",
+        setup_instructions: {
+          1: "Download WASM from GitHub Actions: zero-claw → Actions → Build WASM Modules → artifacts",
+          2: "Upload to Cloudflare Dashboard: Workers → zkp-verification → Settings → WASM → name: ZKP_WASM",
+          3: "Worker will then use Noir verification circuit automatically"
+        },
+        expected_proof_format: {
+          proof: "Hex-encoded proof bytes (from nargo prove output)",
+          public_inputs: ["proposal_hash (string)", "nullifier_hash (string)", "vote_commitment (string)"],
+          circuit: "zero_claw (Noir v0.33+)"
+        }
+      }, 200);
     } catch (e) {
       return jsonResponse({ error: e.message }, 500);
     }
   }
 
-  // POST /verify/balance — Verify a balance proof (range proof / bulletproof)
+  // POST /verify/balance — Verify a range proof (bulletproof)
   if (path === "/verify/balance" && method === "POST") {
     try {
       var body = await request.json();
+      try { var hasWasm = typeof ZKP_WASM !== 'undefined' && ZKP_WASM !== null; } catch(e) { var hasWasm = false; }
+
+      if (hasWasm) {
+        var wasmInstance = await WebAssembly.instantiate(ZKP_WASM);
+        var valid = wasmInstance.exports.verify_balance(JSON.stringify(body));
+        return jsonResponse({ valid: Boolean(valid), proof_type: "range_proof" });
+      }
+
       return jsonResponse({
         valid: false,
-        note: "Balance verification requires Bulletproofs++ circuit. Circuit spec in circuits/README.md",
+        error: "ZKP_WASM not bound",
         expected_inputs: {
-          commitment: "Pedersen commitment to balance (hex)",
-          proof: "Bulletproof range proof (hex)",
-          min: "Minimum balance to prove (integer)"
-        }
-      });
+          commitment: "Pedersen commitment to balance (64 hex chars)",
+          proof: "Bulletproof range proof (variable length hex)",
+          min_balance: "Minimum balance to prove (unsigned integer)"
+        },
+        note: "Range proof circuit pending — compile circuits/range_proof.nr when available"
+      }, 200);
     } catch (e) {
       return jsonResponse({ error: e.message }, 500);
     }
