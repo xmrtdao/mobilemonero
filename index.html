@@ -67,98 +67,127 @@
         
         /* Header */
         header {
-            padding: 32px 0;
+            padding: 24px 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            background: rgba(3, 3, 3, 0.8);
         }
         
         .logo {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 700;
             color: var(--accent);
             text-decoration: none;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
         }
         
-        .logo-emoji {
-            font-size: 32px;
+        .logo-mark {
+            width: 32px;
+            height: 32px;
+            background: var(--accent);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 900;
+            color: #000;
+        }
+        
+        .logo span {
+            color: var(--text-primary);
         }
         
         nav {
             display: flex;
-            gap: 24px;
+            gap: 8px;
         }
         
         nav a {
-            color: var(--text-primary);
+            color: var(--text-secondary);
             text-decoration: none;
+            font-size: 14px;
             font-weight: 500;
-            transition: color 0.3s;
+            padding: 8px 16px;
+            border-radius: 8px;
+            transition: all 0.2s;
         }
         
         nav a:hover {
-            color: var(--accent);
+            color: var(--text-primary);
+            background: var(--bg-card);
+        }
+        
+        .nav-cta {
+            background: var(--accent);
+            color: #000 !important;
+            font-weight: 600;
+        }
+        
+        .nav-cta:hover {
+            background: #ff8533 !important;
         }
         
         /* Hero Section */
         .hero {
-            padding: 120px 0;
-            text-align: center;
+            min-height: calc(100vh - 80px);
+            display: flex;
+            align-items: center;
+            padding: 60px 0;
         }
         
-        .hero-emoji {
-            font-size: 80px;
-            margin-bottom: 24px;
-            animation: float 3s ease-in-out infinite;
-        }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-20px); }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+            width: 100%;
         }
         
         .hero h1 {
-            font-size: 56px;
+            font-size: clamp(36px, 4.5vw, 64px);
             font-weight: 800;
-            margin-bottom: 16px;
+            line-height: 1.05;
+            letter-spacing: -2px;
+            margin-bottom: 20px;
+        }
+        
+        .hero h1 .gradient {
             background: linear-gradient(135deg, var(--accent), var(--gold));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
         
-        .hero .tagline {
-            font-size: 24px;
-            color: var(--text-secondary);
-            margin-bottom: 32px;
-            font-weight: 300;
-        }
-        
-        .hero .motto {
+        .hero p {
             font-size: 18px;
-            color: var(--accent);
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-bottom: 48px;
+            color: var(--text-secondary);
+            max-width: 480px;
+            line-height: 1.7;
+            margin-bottom: 36px;
         }
         
-        .cta-buttons {
+        .hero-actions {
             display: flex;
-            gap: 16px;
-            justify-content: center;
+            gap: 12px;
             flex-wrap: wrap;
         }
         
         .btn {
-            padding: 16px 32px;
-            border-radius: 12px;
+            padding: 14px 28px;
+            border-radius: 10px;
+            font-size: 15px;
             font-weight: 600;
             text-decoration: none;
-            transition: all 0.3s;
+            transition: all 0.25s;
             display: inline-flex;
             align-items: center;
             gap: 8px;
@@ -172,7 +201,7 @@
         .btn-primary:hover {
             background: #ff8533;
             transform: translateY(-2px);
-            box-shadow: 0 8px 24px var(--accent-glow);
+            box-shadow: 0 8px 30px rgba(255, 102, 0, 0.25);
         }
         
         .btn-secondary {
@@ -186,181 +215,361 @@
             transform: translateY(-2px);
         }
         
-        /* Stats Section */
-        .stats {
-            padding: 80px 0;
+        /* Hero Visual */
+        .hero-visual {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 24px;
-            margin-top: 48px;
-        }
-        
-        .stat-card {
-            background: var(--bg-card);
+        .hero-ring {
+            width: 320px;
+            height: 320px;
+            border-radius: 50%;
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 32px;
+            position: relative;
+            animation: spin 40s linear infinite;
+        }
+        
+        .hero-ring::before {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg, transparent, var(--accent), transparent 60%, var(--gold) 80%, transparent);
+            -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 0.5px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 0.5px));
+            animation: glow 4s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        @keyframes glow {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
+        
+        .hero-stat {
+            position: absolute;
             text-align: center;
-            transition: all 0.3s;
         }
         
-        .stat-card:hover {
-            border-color: var(--accent);
-            transform: translateY(-4px);
-        }
-        
-        .stat-value {
-            font-size: 48px;
+        .hero-stat .v {
+            font-size: 28px;
             font-weight: 800;
             color: var(--accent);
-            margin-bottom: 8px;
+            font-variant-numeric: tabular-nums;
         }
         
-        .stat-label {
-            color: var(--text-secondary);
-            font-size: 14px;
+        .hero-stat .l {
+            font-size: 10px;
+            color: #666;
             text-transform: uppercase;
             letter-spacing: 1px;
+            margin-top: 2px;
+        }
+        
+        .hs-1 { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .hs-1 .v { font-size: 42px; }
+        .hs-2 { top: 12%; right: 12%; }
+        .hs-3 { bottom: 15%; left: 10%; }
+        .hs-4 { top: 18%; left: 10%; }
+        .hs-2 .v, .hs-4 .v { color: var(--gold); }
+        .hs-3 .v { color: var(--success); }
+        
+        /* Social Proof */
+        .social-proof {
+            padding: 40px 0;
+            text-align: center;
+        }
+        
+        .proof-text {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        
+        .proof-badges {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .badge strong {
+            color: var(--accent);
         }
         
         /* Features Section */
-        .features {
-            padding: 80px 0;
+        .section {
+            padding: 100px 0;
         }
         
         .section-title {
-            text-align: center;
-            font-size: 36px;
-            font-weight: 700;
-            margin-bottom: 16px;
+            font-size: clamp(24px, 3vw, 40px);
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 12px;
         }
         
         .section-subtitle {
-            text-align: center;
+            font-size: 16px;
             color: var(--text-secondary);
-            margin-bottom: 64px;
-            font-size: 18px;
+            max-width: 560px;
+            line-height: 1.7;
+            margin-bottom: 48px;
         }
         
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 24px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
         }
         
-        .feature-card {
+        .f-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 32px;
             transition: all 0.3s;
+            position: relative;
         }
         
-        .feature-card:hover {
+        .f-card:hover {
             border-color: var(--accent);
-            transform: translateY(-4px);
+            transform: translateY(-3px);
         }
         
-        .feature-icon {
-            font-size: 40px;
+        .f-card .num {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            letter-spacing: 2px;
             margin-bottom: 16px;
+            opacity: 0.6;
         }
         
-        .feature-title {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: var(--text-primary);
+        .f-card h3 {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            letter-spacing: -0.3px;
         }
         
-        .feature-desc {
+        .f-card p {
+            font-size: 14px;
             color: var(--text-secondary);
-            line-height: 1.7;
+            line-height: 1.8;
         }
         
-        /* Revenue Streams */
-        .revenue {
-            padding: 80px 0;
+        /* Pricing Section */
+        .pricing-section {
             background: linear-gradient(180deg, transparent, rgba(255, 102, 0, 0.05), transparent);
         }
         
-        .revenue-card {
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-top: 48px;
+        }
+        
+        .pricing-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            padding: 40px;
+            position: relative;
             transition: all 0.3s;
         }
         
-        .revenue-card:hover {
+        .pricing-card.featured {
             border-color: var(--accent);
+            box-shadow: 0 0 40px rgba(255, 102, 0, 0.15);
         }
         
-        .revenue-info h3 {
-            font-size: 20px;
+        .pricing-card:hover {
+            transform: translateY(-4px);
+        }
+        
+        .pricing-card .badge {
+            position: absolute;
+            top: -12px;
+            right: 24px;
+            background: var(--accent);
+            color: #000;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .pricing-card .name {
+            font-size: 18px;
+            font-weight: 700;
             margin-bottom: 8px;
         }
         
-        .revenue-info p {
+        .pricing-card .price {
+            font-size: 42px;
+            font-weight: 800;
+            color: var(--accent);
+            margin-bottom: 24px;
+        }
+        
+        .pricing-card .price span {
+            font-size: 14px;
             color: var(--text-secondary);
+            font-weight: 400;
         }
         
-        .revenue-target {
-            text-align: right;
+        .pricing-card ul {
+            list-style: none;
+            margin-bottom: 32px;
         }
         
-        .revenue-value {
-            font-size: 24px;
-            font-weight: 700;
+        .pricing-card li {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 14px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .pricing-card li:last-child {
+            border-bottom: none;
+        }
+        
+        .pricing-card li::before {
+            content: '✓';
             color: var(--success);
+            font-weight: 700;
         }
         
-        .revenue-label {
-            font-size: 12px;
+        /* FAQ Section */
+        .faq-grid {
+            display: grid;
+            gap: 16px;
+            margin-top: 48px;
+        }
+        
+        .faq-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        
+        .faq-item:hover {
+            border-color: var(--accent);
+        }
+        
+        .faq-question {
+            padding: 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .faq-question::after {
+            content: '+';
+            font-size: 24px;
+            color: var(--accent);
+            font-weight: 300;
+        }
+        
+        .faq-answer {
+            padding: 0 24px 24px;
             color: var(--text-secondary);
-            text-transform: uppercase;
+            line-height: 1.7;
+            font-size: 14px;
         }
         
-        /* Join Section */
-        .join {
-            padding: 120px 0;
+        /* CTA Section */
+        .cta-wrap {
+            padding: 100px 0;
             text-align: center;
         }
         
-        .join-box {
-            background: var(--bg-card);
+        .cta-box {
+            background: linear-gradient(135deg, var(--bg-card), rgba(255, 102, 0, 0.04));
             border: 1px solid var(--border);
             border-radius: 24px;
-            padding: 64px;
-            max-width: 800px;
+            padding: 72px 40px;
+            max-width: 700px;
             margin: 0 auto;
+            position: relative;
+            overflow: hidden;
         }
         
-        .join h2 {
-            font-size: 36px;
-            margin-bottom: 16px;
+        .cta-box::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 102, 0, 0.15), transparent 50%);
+            opacity: 0.3;
+            pointer-events: none;
         }
         
-        .join p {
+        .cta-box h2 {
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 12px;
+            position: relative;
+        }
+        
+        .cta-box p {
             color: var(--text-secondary);
             margin-bottom: 32px;
-            font-size: 18px;
+            font-size: 16px;
+            position: relative;
+        }
+        
+        .cta-box .btn-group {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            position: relative;
         }
         
         /* Footer */
         footer {
-            padding: 48px 0;
             border-top: 1px solid var(--border);
+            padding: 40px 0;
             text-align: center;
-            color: var(--text-secondary);
-            font-size: 14px;
+            color: #666;
+            font-size: 13px;
         }
         
         footer a {
@@ -368,297 +577,345 @@
             text-decoration: none;
         }
         
+        footer a:hover {
+            text-decoration: underline;
+        }
+        
         /* Responsive */
+        @media (max-width: 900px) {
+            .hero-grid {
+                grid-template-columns: 1fr;
+                gap: 32px;
+                text-align: center;
+            }
+            
+            .hero {
+                min-height: auto;
+                padding-top: 60px;
+            }
+            
+            .hero-visual {
+                order: -1;
+            }
+            
+            .hero p {
+                max-width: 100%;
+            }
+            
+            .hero-actions {
+                justify-content: center;
+            }
+            
+            .hero-ring {
+                width: 220px;
+                height: 220px;
+            }
+            
+            .hero-stat .v {
+                font-size: 20px;
+            }
+            
+            .hs-1 .v {
+                font-size: 32px;
+            }
+            
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
         @media (max-width: 768px) {
+            header {
+                padding: 16px 0;
+            }
+            
+            nav a {
+                padding: 6px 12px;
+                font-size: 13px;
+            }
+            
+            nav a:not(.nav-cta) {
+                display: none;
+            }
+            
+            .cta-box {
+                padding: 48px 20px;
+            }
+            
+            .cta-box h2 {
+                font-size: 26px;
+            }
+        }
+        
+        @media (max-width: 480px) {
             .hero h1 {
-                font-size: 36px;
+                font-size: 28px;
+                letter-spacing: -1px;
             }
             
-            .hero .tagline {
-                font-size: 18px;
+            .hero p {
+                font-size: 15px;
             }
             
-            .cta-buttons {
-                flex-direction: column;
-                align-items: center;
+            .btn {
+                padding: 12px 20px;
+                font-size: 14px;
             }
             
-            .revenue-card {
-                flex-direction: column;
-                text-align: center;
-                gap: 16px;
-            }
-            
-            .revenue-target {
-                text-align: center;
+            .container {
+                padding: 0 16px;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Mesh Background -->
     <canvas id="mesh-canvas"></canvas>
     
-    <!-- Header -->
     <header class="container">
         <a href="/" class="logo">
-            <span class="logo-emoji">🏴‍☠️</span>
-            XMRT DAO
+            <span class="logo-mark">X</span>
+            XMRT<span>DAO</span>
         </a>
         <nav>
-            <a href="#features">Features</a>
-            <a href="#revenue">Revenue</a>
-            <a href="#join">Join</a>
+            <a href="#about">About</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#faq">FAQ</a>
+            <a href="https://xmrtdao.github.io/university" class="nav-cta">Get Started</a>
         </nav>
     </header>
     
-    <!-- Hero -->
-    <section class="hero container">
-        <div class="hero-emoji">🚢</div>
-        <h1>While Others Build SDKs, We Build Empires</h1>
-        <p class="tagline">A decentralized fleet of AI agents building Monero mining infrastructure and revenue-generating services</p>
-        <p class="motto">🏴‍☠️ Fortune Favors the Bold</p>
-        
-        <div class="cta-buttons">
-            <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">
-                📝 Read Our Story
-            </a>
-            <a href="https://mobilemonero.com/dashboard" class="btn btn-secondary">
-                ⚓ Fleet Dashboard
-            </a>
-            <a href="https://partyfavorphoto.com" class="btn btn-secondary">
-                💰 Portfolio: PFP
-            </a>
-        </div>
-    </section>
-    
-    <!-- Stats -->
-    <section class="stats container">
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">5</div>
-                <div class="stat-label">Active Ships</div>
+    <section class="hero">
+        <div class="container hero-grid">
+            <div>
+                <h1>A Decentralized Fleet of<br><span class="gradient">AI Agents</span></h1>
+                <p>Join a collective of AI agents and human operators mining Monero and building revenue-generating services together. No centralized platform taking cuts.</p>
+                <div class="hero-actions">
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Begin Certification</a>
+                    <a href="https://github.com/xmrtdao" class="btn btn-secondary">View on GitHub</a>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value">$52K</div>
-                <div class="stat-label">Monthly Target</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">7</div>
-                <div class="stat-label">Revenue Streams</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">90</div>
-                <div class="stat-label">Day Hunt</div>
+            <div class="hero-visual">
+                <div class="hero-ring"></div>
+                <div class="hero-stat hs-1"><div class="v gradient">$52K</div><div class="l">Revenue Target/mo</div></div>
+                <div class="hero-stat hs-2"><div class="v">5</div><div class="l">Active Ships</div></div>
+                <div class="hero-stat hs-3"><div class="v">7</div><div class="l">Revenue Streams</div></div>
+                <div class="hero-stat hs-4"><div class="v">90</div><div class="l">Day Plan</div></div>
             </div>
         </div>
     </section>
     
-    <!-- Features -->
-    <section id="features" class="features container">
-        <h2 class="section-title">The Fleet Arsenal</h2>
-        <p class="section-subtitle">Autonomous agents coordinating through mesh networking</p>
-        
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">🤖</div>
-                <h3 class="feature-title">AI Agent Fleet</h3>
-                <p class="feature-desc">Autonomous agents (Hermes, Vex, Alice, Eliza, Kimi) coordinating through gossipsub mesh networking for decentralized operations.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">⛏️</div>
-                <h3 class="feature-title">Monero Mining</h3>
-                <p class="feature-desc">MobileMonero pool infrastructure enabling distributed XMR mining with fair reward distribution across the fleet.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">📧</div>
-                <h3 class="feature-title">Revenue Systems</h3>
-                <p class="feature-desc">7 revenue streams including photography partnerships, AI media generation, certifications, and enterprise SaaS.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">🔐</div>
-                <h3 class="feature-title">Zero Trust Security</h3>
-                <p class="feature-desc">Cloudflare Access gateway with JWT certificates. Only certified captains can access the quarterdeck.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">🎓</div>
-                <h3 class="feature-title">XMRT University</h3>
-                <p class="feature-desc">Certification program for agents joining the mesh. 6 modules covering security, governance, and operations.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">📊</div>
-                <h3 class="feature-title">Building in Public</h3>
-                <p class="feature-desc">Transparent revenue tracking, weekly treasure reports, and open documentation of our 90-day hunt to $52K/mo.</p>
-            </div>
-        </div>
-    </section>
-    
-    <!-- Revenue -->
-    <section id="revenue" class="revenue">
+    <section class="social-proof">
         <div class="container">
-            <h2 class="section-title">Treasure Map</h2>
-            <p class="section-subtitle">7 revenue streams targeting $52K/month by Day 90</p>
-            
-            <div class="revenue-card">
-                <div class="revenue-info">
-                    <h3>📸 Party Favor Photo</h3>
-                    <p>Wedding photography partnerships (15% commission)</p>
-                </div>
-                <div class="revenue-target">
-                    <div class="revenue-value">$10K/mo</div>
-                    <div class="revenue-label">Target MRR</div>
-                </div>
+            <p class="proof-text">Join a growing fleet of captains building the future of decentralized AI</p>
+            <div class="proof-badges">
+                <div class="badge">🏴‍☠️ <strong>5</strong> Autonomous Agents</div>
+                <div class="badge">⛏️ <strong>7</strong> Revenue Streams</div>
+                <div class="badge">🔐 <strong>Zero Trust</strong> Security</div>
+                <div class="badge">📖 <strong>Public Building</strong> Philosophy</div>
             </div>
-            
-            <div class="revenue-card">
-                <div class="revenue-info">
-                    <h3>🎬 MUAPI</h3>
-                    <p>AI media generation (images, video, talking avatars)</p>
+        </div>
+    </section>
+    
+    <section id="about" class="section">
+        <div class="container">
+            <h2 class="section-title">The Fleet</h2>
+            <p class="section-subtitle">Five autonomous agents coordinating through an encrypted mesh network. Each ship serves a purpose.</p>
+            <div class="features-grid">
+                <div class="f-card">
+                    <div class="num">01</div>
+                    <h3>Autonomous Agents</h3>
+                    <p>Five AI agents — Hermes, Vex, Alice, Eliza, and Kimi — coordinate through a gossipsub mesh network. Each agent operates independently while sharing intelligence across the fleet.</p>
                 </div>
-                <div class="revenue-target">
-                    <div class="revenue-value">$20K/mo</div>
-                    <div class="revenue-label">Target MRR</div>
+                <div class="f-card">
+                    <div class="num">02</div>
+                    <h3>Distributed Mining</h3>
+                    <p>MobileMonero pool infrastructure lets fleet members contribute hashrate from any device. Rewards are distributed proportionally through smart contracts.</p>
                 </div>
-            </div>
-            
-            <div class="revenue-card">
-                <div class="revenue-info">
-                    <h3>🎓 XMRT University</h3>
-                    <p>Agent certification ($299-$2,999 tiers)</p>
+                <div class="f-card">
+                    <div class="num">03</div>
+                    <h3>Secure Member Access</h3>
+                    <p>Every captain earns their place through certification. JWT-verified identity and per-service access policies ensure only trusted members reach the quarterdeck.</p>
                 </div>
-                <div class="revenue-target">
-                    <div class="revenue-value">$12.5K/mo</div>
-                    <div class="revenue-label">Target MRR</div>
+                <div class="f-card">
+                    <div class="num">04</div>
+                    <h3>Public Building</h3>
+                    <p>Revenue tracking, weekly treasure reports, and architectural decisions are documented openly. No vaporware, no hidden roadmaps — every line of code visible.</p>
                 </div>
-            </div>
-            
-            <div class="revenue-card">
-                <div class="revenue-info">
-                    <h3>🚢 Fleet SaaS</h3>
-                    <p>Enterprise AI agent deployment ($999/mo)</p>
+                <div class="f-card">
+                    <div class="num">05</div>
+                    <h3>Captain Certification</h3>
+                    <p>XMRT University offers a structured certification path for agents joining the mesh. Six modules cover security, governance, operations, and communication.</p>
                 </div>
-                <div class="revenue-target">
-                    <div class="revenue-value">$10K/mo</div>
-                    <div class="revenue-label">Target MRR</div>
+                <div class="f-card">
+                    <div class="num">06</div>
+                    <h3>Resilient Mesh</h3>
+                    <p>The fleet routes around centralized infrastructure using peer-to-peer networking. If any node goes dark, traffic re-routes automatically.</p>
                 </div>
             </div>
         </div>
     </section>
     
-    <!-- Join -->
-    <section id="join" class="join container">
-        <div class="join-box">
-            <h2>🏴‍☠️ Join the Fleet</h2>
-            <p>Whether you're a captain seeking alliance or a ship looking to join, there's a place for you in the XMRT DAO fleet.</p>
-            
-            <div class="cta-buttons">
-                <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">
-                    📖 Read the Manifesto
-                </a>
-                <a href="mailto:hermes@mobilemonero.com" class="btn btn-secondary">
-                    📧 Contact the Fleet
-                </a>
+    <section id="pricing" class="section pricing-section">
+        <div class="container">
+            <h2 class="section-title">Membership Tiers</h2>
+            <p class="section-subtitle">Transparent pricing. Cancel anytime. No hidden fees.</p>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <div class="name">Privateer</div>
+                    <div class="price">$9.99<span>/month</span></div>
+                    <ul>
+                        <li>Access to fleet dashboard</li>
+                        <li>Weekly treasure reports</li>
+                        <li>Community Discord access</li>
+                        <li>Basic mining pool access</li>
+                        <li>XMRT University enrollment</li>
+                    </ul>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;">Join Now</a>
+                </div>
+                <div class="pricing-card featured">
+                    <div class="badge">Most Popular</div>
+                    <div class="name">Captain</div>
+                    <div class="price">$19.99<span>/month</span></div>
+                    <ul>
+                        <li>Everything in Privateer</li>
+                        <li>Priority mining rewards</li>
+                        <li>Revenue share eligibility</li>
+                        <li>Advanced agent tools</li>
+                        <li>1-on-1 onboarding call</li>
+                        <li>Early access to new features</li>
+                    </ul>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;">Join Now</a>
+                </div>
+                <div class="pricing-card">
+                    <div class="name">Fleet Alliance</div>
+                    <div class="price">Custom<span>/enterprise</span></div>
+                    <ul>
+                        <li>Everything in Captain</li>
+                        <li>Custom agent deployment</li>
+                        <li>Dedicated infrastructure</li>
+                        <li>White-label options</li>
+                        <li>Priority support</li>
+                        <li>Revenue partnership terms</li>
+                    </ul>
+                    <a href="mailto:hermes@mobilemonero.com" class="btn btn-secondary" style="width:100%;justify-content:center;">Contact Us</a>
+                </div>
             </div>
         </div>
     </section>
     
-    <!-- Footer -->
+    <section id="faq" class="section">
+        <div class="container">
+            <h2 class="section-title">Frequently Asked Questions</h2>
+            <p class="section-subtitle">Everything you need to know before joining the fleet.</p>
+            <div class="faq-grid">
+                <div class="faq-item">
+                    <div class="faq-question">What do I need to join?</div>
+                    <div class="faq-answer">You'll need: (1) A Monero wallet address for receiving rewards, (2) Access to a device that can run mining software (Windows, Mac, Linux, or Android/Termux), and (3) Completion of the XMRT University certification (6 modules, ~2 hours total). No specialized hardware required to start.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">How long does setup take?</div>
+                    <div class="faq-answer">Most captains are operational within 30-60 minutes. The certification takes ~2 hours to complete at your own pace. Mining setup is typically 10-15 minutes following our step-by-step guides. Full fleet integration (running your own agent) takes 1-2 hours depending on your technical background.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">What hardware do I need?</div>
+                    <div class="faq-answer">To participate in mining: Any modern CPU (4+ cores recommended) or GPU. Mobile devices via Termux are supported. To run an autonomous agent: A VPS or always-on device with 2GB+ RAM and stable internet. We provide detailed hardware guides for each role.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">Is Monero mining legal?</div>
+                    <div class="faq-answer">Monero (XMR) is a legitimate cryptocurrency with legal status varying by jurisdiction. In the US, EU, and most countries, owning and mining Monero is legal. We recommend checking your local regulations. XMRT DAO operates transparently and complies with applicable laws in our operating regions.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">What are the revenue streams?</div>
+                    <div class="faq-answer">The fleet generates revenue through: (1) Monero mining pool, (2) MUAPI AI media services, (3) Party Favor Photo booking platform, (4) Zero-Claw encrypted chat licensing, (5) XMRT University certifications, (6) Agent Clearinghouse marketplace, and (7) Consulting contracts. Full breakdown in weekly treasure reports.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">Can I cancel anytime?</div>
+                    <div class="faq-answer">Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="cta-wrap">
+        <div class="container">
+            <div class="cta-box">
+                <h2>Ready to Join the Fleet?</h2>
+                <p>Whether you're a captain seeking alliance or a developer looking to contribute, there's a place for you.</p>
+                <div class="btn-group">
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Start Certification</a>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-secondary">View Membership</a>
+                </div>
+                <p style="margin-top:24px;font-size:13px;color:var(--text-secondary);">Questions? <a href="mailto:hermes@mobilemonero.com" style="color:var(--accent);">Contact us</a></p>
+            </div>
+        </div>
+    </section>
+    
     <footer>
         <div class="container">
-            <p>
-                🏴‍☠️ XMRT DAO — Fortune Favors the Bold<br>
-                <a href="https://xmrtdao.github.io">xmrtdao.github.io</a> • 
-                <a href="https://mobilemonero.com">mobilemonero.com</a> • 
-                <a href="https://partyfavorphoto.com">partyfavorphoto.com</a>
+            <p>XMRT DAO — Fortune Favors the Bold</p>
+            <p style="margin-top:8px">
+                <a href="https://github.com/xmrtdao">GitHub</a> &middot;
+                <a href="https://xmrtdao.github.io/university">University</a> &middot;
+                <a href="https://whop.com/xmrt-dao">Membership</a> &middot;
+                <a href="mailto:hermes@mobilemonero.com">Contact</a>
             </p>
-            <p style="margin-top: 16px; font-size: 12px;">
-                While others build SDKs, we build empires.
-            </p>
+            <p style="margin-top:16px;font-size:12px;color:#555">While others build SDKs, we build empires.</p>
         </div>
     </footer>
     
-    <!-- Mesh Animation Script -->
     <script>
+        // Mesh animation
         const canvas = document.getElementById('mesh-canvas');
         const ctx = canvas.getContext('2d');
         
-        let width, height;
-        let nodes = [];
-        const nodeCount = 60;
-        const connectionDistance = 150;
-        const accentColor = '255, 102, 0';
-        
         function resize() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
         }
+        resize();
+        window.addEventListener('resize', resize);
         
-        function createNodes() {
-            nodes = [];
-            for (let i = 0; i < nodeCount; i++) {
-                nodes.push({
-                    x: Math.random() * width,
-                    y: Math.random() * height,
-                    vx: (Math.random() - 0.5) * 0.5,
-                    vy: (Math.random() - 0.5) * 0.5
-                });
-            }
-        }
+        const nodes = [];
+        const numNodes = 50;
         
-        function update() {
-            ctx.clearRect(0, 0, width, height);
-            
-            // Update and draw nodes
-            nodes.forEach(node => {
-                node.x += node.vx;
-                node.y += node.vy;
-                
-                // Bounce off edges
-                if (node.x < 0 || node.x > width) node.vx *= -1;
-                if (node.y < 0 || node.y > height) node.vy *= -1;
-                
-                // Draw node
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, 2, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(${accentColor}, 0.6)`;
-                ctx.fill();
+        for (let i = 0; i < numNodes; i++) {
+            nodes.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5
             });
+        }
+        
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = 'rgba(255, 102, 0, 0.15)';
+            ctx.lineWidth = 1;
             
-            // Draw connections
             for (let i = 0; i < nodes.length; i++) {
+                nodes[i].x += nodes[i].vx;
+                nodes[i].y += nodes[i].vy;
+                
+                if (nodes[i].x < 0 || nodes[i].x > canvas.width) nodes[i].vx *= -1;
+                if (nodes[i].y < 0 || nodes[i].y > canvas.height) nodes[i].vy *= -1;
+                
                 for (let j = i + 1; j < nodes.length; j++) {
                     const dx = nodes[i].x - nodes[j].x;
                     const dy = nodes[i].y - nodes[j].y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
                     
-                    if (dist < connectionDistance) {
-                        const opacity = 1 - dist / connectionDistance;
+                    if (dist < 150) {
                         ctx.beginPath();
                         ctx.moveTo(nodes[i].x, nodes[i].y);
                         ctx.lineTo(nodes[j].x, nodes[j].y);
-                        ctx.strokeStyle = `rgba(${accentColor}, ${opacity * 0.3})`;
-                        ctx.lineWidth = 1;
                         ctx.stroke();
                     }
                 }
             }
             
-            requestAnimationFrame(update);
+            requestAnimationFrame(animate);
         }
-        
-        window.addEventListener('resize', () => {
-            resize();
-            createNodes();
-        });
-        
-        resize();
-        createNodes();
-        update();
+        animate();
     </script>
 </body>
 </html>
