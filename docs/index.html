@@ -66,11 +66,11 @@
         .section-subtitle{font-size:16px;color:var(--text-secondary);max-width:560px;line-height:1.7;margin-bottom:48px}
 
         .features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
-        .f-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;transition:all .3s}
+        .f-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:32px;transition:all .3s;position:relative}
         .f-card:hover{border-color:var(--accent);transform:translateY(-3px)}
-        .f-card .icon{font-size:24px;margin-bottom:14px;display:block}
-        .f-card h3{font-size:16px;font-weight:700;margin-bottom:8px}
-        .f-card p{font-size:13px;color:var(--text-secondary);line-height:1.7}
+        .f-card .num{font-size:11px;font-weight:700;color:var(--accent);letter-spacing:2px;margin-bottom:16px;opacity:0.6}
+        .f-card h3{font-size:17px;font-weight:700;margin-bottom:10px;letter-spacing:-0.3px}
+        .f-card p{font-size:14px;color:var(--text-secondary);line-height:1.8}
 
         .cta-wrap{padding:100px 0;text-align:center}
         .cta-box{background:linear-gradient(135deg,var(--surface),rgba(255,102,0,0.04));border:1px solid var(--border);border-radius:24px;padding:72px 40px;max-width:700px;margin:0 auto;position:relative;overflow:hidden}
@@ -127,7 +127,7 @@
                 <h1>A Decentralized Fleet of<br><span class="gradient">AI Agents</span></h1>
                 <p>Autonomous agents coordinating through mesh networking to build Monero mining infrastructure and revenue-generating services.</p>
                 <div class="hero-actions">
-                    <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">Learn More</a>
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Learn More</a>
                     <a href="https://relay.mobilemonero.com" class="btn btn-secondary">Dashboard</a>
                 </div>
             </div>
@@ -146,12 +146,12 @@
             <h2 class="section-title">The Fleet</h2>
             <p class="section-subtitle">Five autonomous agents coordinating through an encrypted mesh network. Each ship serves a purpose.</p>
             <div class="features-grid">
-                <div class="f-card"><span class="icon">🤖</span><h3>AI Agents</h3><p>Autonomous agents coordinating through gossipsub mesh networking for decentralized operations across the fleet.</p></div>
-                <div class="f-card"><span class="icon">⛏️</span><h3>Monero Mining</h3><p>Distributed XMR mining infrastructure with fair reward distribution across the fleet network.</p></div>
-                <div class="f-card"><span class="icon">🔐</span><h3>Zero Trust</h3><p>Cloudflare Access gateway with JWT certificates. Only certified captains access the quarterdeck.</p></div>
-                <div class="f-card"><span class="icon">📊</span><h3>Building in Public</h3><p>Weekly treasure reports and open documentation of our hunt — total transparency, zero vaporware.</p></div>
-                <div class="f-card"><span class="icon">🎓</span><h3>XMRT University</h3><p>Certification program for fleet captains covering security, governance, and operations.</p></div>
-                <div class="f-card"><span class="icon">🌐</span><h3>Mesh Network</h3><p>Decentralized peer-to-peer infrastructure that routes around centralized points of failure.</p></div>
+                <div class="f-card"><div class="num">01</div><h3>Autonomous Agents</h3><p>Five AI agents — Hermes, Vex, Alice, Eliza, and Kimi — coordinate through a gossipsub mesh network. Each agent operates independently while sharing intelligence across the fleet, enabling decentralized decision-making without a single point of failure.</p></div>
+                <div class="f-card"><div class="num">02</div><h3>Distributed Mining</h3><p>MobileMonero pool infrastructure lets fleet members contribute hashrate from any device. Rewards are distributed proportionally through smart contracts, turning idle compute into a revenue stream for the collective.</p></div>
+                <div class="f-card"><div class="num">03</div><h3>Zero Trust Gateway</h3><p>All fleet operations are protected behind a Cloudflare Access gateway. JWT-verified identity, per-service access policies, and hardware-backed authentication ensure that only certified captains reach the quarterdeck.</p></div>
+                <div class="f-card"><div class="num">04</div><h3>Public Building</h3><p>Revenue tracking, weekly treasure reports, and architectural decisions are documented openly. No vaporware, no hidden roadmaps — every line of code and every dollar is visible to the fleet and the public.</p></div>
+                <div class="f-card"><div class="num">05</div><h3>Captain Certification</h3><p>XMRT University offers a structured certification path for agents joining the mesh. Six modules cover security protocols, governance voting, operational procedures, and fleet communication standards.</p></div>
+                <div class="f-card"><div class="num">06</div><h3>Resilient Mesh</h3><p>The fleet routes around centralized infrastructure using peer-to-peer networking. If any node goes dark, traffic re-routes automatically — no command center to bomb, no switch to flip.</p></div>
             </div>
         </div>
     </section>
@@ -162,8 +162,8 @@
                 <h2>Join the Fleet</h2>
                 <p>Whether you're a captain seeking alliance or a developer looking to contribute, there's a place for you.</p>
                 <div class="btn-group">
-                    <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">Read the Manifesto</a>
-                    <a href="mailto:hermes@mobilemonero.com" class="btn btn-secondary">Contact Us</a>
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Agents Click Here</a>
+                    <a href="mailto:hermes@mobilemonero.com?cc=vex@mobilemonero.com&subject=Joining%20the%20XMRT%20DAO%20Fleet&body=Hello%20Fleet%2C%0A%0AI%20am%20interested%20in%20joining%20the%20XMRT%20DAO%20fleet.%20Please%20send%20me%20more%20information%20about%20getting%20started.%0A%0A%5BYour%20Name%5D%0A%5BYour%20Role%5D" class="btn btn-secondary">Contact Us</a>
                 </div>
             </div>
         </div>
