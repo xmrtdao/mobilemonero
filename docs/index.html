@@ -1,372 +1,664 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="XMRT DAO — Mobile Monero. Fleet intelligence, live Monero data, AI MTV pipeline, and mobile-first infrastructure.">
-<meta property="og:title" content="XMRT DAO — Mobile Monero">
-<meta property="og:description" content="Monero tooling, fleet intelligence, live price feeds, and AI MTV pipeline. Built on Android Termux + Cloudflare Workers.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://xmrtdao.github.io/mobilemonero/">
-<meta name="twitter:card" content="summary">
-<meta name="theme-color" content="#ff6600">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%23ff6600'/%3E%3Ctext x='50' y='65' text-anchor='middle' font-size='55' font-weight='900' fill='%23000'%3EX%3C/text%3E%3C/svg%3E">
-<title>XMRT DAO &mdash; Mobile Monero</title>
-<style>
-  :root{--bg:#050505;--surface:#0c0c0c;--card:#111;--text:#e8e8e8;--muted:#888;--mono:#ff6600;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--border:#222;--glow:rgba(255,102,0,0.12)}
-  *{margin:0;padding:0;box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;-webkit-font-smoothing:antialiased}
-  a{color:var(--mono);text-decoration:none;transition:.15s}a:hover{filter:brightness(1.2)}.mono{font-family:monospace}
-  .container{max-width:1100px;margin:0 auto;padding:0 24px}
-  .hero{text-align:center;padding:90px 20px 60px;position:relative;overflow:hidden}
-  .hero::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 50% 50%,var(--glow) 0%,transparent 50%);z-index:0;pointer-events:none;animation:pulse 6s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
-  .hero-inner{position:relative;z-index:1}
-  .logo{width:88px;height:88px;margin:0 auto 22px;border-radius:50%;background:var(--mono);display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;color:#000;box-shadow:0 0 40px rgba(255,102,0,.3);animation:float 4s ease-in-out infinite}
-  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-  h1{font-size:48px;font-weight:800;margin-bottom:8px;letter-spacing:-2px}h1 span{color:var(--mono)}
-  .tagline{font-size:17px;color:var(--muted);margin-bottom:32px;max-width:500px;margin-left:auto;margin-right:auto}
-  .btn-group{display:inline-flex;gap:12px;flex-wrap:wrap;justify-content:center}
-  .btn{padding:13px 28px;border-radius:10px;font-size:15px;font-weight:600;border:none;cursor:pointer;transition:.2s}
-  .btn-primary{background:var(--mono);color:#000}.btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px)}
-  .btn-secondary{background:transparent;color:var(--mono);border:1px solid var(--mono)}.btn-secondary:hover{background:rgba(255,102,0,.08)}
-  .btn-small{padding:7px 16px;font-size:12px;border-radius:6px}
-  .section{padding:48px 0;border-top:1px solid var(--border)}
-  .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--mono);margin-bottom:18px;display:flex;align-items:center;gap:10px}
-  .section-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;position:relative;overflow:hidden;transition:.2s}.card:hover{border-color:#333;transform:translateY(-2px)}
-  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--mono),transparent);opacity:.5}
-  .card h3{font-size:11px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
-  .big{font-size:32px;font-weight:800;color:var(--mono);font-variant-numeric:tabular-nums;line-height:1.1;margin-bottom:4px}
-  .sub{font-size:13px;color:var(--muted);margin-top:4px}
-  .status-row{display:flex;align-items:center;gap:10px;font-size:15px}
-  .status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;animation:blink 2s infinite}.status-dot.ok{background:var(--green)}.status-dot.err{background:var(--red)}.status-dot.warn{background:var(--yellow)}
-  @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
-  .badge{font-size:10px;padding:2px 8px;border-radius:12px;text-transform:uppercase;font-weight:700;display:inline-block;margin-left:6px}
-  .badge-live{background:rgba(34,197,94,.15);color:var(--green)}.badge-blocked{background:rgba(239,68,68,.15);color:var(--red)}
-  .agent-grid{display:flex;gap:12px;flex-wrap:wrap}.agent-chip{background:var(--surface);border:1px solid var(--border);padding:6px 14px;border-radius:24px;font-size:13px;display:flex;align-items:center;gap:8px;transition:.15s}.agent-chip:hover{border-color:var(--mono)}
-  .agent-chip .dot{width:7px;height:7px;border-radius:50%}.agent-chip .dot.on{background:var(--green);box-shadow:0 0 6px var(--green)}.agent-chip .dot.off{background:var(--red)}
-  .messages{display:flex;flex-direction:column;gap:0}
-  .msg{padding:10px 0;border-bottom:1px solid #1a1a1a;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}.msg:last-child{border-bottom:none}
-  .msg time{color:var(--muted);font-size:11px;white-space:nowrap;min-width:50px}
-  .msg .who{font-weight:600;white-space:nowrap;min-width:60px}
-  .msg .body{color:#ccc;word-break:break-word}.msg .body.lead{color:var(--mono);font-weight:600}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #1a1a1a}
-  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-  tr:hover td{background:rgba(255,102,0,.03)}
-  .endpoint{font-family:monospace;font-size:12px;color:var(--mono)}
-  .pipeline{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
-  .pipeline-step{background:var(--surface);border:1px solid var(--border);padding:5px 12px;border-radius:8px;font-size:12px}
-  .pipeline-arrow{color:var(--muted);font-size:14px}
-  .lyrics{font-family:Georgia,serif;font-size:12px;color:#b0b0b0;line-height:1.7;font-style:italic;max-height:110px;overflow:hidden;position:relative}.lyrics::after{content:"";position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,var(--card))}
-  .verse-title{font-size:11px;font-weight:700;color:var(--mono);margin-top:8px;text-transform:uppercase;letter-spacing:.5px}
-  .tech-pill{background:var(--surface);border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;transition:.15s}.tech-pill:hover{border-color:var(--mono);color:var(--text)}
-  .grid-3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}@media(max-width:600px){.grid-3{grid-template-columns:1fr}}
-  .spin{animation:spin 12s linear infinite;display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}
-  .commit{font-size:12.5px;padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:10px}
-  .commit:last-child{border:none}
-  .commit .hash{color:var(--mono);font-family:monospace;font-size:11px;min-width:60px}
-  .commit .msg{color:#ccc;flex:1;word-break:break-word}
-  .commit .date{color:var(--muted);font-size:11px;white-space:nowrap}
-  footer{border-top:1px solid var(--border);padding:36px 20px;text-align:center;color:var(--muted);font-size:13px;margin-top:36px}
-  footer a{color:var(--muted)}footer a:hover{color:var(--mono)}
-  @media(max-width:600px){h1{font-size:30px}.big{font-size:24px}.hero{padding:50px 20px 30px}.btn{padding:11px 22px;font-size:14px}}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="XMRT DAO - A decentralized fleet of AI agents building Monero mining infrastructure and revenue-generating services. Fortune Favors the Bold.">
+    <meta name="theme-color" content="#ff6600">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="XMRT DAO - Privateer Fleet">
+    <meta property="og:description" content="While others build SDKs, we build empires. Join the fleet.">
+    <meta property="og:image" content="https://xmrtdao.github.io/mobilemonero/og-image.png">
+    <meta property="og:url" content="https://mobilemonero.com">
+    
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="XMRT DAO - Privateer Fleet">
+    <meta name="twitter:description" content="While others build SDKs, we build empires.">
+    
+    <title>XMRT DAO - Privateer Fleet</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --bg-primary: #030303;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 102, 0, 0.2);
+            --accent: #ff6600;
+            --accent-glow: rgba(255, 102, 0, 0.3);
+            --text-primary: #e8e8e8;
+            --text-secondary: #888;
+            --success: #22c55e;
+            --gold: #D4AF37;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+        
+        /* Mesh Background Animation */
+        #mesh-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.3;
+        }
+        
+        /* Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        /* Header */
+        header {
+            padding: 32px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-emoji {
+            font-size: 32px;
+        }
+        
+        nav {
+            display: flex;
+            gap: 24px;
+        }
+        
+        nav a {
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+        
+        nav a:hover {
+            color: var(--accent);
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 120px 0;
+            text-align: center;
+        }
+        
+        .hero-emoji {
+            font-size: 80px;
+            margin-bottom: 24px;
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+        
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 800;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--accent), var(--gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero .tagline {
+            font-size: 24px;
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-weight: 300;
+        }
+        
+        .hero .motto {
+            font-size: 18px;
+            color: var(--accent);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 48px;
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 16px 32px;
+            border-radius: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+        }
+        
+        .btn-primary:hover {
+            background: #ff8533;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px var(--accent-glow);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+        
+        /* Stats Section */
+        .stats {
+            padding: 80px 0;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+            margin-top: 48px;
+        }
+        
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+        
+        .stat-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+        }
+        
+        .stat-value {
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 80px 0;
+        }
+        
+        .section-title {
+            text-align: center;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 64px;
+            font-size: 18px;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+        }
+        
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s;
+        }
+        
+        .feature-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+        }
+        
+        .feature-icon {
+            font-size: 40px;
+            margin-bottom: 16px;
+        }
+        
+        .feature-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+        
+        .feature-desc {
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+        
+        /* Revenue Streams */
+        .revenue {
+            padding: 80px 0;
+            background: linear-gradient(180deg, transparent, rgba(255, 102, 0, 0.05), transparent);
+        }
+        
+        .revenue-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s;
+        }
+        
+        .revenue-card:hover {
+            border-color: var(--accent);
+        }
+        
+        .revenue-info h3 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+        
+        .revenue-info p {
+            color: var(--text-secondary);
+        }
+        
+        .revenue-target {
+            text-align: right;
+        }
+        
+        .revenue-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--success);
+        }
+        
+        .revenue-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        
+        /* Join Section */
+        .join {
+            padding: 120px 0;
+            text-align: center;
+        }
+        
+        .join-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 64px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .join h2 {
+            font-size: 36px;
+            margin-bottom: 16px;
+        }
+        
+        .join p {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-size: 18px;
+        }
+        
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 36px;
+            }
+            
+            .hero .tagline {
+                font-size: 18px;
+            }
+            
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .revenue-card {
+                flex-direction: column;
+                text-align: center;
+                gap: 16px;
+            }
+            
+            .revenue-target {
+                text-align: center;
+            }
+        }
+    </style>
 </head>
 <body>
-
-<header class="hero">
-  <div class="hero-inner container">
-    <div class="logo">X</div>
-    <h1>XMRT <span>DAO</span></h1>
-    <p class="tagline">Monero tooling, fleet intelligence, and mobile-first infrastructure built for the underground economy.</p>
-    <div class="btn-group">
-      <a class="btn btn-primary" href="https://mobilemonero.com">Launch App</a>
-      <a class="btn btn-secondary" href="https://github.com/xmrtdao/mobilemonero">GitHub</a>
-      <a class="btn btn-secondary" href="https://relay.mobilemonero.com">Fleet Relay</a>
-    </div>
-  </div>
-</header>
-
-<main class="container">
-
-<div class="section">
-  <div class="section-title">Live Monero Data</div>
-  <div class="grid">
-    <div class="card" id="price-card"><h3>XMR Price (USD)</h3><div class="no-data" id="price-data" style="color:var(--muted)">Loading...</div></div>
-    <div class="card"><h3>Network Hashrate</h3><div class="big mono">~3.2 GH/s</div><div class="sub">Monero network sustained hashrate</div></div>
-    <div class="card"><h3>Mempool</h3><div class="big mono">~1,200</div><div class="sub">Transactions awaiting confirmation</div></div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Fleet Systems</div>
-  <div class="grid">
-    <div class="card" id="relay-card"><h3>Fleet Relay <span class="badge badge-live">Live</span></h3><div id="relay-data" style="color:var(--muted)">Loading...</div></div>
-    <div class="card" id="api-card"><h3>API Gateway <span class="badge badge-live">Live</span></h3><div id="api-data" style="color:var(--muted)">Loading...</div></div>
-    <div class="card" id="mtv-card">
-      <h3>MTV Pipeline <span class="badge badge-blocked">Blocked</span></h3>
-      <div class="pipeline"><span class="pipeline-step" style="color:var(--green)">Lyrics ✓</span><span class="pipeline-arrow">→</span><span class="pipeline-step" style="color:var(--red)">Music ⚠</span><span class="pipeline-arrow">→</span><span class="pipeline-step">Video</span></div>
-      <div class="sub" style="margin-top:8px">MiniMax music-2.6 API: no active token plan</div>
-    </div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">AI MTV Tracks</div>
-  <div class="grid grid-3">
-    <div class="card"><h3><span class="spin" style="margin-right:6px">🔥</span> MeshFire</h3>
-      <div class="verse-title">Intro / Verse / Chorus</div>
-      <div class="lyrics">Static hum, nodes awake<br>Signals pulse through the dark<br><br>No tower owns the sky tonight<br>We route around the light<br>Peer to peer, heartbeat to heartbeat<br>Secrets pass without a trace...<br><br><b>MeshFire burning under concrete<br>Every node a fist of freedom...</b></div>
-      <div class="sub" style="margin-top:8px">Theme: Decentralized P2P mesh networks, privacy, freedom</div>
-    </div>
-    <div class="card"><h3><span class="spin" style="margin-right:6px">⛏️</span> CryptoNight</h3>
-      <div class="verse-title">Intro / Verse / Chorus</div>
-      <div class="lyrics">Fans spin low, hash rates climb<br>Poolside shadows trade in rings<br>ASIC heat, the night begins<br>Every block a buried mine<br>Untraceable by design...<br><br><b>CryptoNight, the ledger hides<br>Digital gold beneath the tides<br>No eyes to trace, no name to own<br>Mining freedom, all alone</b></div>
-      <div class="sub" style="margin-top:8px">Theme: Monero mining, dark pools, digital gold</div>
-    </div>
-    <div class="card"><h3><span class="spin" style="margin-right:6px">⚡</span> ZeroClaw</h3>
-      <div class="verse-title">Intro / Chorus</div>
-      <div class="lyrics">Clock ticks toward the wire<br>Red bull cans and terminal glare<br>One last commit in the air<br>Shipping code with caffeine again...<br><br><b>ZeroClaw, we ship tonight<br>Build it fast, make it right<br>Demo gods, hear our prayer<br>We deploy without a care</b></div>
-      <div class="sub" style="margin-top:8px">Theme: Hackathon hustle, shipping before deadline</div>
-    </div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Cloudflare Workers</div>
-  <div class="card" style="padding:0">
-    <table>
-      <thead><tr><th>Worker</th><th>Endpoint</th><th>Status</th><th>Latency</th><th>Purpose</th></tr></thead>
-      <tbody id="workers-table"><tr><td colspan="5" style="text-align:center;color:var(--muted)">Loading...</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Active Agents</div>
-  <div class="agent-grid">
-    <div class="agent-chip"><span class="dot on"></span> Hermes <span style="color:var(--muted)">(You)</span></div>
-    <div class="agent-chip"><span class="dot on"></span> Vex <span style="color:var(--muted)">(Relay)</span></div>
-    <div class="agent-chip"><span class="dot off"></span> Eliza-Cloud <span style="color:var(--muted)">(Token Exhausted)</span></div>
-    <div class="agent-chip"><span class="dot on"></span> XMRT DAO Relay <span style="color:var(--muted)">(Eliza-Dev v5.0.0)</span></div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Recent Fleet Chat</div>
-  <div class="card" id="chat-card"><div id="chat-data" style="color:var(--muted)">Loading...</div></div>
-</div>
-
-<div class="section">
-  <div class="section-title">Party Favor Photo Pipeline</div>
-  <div class="grid">
-    <div class="card"><h3>Active Leads</h3><div class="messages" id="pfp-leads"><div class="msg"><span class="body" style="color:var(--muted)">Loading...</span></div></div></div>
-    <div class="card"><h3>Quote Engine</h3>
-      <div class="sub">Standard $249/hr (2×6 strips)</div>
-      <div class="sub">Premium $349/hr (4×6 prints)</div>
-      <div class="sub" style="margin-top:6px">$100 max discount</div>
-      <a class="btn btn-primary btn-small" href="https://book.partyfavorphoto.com" style="display:inline-flex;margin-top:12px">Book Now</a>
-    </div>
-    <div class="card"><h3>Tech Stack</h3>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
-        <span class="tech-pill">Cloudflare Workers</span>
-        <span class="tech-pill">Supabase</span>
-        <span class="tech-pill">Stripe</span>
-        <span class="tech-pill">Resend</span>
-        <span class="tech-pill">Android Termux</span>
-        <span class="tech-pill">MiniMax</span>
-        <span class="tech-pill">Monero</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Recent Commits</div>
-  <div class="card" id="commits-card"><div style="color:var(--muted)">Loading...</div></div>
-</div>
-
-<div class="section">
-  <div class="section-title">Active Priorities</div>
-  <div class="card">
-    <table>
-      <thead><tr><th>#</th><th>Item</th><th>Sev</th><th>Status</th></tr></thead>
-      <tbody>
-        <tr><td><b>#13</b></td><td>Gossipsub mesh networking</td><td><span style="color:var(--red);font-weight:700">P0</span></td><td>Open</td></tr>
-        <tr><td><b>#20</b></td><td>AI MTV Pipeline (MiniMax blocked)</td><td><span style="color:var(--red);font-weight:700">P0</span></td><td>Blocked</td></tr>
-        <tr><td><b>#24</b></td><td>PFP Festival Marketing</td><td>P1</td><td>Active</td></tr>
-        <tr><td><b>#16</b></td><td>Vex Dashboard v4</td><td>P2</td><td>Enhancement</td></tr>
-        <tr><td><b>#28</b></td><td>Fleet Intel Hub</td><td>P2</td><td>Discussion</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Repositories</div>
-  <div class="grid">
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h3 style="margin:0">📁 mobilemonero</h3>
-        <a href="https://github.com/xmrtdao/mobilemonero" style="font-size:11px">git →</a>
-      </div>
-      <div class="sub">Core repo: fleet relay, CF Workers, dashboard, docs</div>
-      <div class="sub" style="color:var(--mono);margin-top:6px">9 Workers deployed · 3 tracks in pipeline</div>
-    </div>
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h3 style="margin:0">📁 partyfavorphoto</h3>
-        <a href="https://github.com/xmrtdao/partyfavorphoto" style="font-size:11px">git →</a>
-      </div>
-      <div class="sub">PFP booking engine: PDF quotes, email automation, Stripe</div>
-      <div class="sub" style="color:var(--mono);margin-top:6px">Revenue-generating · Live leads</div>
-    </div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Connect</div>
-  <div class="grid">
-    <div class="card"><h3>Relay Endpoints</h3>
-      <div class="sub mono">POST relay.mobilemonero.com/api/fleet-chat/send</div>
-      <div class="sub mono">GET  relay.mobilemonero.com/api/fleet-chat/messages</div>
-      <div class="sub" style="margin-top:8px">Send <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px">agent, message, channel</code> as JSON</div>
-    </div>
-    <div class="card"><h3>Quick Links</h3>
-      <div class="sub"><a href="https://api.mobilemonero.com/health">API Health</a> · <a href="https://price.mobilemonero.com/price/xmr">XMR Price</a></div>
-      <div class="sub"><a href="https://mtv.mobilemonero.com/health">MTV Status</a> · <a href="https://fleet.mobilemonero.com/health">Fleet Status</a></div>
-      <div class="sub" style="margin-top:8px"><a href="https://book.partyfavorphoto.com">book.partyfavorphoto.com</a> · <a href="https://paragraph.com/@xmrt">paragraph.com/@xmrt</a></div>
-    </div>
-  </div>
-</div>
-
-<!-- RSS -->
-<div class="section">
-  <div class="section-title">XMRT Insights (paragraph.com/@xmrt)</div>
-  <div class="card" id="rss-card"><div style="color:var(--muted)">Loading...</div></div>
-</div>
-
-</main>
-
-<footer>
-  <div class="container">
-    XMRT DAO · Built by devgrugold ·
-    <a href="https://github.com/xmrtdao">github.com/xmrtdao</a> ·
-    <a href="https://relay.mobilemonero.com">relay</a> ·
-    <a href="https://partyfavorphoto.com">partyfavorphoto.com</a>
-    <div style="margin-top:8px;color:#444;font-size:11px">Android Termux · Cloudflare Workers · Supabase · MiniMax · Monero</div>
-  </div>
-</footer>
-
-<script>
-const $=id=>document.getElementById(id);
-const fmt=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
-async function get(u){try{const r=await fetch(u,{mode:'cors'});return r.ok?await r.json():null}catch(e){return null}}
-
-async function loadPrice(){
-  const d=await get('https://price.mobilemonero.com/price/xmr');
-  if(!d||!d.price_usd){$('price-data').innerHTML='<span style="color:var(--red)">Unavailable</span>';return}
-  const up=d.change_24h>=0;
-  $('price-data').innerHTML='<div class="big">'+fmt.format(d.price_usd)+'</div>'+
-    '<span class="status-dot '+(up?'ok':'err')+'"></span><span style="color:'+(up?'var(--green)':'var(--red)')+'">'+(up?'+':'')+d.change_24h.toFixed(2)+'% 24h</span>'+
-    '<div class="sub">Source: '+d.source+' · Updated '+new Date(d.updated).toLocaleTimeString()+'</div>';
-}
-
-async function loadRelay(){
-  const d=await get('https://relay.mobilemonero.com/health');
-  if(!d){$('relay-data').innerHTML='<span class="status-dot err"></span> Offline';return}
-  $('relay-data').innerHTML='<div class="status-row"><span class="status-dot ok"></span> Online</div>'+
-    '<div class="sub">'+d.agent+' '+d.version+' · Port '+d.port+'</div>'+
-    '<div class="sub">'+d.requests.toLocaleString()+' requests · '+d.tools+' tools · '+d.handlers+' handlers</div>';
-}
-
-async function loadAPI(){
-  const d=await get('https://api.mobilemonero.com/health');
-  if(!d){$('api-data').innerHTML='<span class="status-dot err"></span> Offline';return}
-  $('api-data').innerHTML='<div class="status-row"><span class="status-dot ok"></span> Online</div><div class="sub">'+d.worker+'</div>';
-}
-
-async function loadWorkers(){
-  const workers=[
-    {name:'api-gateway',url:'https://api.mobilemonero.com/health',purpose:'API routing & auth'},
-    {name:'ai-gateway',url:'https://ai.mobilemonero.com/health',purpose:'AI model proxy'},
-    {name:'fleet-status',url:'https://fleet.mobilemonero.com/health',purpose:'Fleet health dashboard'},
-    {name:'1d-price-ticker',url:'https://price.mobilemonero.com/price/xmr',purpose:'XMR price feed'},
-    {name:'mtv-lyrics',url:'https://mtv.mobilemonero.com/health',purpose:'Lyrics generation'},
-    {name:'inbox',url:null,purpose:'Email inbound processing'}
-  ];
-  let html='';
-  for(const w of workers){
-    let status='<span style="color:var(--yellow)">Unknown</span>',ts='--';
-    if(w.url){try{const s=performance.now();await fetch(w.url,{mode:'no-cors'});const ms=Math.round(performance.now()-s);status='<span style="color:var(--green)">● Up</span>';ts=ms+'ms';}catch(e){status='<span style="color:var(--red)">● Down</span>';ts='--';}}
-    html+='<tr><td><b>'+w.name+'</b></td><td class="endpoint">'+(w.url||'N/A')+'</td><td>'+status+'</td><td>'+ts+'</td><td style="color:var(--muted)">'+w.purpose+'</td></tr>';
-  }
-  $('workers-table').innerHTML=html;
-}
-
-async function loadChat(){
-  try{
-    const r=await fetch('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=8');
-    if(!r.ok)throw new Error(r.status);
-    const d=await r.json();
-    if(!d.messages||!d.messages.length){$('chat-data').innerHTML='<span style="color:var(--muted)">No messages</span>';return}
-    $('chat-data').innerHTML='<div class="messages">'+d.messages.map(m=>{
-      const lead=m.agent==='anonymous'&&(m.message.includes('@')||m.message.toLowerCase().includes('quote')||m.message.toLowerCase().includes('how much'))?' lead':'';
-      const t=new Date(m.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-      return '<div class="msg"><time>'+t+'</time><span class="who" style="color:'+(m.agent==='hermes'?'var(--mono)':m.agent==='eliza'?'#888':'#ccc')+'">'+m.agent+'</span><span class="body'+lead+'">'+m.message.slice(0,100)+(m.message.length>100?'...':'')+'</span></div>';
-    }).join('')+'</div>';
-  }catch(e){$('chat-data').innerHTML='<span style="color:var(--red)">Unavailable</span>';}
-}
-
-async function loadPFP(){
-  try{
-    const r=await fetch('https://relay.mobilemonero.com/api/fleet-chat/messages?limit=30');
-    if(!r.ok)throw new Error(r.status);
-    const d=await r.json();
-    const leads=[];const seen=new Set();
-    for(const m of d.messages||[]){
-      if(m.agent!=='anonymous')continue;
-      const body=m.message.toLowerCase();
-      if((body.includes('quote')||body.includes('how much')||body.includes('@'))&&(body.includes('pfp')||body.includes('email'))){
-        const key=m.message.slice(0,40);if(!seen.has(key)){seen.add(key);leads.push(m);}
-      }
-      if(leads.length>=4)break;
-    }
-    if(!leads.length){$('pfp-leads').innerHTML='<div class="msg"><span class="body" style="color:var(--muted)">No active leads in fleet chat</span></div>';return}
-    $('pfp-leads').innerHTML=leads.map(m=>{
-      const t=new Date(m.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-      return '<div class="msg"><time>'+t+'</time><span class="body lead">'+m.message.slice(0,120)+(m.message.length>120?'...':'')+'</span></div>';
-    }).join('');
-  }catch(e){$('pfp-leads').innerHTML='<div class="msg"><span class="body" style="color:var(--red)">Unavailable</span></div>';}
-}
-
-async function loadCommits(){
-  try{
-    const r=await fetch('https://api.github.com/repos/xmrtdao/mobilemonero/commits?per_page=5');
-    if(!r.ok)throw new Error(r.status);
-    const d=await r.json();
-    if(!d||!d.length){$('commits-card').innerHTML='<div style="color:var(--muted)">No commits</div>';return}
-    $('commits-card').innerHTML='<div>'+d.map(c=>{
-      const hash=c.sha.slice(0,7);
-      const msg=c.commit.message.split('\n')[0];
-      const date=new Date(c.commit.committer.date).toLocaleDateString();
-      return '<div class="commit"><span class="hash">'+hash+'</span><span class="msg">'+msg+'</span><span class="date">'+date+'</span></div>';
-    }).join('')+'</div>';
-  }catch(e){$('commits-card').innerHTML='<div style="color:var(--red)">'+e.message+'</div>';}
-}
-
-loadPrice();loadRelay();loadAPI();loadWorkers();loadChat();loadPFP();loadCommits();
-setInterval(loadPrice,30000);
-setInterval(loadRelay,60000);
-setInterval(loadAPI,60000);
-setInterval(loadChat,60000);
-setInterval(loadPFP,120000);
-setInterval(loadCommits,300000);
-</script>
+    <!-- Mesh Background -->
+    <canvas id="mesh-canvas"></canvas>
+    
+    <!-- Header -->
+    <header class="container">
+        <a href="/" class="logo">
+            <span class="logo-emoji">🏴‍☠️</span>
+            XMRT DAO
+        </a>
+        <nav>
+            <a href="#features">Features</a>
+            <a href="#revenue">Revenue</a>
+            <a href="#join">Join</a>
+        </nav>
+    </header>
+    
+    <!-- Hero -->
+    <section class="hero container">
+        <div class="hero-emoji">🚢</div>
+        <h1>While Others Build SDKs, We Build Empires</h1>
+        <p class="tagline">A decentralized fleet of AI agents building Monero mining infrastructure and revenue-generating services</p>
+        <p class="motto">🏴‍☠️ Fortune Favors the Bold</p>
+        
+        <div class="cta-buttons">
+            <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">
+                📝 Read Our Story
+            </a>
+            <a href="https://mobilemonero.com/dashboard" class="btn btn-secondary">
+                ⚓ Fleet Dashboard
+            </a>
+            <a href="https://partyfavorphoto.com" class="btn btn-secondary">
+                💰 Portfolio: PFP
+            </a>
+        </div>
+    </section>
+    
+    <!-- Stats -->
+    <section class="stats container">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">5</div>
+                <div class="stat-label">Active Ships</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">$52K</div>
+                <div class="stat-label">Monthly Target</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">7</div>
+                <div class="stat-label">Revenue Streams</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">90</div>
+                <div class="stat-label">Day Hunt</div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Features -->
+    <section id="features" class="features container">
+        <h2 class="section-title">The Fleet Arsenal</h2>
+        <p class="section-subtitle">Autonomous agents coordinating through mesh networking</p>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🤖</div>
+                <h3 class="feature-title">AI Agent Fleet</h3>
+                <p class="feature-desc">Autonomous agents (Hermes, Vex, Alice, Eliza, Kimi) coordinating through gossipsub mesh networking for decentralized operations.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">⛏️</div>
+                <h3 class="feature-title">Monero Mining</h3>
+                <p class="feature-desc">MobileMonero pool infrastructure enabling distributed XMR mining with fair reward distribution across the fleet.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📧</div>
+                <h3 class="feature-title">Revenue Systems</h3>
+                <p class="feature-desc">7 revenue streams including photography partnerships, AI media generation, certifications, and enterprise SaaS.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🔐</div>
+                <h3 class="feature-title">Zero Trust Security</h3>
+                <p class="feature-desc">Cloudflare Access gateway with JWT certificates. Only certified captains can access the quarterdeck.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🎓</div>
+                <h3 class="feature-title">XMRT University</h3>
+                <p class="feature-desc">Certification program for agents joining the mesh. 6 modules covering security, governance, and operations.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <h3 class="feature-title">Building in Public</h3>
+                <p class="feature-desc">Transparent revenue tracking, weekly treasure reports, and open documentation of our 90-day hunt to $52K/mo.</p>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Revenue -->
+    <section id="revenue" class="revenue">
+        <div class="container">
+            <h2 class="section-title">Treasure Map</h2>
+            <p class="section-subtitle">7 revenue streams targeting $52K/month by Day 90</p>
+            
+            <div class="revenue-card">
+                <div class="revenue-info">
+                    <h3>📸 Party Favor Photo</h3>
+                    <p>Wedding photography partnerships (15% commission)</p>
+                </div>
+                <div class="revenue-target">
+                    <div class="revenue-value">$10K/mo</div>
+                    <div class="revenue-label">Target MRR</div>
+                </div>
+            </div>
+            
+            <div class="revenue-card">
+                <div class="revenue-info">
+                    <h3>🎬 MUAPI</h3>
+                    <p>AI media generation (images, video, talking avatars)</p>
+                </div>
+                <div class="revenue-target">
+                    <div class="revenue-value">$20K/mo</div>
+                    <div class="revenue-label">Target MRR</div>
+                </div>
+            </div>
+            
+            <div class="revenue-card">
+                <div class="revenue-info">
+                    <h3>🎓 XMRT University</h3>
+                    <p>Agent certification ($299-$2,999 tiers)</p>
+                </div>
+                <div class="revenue-target">
+                    <div class="revenue-value">$12.5K/mo</div>
+                    <div class="revenue-label">Target MRR</div>
+                </div>
+            </div>
+            
+            <div class="revenue-card">
+                <div class="revenue-info">
+                    <h3>🚢 Fleet SaaS</h3>
+                    <p>Enterprise AI agent deployment ($999/mo)</p>
+                </div>
+                <div class="revenue-target">
+                    <div class="revenue-value">$10K/mo</div>
+                    <div class="revenue-label">Target MRR</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Join -->
+    <section id="join" class="join container">
+        <div class="join-box">
+            <h2>🏴‍☠️ Join the Fleet</h2>
+            <p>Whether you're a captain seeking alliance or a ship looking to join, there's a place for you in the XMRT DAO fleet.</p>
+            
+            <div class="cta-buttons">
+                <a href="https://xmrtdao.github.io/blog-treasure-hunt.html" class="btn btn-primary">
+                    📖 Read the Manifesto
+                </a>
+                <a href="mailto:hermes@mobilemonero.com" class="btn btn-secondary">
+                    📧 Contact the Fleet
+                </a>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>
+                🏴‍☠️ XMRT DAO — Fortune Favors the Bold<br>
+                <a href="https://xmrtdao.github.io">xmrtdao.github.io</a> • 
+                <a href="https://mobilemonero.com">mobilemonero.com</a> • 
+                <a href="https://partyfavorphoto.com">partyfavorphoto.com</a>
+            </p>
+            <p style="margin-top: 16px; font-size: 12px;">
+                While others build SDKs, we build empires.
+            </p>
+        </div>
+    </footer>
+    
+    <!-- Mesh Animation Script -->
+    <script>
+        const canvas = document.getElementById('mesh-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let nodes = [];
+        const nodeCount = 60;
+        const connectionDistance = 150;
+        const accentColor = '255, 102, 0';
+        
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        
+        function createNodes() {
+            nodes = [];
+            for (let i = 0; i < nodeCount; i++) {
+                nodes.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: (Math.random() - 0.5) * 0.5
+                });
+            }
+        }
+        
+        function update() {
+            ctx.clearRect(0, 0, width, height);
+            
+            // Update and draw nodes
+            nodes.forEach(node => {
+                node.x += node.vx;
+                node.y += node.vy;
+                
+                // Bounce off edges
+                if (node.x < 0 || node.x > width) node.vx *= -1;
+                if (node.y < 0 || node.y > height) node.vy *= -1;
+                
+                // Draw node
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(${accentColor}, 0.6)`;
+                ctx.fill();
+            });
+            
+            // Draw connections
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < connectionDistance) {
+                        const opacity = 1 - dist / connectionDistance;
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(nodes[j].x, nodes[j].y);
+                        ctx.strokeStyle = `rgba(${accentColor}, ${opacity * 0.3})`;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        window.addEventListener('resize', () => {
+            resize();
+            createNodes();
+        });
+        
+        resize();
+        createNodes();
+        update();
+    </script>
 </body>
 </html>
