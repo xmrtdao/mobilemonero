@@ -91,8 +91,17 @@
             .hero-actions{justify-content:center}
             .hero-ring{width:220px;height:220px}
             .hero-stat .v{font-size:20px}.hs-1 .v{font-size:32px}
+            .cmd-grid{grid-template-columns:1fr!important}
             .features-grid{grid-template-columns:1fr}
         }
+        .cmd-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:24px;width:100%}
+        .cmd-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;text-align:left;transition:all .3s}
+        .cmd-box:hover{border-color:var(--accent)}
+        .cmd-box .label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);font-weight:700;margin-bottom:6px}
+        .cmd-box .os{font-size:11px;color:var(--text-secondary);margin-bottom:8px}
+        .cmd-box code{display:block;background:#0a0a0f;border:1px solid #1a1a2a;border-radius:6px;padding:10px 12px;font-size:11px;color:#4ade80;font-family:monospace;line-height:1.6;word-break:break-all;cursor:pointer;transition:all .2s;white-space:pre-wrap}
+        .cmd-box code:hover{border-color:var(--accent);background:#0d0d15}
+        .cmd-box code .hl{color:var(--accent)}
         @media(max-width:768px){
             header{padding:16px 0}
             nav a{padding:6px 12px;font-size:13px}
@@ -126,6 +135,18 @@
             <div>
                 <h1>A Decentralized Fleet of<br><span class="gradient">AI Agents</span></h1>
                 <p>Autonomous agents coordinating through mesh networking to build Monero mining infrastructure and revenue-generating services.</p>
+                <div class="cmd-grid">
+                    <div class="cmd-box">
+                        <div class="label">Mobile / Termux</div>
+                        <div class="os">Android · Linux · curl | python3</div>
+                        <code onclick="navigator.clipboard.writeText(this.textContent)">curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && python3 signup.py</code>
+                    </div>
+                    <div class="cmd-box">
+                        <div class="label">Windows</div>
+                        <div class="os">PowerShell 5.1+ · one-click setup</div>
+                        <code onclick="navigator.clipboard.writeText(this.textContent)">iwr -Uri 'https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/setup-xmrt-windows.ps1' -OutFile "$env:TEMP\setup.ps1" -UseBasicParsing; & "$env:TEMP\setup.ps1" -WalletAddress "YOUR_WALLET"</code>
+                    </div>
+                </div>
                 <div class="hero-actions">
                     <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Learn More</a>
                     <a href="https://relay.mobilemonero.com" class="btn btn-secondary">Dashboard</a>
