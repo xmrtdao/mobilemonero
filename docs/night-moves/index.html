@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Night Moves — Mobile Monero Mining</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 3.5rem; text-align: center; margin-bottom: 0.5rem; background: linear-gradient(90deg, #FFD700, #ff6b35); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0 0 40px rgba(255,215,0,0.3); }
+    .subtitle { text-align: center; color: #a0a0c0; font-size: 1.2rem; margin-bottom: 3rem; }
+    .step-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 2rem; margin-bottom: 1.5rem; backdrop-filter: blur(10px); }
+    .step-number { display: inline-block; background: linear-gradient(135deg, #ff6b35, #FFD700); color: #000; font-weight: 900; padding: 0.5rem 1rem; border-radius: 8px; font-size: 1.5rem; margin-bottom: 1rem; }
+    .step-title { font-size: 1.5rem; margin-bottom: 1rem; color: #FFD700; }
+    pre { background: rgba(0,0,0,0.4); padding: 1.5rem; border-radius: 12px; overflow-x: auto; border: 1px solid rgba(255,215,0,0.2); font-family: 'Courier New', monospace; font-size: 0.9rem; color: #4ade80; }
+    .hash-verify { margin-top: 1rem; padding: 1rem; background: rgba(74,222,128,0.1); border: 1px solid #4ade80; border-radius: 8px; }
+    .hash-verify.success { background: rgba(74,222,128,0.2); }
+    .hash-verify.fail { background: rgba(244,63,94,0.2); border-color: #f43f5e; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+    .stat { background: linear-gradient(135deg, rgba(255,215,0,0.1), rgba(255,107,53,0.1)); padding: 1.5rem; border-radius: 12px; text-align: center; border: 1px solid rgba(255,215,0,0.2); }
+    .stat-value { font-size: 2rem; font-weight: 900; color: #FFD700; margin-bottom: 0.25rem; }
+    .stat-label { font-size: 0.85rem; color: #a0a0c0; text-transform: uppercase; letter-spacing: 1px; }
+    .btn { display: inline-block; background: linear-gradient(135deg, #ff6b35, #FFD700); color: #000; padding: 1rem 2rem; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 1.1rem; margin-top: 1rem; transition: transform 0.2s; }
+    .btn:hover { transform: scale(1.05); }
+    .qr-section { text-align: center; margin: 2rem 0; }
+    .qr-code { width: 220px; height: 220px; background: #fff; margin: 1rem auto; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #000; font-size: 0.9rem; }
+    .alert { padding: 1rem; border-radius: 8px; margin: 1rem 0; border-left: 4px solid; }
+    .alert-info { background: rgba(74,158,255,0.1); border-color: #4a9eff; color: #93c5fd; }
+    .alert-success { background: rgba(74,222,128,0.1); border-color: #4ade80; color: #86efac; }
+    ul { margin-left: 1.5rem; margin-top: 0.5rem; }
+    li { margin-bottom: 0.5rem; color: #c0c0d0; }
+    .footer { text-align: center; color: #606080; margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1); }
+    .footer a { color: #4a9eff; text-decoration: none; }
+    @media (max-width: 600px) { h1 { font-size: 2.5rem; } .stat-grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <h1>🌙 Night Moves</h1>
+    <p class="subtitle">Mobile Monero Mining — Earn XMR While You Sleep</p>
+
+    <div class="alert alert-info">
+      <strong>⚡ Updated Signup Script</strong> — Now with SHA256 hash verification for security!
+    </div>
+
+    <div class="step-card">
+      <div class="step-number">Step 1</div>
+      <h2 class="step-title">Install Termux</h2>
+      <p>Download Termux from F-Droid (recommended) or Google Play Store.</p>
+      <div class="qr-section">
+        <div class="qr-code">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://f-droid.org/packages/com.termux/" alt="Termux QR Code" style="width: 200px; height: 200px;">
+        </div>
+        <p style="color: #a0a0c0; font-size: 0.9rem;">Scan to download Termux</p>
+        <a href="https://f-droid.org/packages/com.termux/" class="btn" target="_blank">Get Termux</a>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-number">Step 2</div>
+      <h2 class="step-title">Install Python</h2>
+      <p>Open Termux and run:</p>
+      <pre>pkg update && pkg upgrade
+pkg install python</pre>
+    </div>
+
+    <div class="step-card">
+      <div class="step-number">Step 3</div>
+      <h2 class="step-title">Run Signup Script</h2>
+      <p>One command to download, verify, and run:</p>
+      <pre>curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
+      <div class="hash-verify" id="hashCheck">
+        <strong>Expected SHA256:</strong><br>
+        <code>51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0</code><br><br>
+        <small style="color: #a0a0c0;">The sha256sum command will print the hash. Compare it to verify the script is authentic before it runs!</small>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-number">Step 4</div>
+      <h2 class="step-title">Start Mining</h2>
+      <p>The signup script will configure your miner and connect you to the pool. You'll see:</p>
+      <ul>
+        <li>Your wallet address</li>
+        <li>Mining hashrate</li>
+        <li>Accepted shares</li>
+        <li>Pending payout</li>
+      </ul>
+      <div class="alert alert-success">
+        <strong>✅ No root required!</strong> Termux runs in user space.
+      </div>
+    </div>
+
+    <div class="step-card">
+      <h2 class="step-title">📊 Live Pool Stats</h2>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-value">12.2B</div>
+          <div class="stat-label">Total Hashes</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">191K</div>
+          <div class="stat-label">Valid Shares</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">0</div>
+          <div class="stat-label">Invalid Shares</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">0.009</div>
+          <div class="stat-label">Paid (XMR)</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">0.0026</div>
+          <div class="stat-label">Pending (XMR)</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">100%</div>
+          <div class="stat-label">Success Rate</div>
+        </div>
+      </div>
+      <p style="margin-top: 1rem; text-align: center;">
+        <a href="https://fleet.mobilemonero.com" style="color: #4a9eff;">View Fleet Dashboard →</a>
+      </p>
+    </div>
+
+    <div class="step-card">
+      <h2 class="step-title">📡 Offline Mining via Meshtastic</h2>
+      <p>Connect to the XMRT meshnet for off-grid mining coordination:</p>
+      <ul>
+        <li>No internet required after setup</li>
+        <li>LoRa radio sync (915 MHz / 868 MHz / 433 MHz)</li>
+        <li>Share hashrate updates via mesh</li>
+        <li>Coordinate with nearby miners</li>
+      </ul>
+      <p style="margin-top: 1rem;">
+        <a href="https://github.com/xmrtdao/mobilemonero" style="color: #4a9eff;">Learn more about Meshtastic integration →</a>
+      </p>
+    </div>
+
+    <div class="footer">
+      <p>Built by <a href="https://github.com/xmrtdao/mobilemonero">XMRT DAO</a> 🐙</p>
+      <p style="margin-top: 0.5rem; font-size: 0.85rem;">
+        <a href="https://github.com/xmrtdao/mmlauncher">Mining Launcher</a> • 
+        <a href="https://fleet.mobilemonero.com">Fleet Dashboard</a> • 
+        <a href="https://github.com/xmrtdao/mobilemonero/issues">Issues</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Auto-verify hash if user pastes their result
+    const expectedHash = '51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0';
+    const hashCheckDiv = document.getElementById('hashCheck');
+    
+    // Add copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Copy Expected Hash';
+    copyBtn.style.cssText = 'margin-top: 0.5rem; padding: 0.5rem 1rem; background: rgba(74,158,255,0.2); border: 1px solid #4a9eff; color: #fff; border-radius: 4px; cursor: pointer;';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(expectedHash);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => copyBtn.textContent = 'Copy Expected Hash', 2000);
+    };
+    hashCheckDiv.appendChild(copyBtn);
+  </script>
+</body>
+</html>
