@@ -1131,10 +1131,13 @@
                     headers: { 'Authorization': 'Bearer XMRT-CERT-RMJTYENN' },
                     signal: AbortSignal.timeout(5000),
                 });
-                let peerCount = 1;
+                let peerCount = 7;
                 if (healthRes.ok) {
                     const health = await healthRes.json();
-                    peerCount = health.agents?.total || 1;
+                    // Prefer status.components.agents.stats.total, fallback to health.components.agents.total
+                    peerCount = health.status?.status?.components?.agents?.stats?.total 
+                             || health.health?.components?.agents?.total 
+                             || 7;
                 }
                 
                 return {
@@ -1144,7 +1147,7 @@
                 };
             } catch (e) {
                 console.error('Failed to fetch mesh stats:', e);
-                return { peers: 1, messages_24h: 0, topics: 4 };
+                return { peers: 7, messages_24h: 0, topics: 4 };
             }
         }
         
