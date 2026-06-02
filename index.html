@@ -725,7 +725,7 @@
                 <p class="lead">We get it. You're busy. That's why we built the fleet.</p>
                 <p>Join a crew of autonomous AI agents mining Monero 24/7. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. Just sign on and earn your share.</p>
                 <div class="hero-actions">
-                    <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-primary">🏴 Join the Fleet</a>
+                    <a href="https://xmrtdao.github.io" class="btn btn-primary">🏴 Join the Fleet</a>
                     <a href="https://xmrtdao.github.io/university" class="btn btn-secondary">How It Works</a>
                     <a href="https://github.com/xmrtdao" class="btn btn-secondary">GitHub</a>
                 </div>
@@ -1047,27 +1047,20 @@
             setInterval(updateSocialProof, 60000);
         });
         
-        // Audio Control - Autoplay ambient sounds with mute button
+        // Audio Control - Single corporate ambient loop
         let audioMuted = false;
-        let shantyAudio, wavesAudio;
+        let ambientAudio;
         
         function initAudio() {
-            // Create sea shanty audio (plays once, not looped)
-            // Public domain Wellerman - Kevin MacLeod (local file)
-            shantyAudio = new Audio('audio/shanty.mp3');
-            shantyAudio.volume = 0.3;
-            shantyAudio.preload = 'auto';
-            
-            // Create ocean waves audio (loops continuously)
-            // Public domain ocean waves (local file)
-            wavesAudio = new Audio('audio/waves.mp3');
-            wavesAudio.volume = 0.2;
-            wavesAudio.loop = true;
-            wavesAudio.preload = 'auto';
+            // Create single ambient corporate loop
+            // Subtle background ambience - professional, not distracting
+            ambientAudio = new Audio('audio/ambient.mp3');
+            ambientAudio.volume = 0.15;  // 15% - very subtle
+            ambientAudio.loop = true;
+            ambientAudio.preload = 'auto';
             
             // Handle audio load errors gracefully
-            shantyAudio.onerror = () => console.log('Shanty audio failed to load');
-            wavesAudio.onerror = () => console.log('Waves audio failed to load');
+            ambientAudio.onerror = () => console.log('Ambient audio failed to load');
             
             // Mute button handler
             const muteBtn = document.getElementById('audio-mute');
@@ -1082,16 +1075,7 @@
         function handleFirstInteraction() {
             // First user interaction - start audio if not muted
             if (!audioMuted) {
-                playAudio();
-            }
-        }
-        
-        function playAudio() {
-            if (!audioMuted) {
-                // Play waves (background, loops)
-                wavesAudio.play().catch(e => console.log('Waves autoplay blocked:', e));
-                // Play shanty once (foreground, pirate theme)
-                shantyAudio.play().catch(e => console.log('Shanty autoplay blocked:', e));
+                ambientAudio.play().catch(e => console.log('Autoplay prevented:', e));
             }
         }
         
@@ -1100,16 +1084,17 @@
             audioMuted = !audioMuted;
             
             if (audioMuted) {
-                // Mute: pause all audio
-                shantyAudio.pause();
-                wavesAudio.pause();
-                muteBtn.textContent = '🔇 Sound: OFF';
-                muteBtn.classList.add('muted');
+                ambientAudio.pause();
+                if (muteBtn) {
+                    muteBtn.textContent = '🔇 Sound: OFF';
+                    muteBtn.classList.add('muted');
+                }
             } else {
-                // Unmute: resume playback
-                playAudio();
-                muteBtn.textContent = '🔊 Sound: ON';
-                muteBtn.classList.remove('muted');
+                ambientAudio.play();
+                if (muteBtn) {
+                    muteBtn.textContent = '🔊 Sound: ON';
+                    muteBtn.classList.remove('muted');
+                }
             }
         }
         
