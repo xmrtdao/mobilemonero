@@ -4,253 +4,266 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0a0a0f">
-  <meta name="description" content="Start mining Monero on your Android device in 5 minutes. No root required.">
-  <title>Night Moves — Mobile Monero Mining</title>
+  <meta name="description" content="Deploy Ollama + Hermes AI agents on Android/Termux. Complete step-by-step guide.">
+  <title>Night Moves — XMRT DAO Agent Deployment</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="shortcut icon" href="/favicon.ico">
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    /* === MOBILE FIRST BASE STYLES === */
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-card: rgba(255,255,255,0.03);
+      --accent: #ff6b35;
+      --accent-gradient: linear-gradient(135deg, #ff6b35, #FFD700);
+      --text-primary: #fff;
+      --text-secondary: #a0a0c0;
+      --border: rgba(255,255,255,0.1);
+      --success: #4ade80;
+      --info: #4a9eff;
+    }
+    
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
     html { font-size: 16px; -webkit-text-size-adjust: 100%; }
     
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Orbitron', sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #16213e 100%);
-      color: #fff;
+      color: var(--text-primary);
       min-height: 100vh;
-      overflow-x: hidden;
       line-height: 1.6;
-      padding: 0;
+      overflow-x: hidden;
     }
     
-    /* === CONTAINER — MOBILE FIRST === */
-    .container {
-      width: 100%;
-      max-width: 100%;
-      padding: 1rem;
+    /* === HEADER === */
+    header {
+      padding: 1.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10,10,15,0.9);
+    }
+    
+    .header-content {
+      max-width: 1200px;
       margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     
-    /* === TYPOGRAPHY — MOBILE FIRST === */
-    h1 {
-      font-size: 2rem;
+    .logo {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.5rem;
       font-weight: 900;
-      text-align: center;
-      margin-bottom: 0.5rem;
-      background: linear-gradient(90deg, #FFD700, #ff6b35);
+      color: var(--text-primary);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .logo-mark {
+      background: var(--accent-gradient);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      text-shadow: 0 0 40px rgba(255,215,0,0.3);
-      word-wrap: break-word;
-      overflow-wrap: break-word;
+    }
+    
+    nav {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+    
+    nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: color 0.2s;
+    }
+    
+    nav a:hover {
+      color: var(--accent);
+    }
+    
+    .nav-cta {
+      background: var(--accent-gradient);
+      color: #000 !important;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+    
+    /* === HERO === */
+    .hero {
+      padding: 4rem 1rem 3rem;
+      text-align: center;
+      background: radial-gradient(circle at 50% 0%, rgba(255,107,53,0.15), transparent 50%);
+    }
+    
+    h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 2.5rem;
+      font-weight: 900;
+      margin-bottom: 1rem;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-shadow: 0 0 40px rgba(255,107,53,0.3);
     }
     
     .subtitle {
-      text-align: center;
-      color: #a0a0c0;
-      font-size: 1rem;
-      margin-bottom: 1.5rem;
-      padding: 0 0.5rem;
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+      max-width: 600px;
+      margin: 0 auto;
     }
     
-    /* === CARDS — MOBILE FIRST === */
+    /* === CONTAINER === */
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+    
+    /* === CARDS === */
     .step-card {
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 12px;
-      padding: 1.25rem;
-      margin-bottom: 1rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-bottom: 2rem;
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      overflow: hidden;
-      word-wrap: break-word;
     }
     
     .step-number {
       display: inline-block;
-      background: linear-gradient(135deg, #ff6b35, #FFD700);
+      background: var(--accent-gradient);
       color: #000;
       font-weight: 900;
-      padding: 0.4rem 0.8rem;
-      border-radius: 6px;
-      font-size: 1.1rem;
-      margin-bottom: 0.75rem;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      font-family: 'Orbitron', sans-serif;
     }
     
     .step-title {
-      font-size: 1.25rem;
+      font-size: 1.5rem;
       font-weight: 700;
-      margin-bottom: 0.75rem;
-      color: #FFD700;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
     }
     
-    /* === CODE BLOCKS — RESPONSIVE === */
+    /* === CODE BLOCKS === */
     pre {
-      background: rgba(0,0,0,0.4);
-      padding: 1rem;
-      border-radius: 8px;
-      border: 1px solid rgba(255,215,0,0.2);
+      background: rgba(0,0,0,0.5);
+      padding: 1.25rem;
+      border-radius: 10px;
+      border: 1px solid rgba(255,107,53,0.3);
       font-family: 'Courier New', monospace;
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       color: #4ade80;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
       white-space: pre-wrap;
       word-wrap: break-word;
-      word-break: break-all;
-      max-width: 100%;
+      margin: 1rem 0;
     }
     
     code {
       font-family: 'Courier New', monospace;
       background: rgba(0,0,0,0.3);
-      padding: 0.1rem 0.3rem;
-      border-radius: 3px;
-      word-break: break-all;
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.9em;
     }
     
-    /* === HASH VERIFICATION === */
-    .hash-verify {
-      margin-top: 0.75rem;
-      padding: 0.75rem;
-      background: rgba(74,222,128,0.1);
-      border: 1px solid #4ade80;
-      border-radius: 6px;
-      word-wrap: break-word;
-    }
-    
-    .hash-verify code {
-      display: block;
-      margin-top: 0.5rem;
-      font-size: 0.7rem;
-      word-break: break-all;
-    }
-    
-    /* === STATS GRID — MOBILE FIRST === */
-    .stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.75rem;
+    /* === LISTS === */
+    ul, ol {
+      margin-left: 1.5rem;
       margin-top: 1rem;
+      margin-bottom: 1rem;
     }
     
-    .stat {
-      background: linear-gradient(135deg, rgba(255,215,0,0.1), rgba(255,107,53,0.1));
-      padding: 1rem;
-      border-radius: 8px;
-      text-align: center;
-      border: 1px solid rgba(255,215,0,0.2);
+    li {
+      margin-bottom: 0.75rem;
+      color: var(--text-secondary);
     }
     
-    .stat-value {
-      font-size: 1.5rem;
-      font-weight: 900;
-      color: #FFD700;
-      margin-bottom: 0.25rem;
+    li strong {
+      color: var(--text-primary);
     }
     
-    .stat-label {
-      font-size: 0.7rem;
-      color: #a0a0c0;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+    /* === ALERTS === */
+    .alert {
+      padding: 1rem 1.25rem;
+      border-radius: 10px;
+      margin: 1.5rem 0;
+      border-left: 4px solid;
+      font-size: 0.95rem;
     }
     
-    /* === BUTTONS — TOUCH FRIENDLY === */
+    .alert-info {
+      background: rgba(74,158,255,0.1);
+      border-color: var(--info);
+      color: #93c5fd;
+    }
+    
+    .alert-warning {
+      background: rgba(255,107,53,0.1);
+      border-color: var(--accent);
+      color: #fdba74;
+    }
+    
+    .alert-success {
+      background: rgba(74,222,128,0.1);
+      border-color: var(--success);
+      color: #86efac;
+    }
+    
+    /* === BUTTONS === */
     .btn {
       display: inline-block;
-      background: linear-gradient(135deg, #ff6b35, #FFD700);
+      background: var(--accent-gradient);
       color: #000;
       padding: 0.875rem 1.5rem;
       border-radius: 8px;
       text-decoration: none;
       font-weight: 700;
       font-size: 1rem;
-      margin-top: 0.75rem;
+      margin-top: 1rem;
       transition: transform 0.2s, box-shadow 0.2s;
       text-align: center;
-      min-height: 44px;
-      min-width: 120px;
+      min-height: 48px;
     }
     
     .btn:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(255,107,53,0.3);
+      box-shadow: 0 6px 20px rgba(255,107,53,0.4);
     }
     
-    .btn:active {
-      transform: translateY(0);
+    .btn-secondary {
+      background: rgba(255,255,255,0.1);
+      color: var(--text-primary);
     }
     
-    /* === QR SECTION — RESPONSIVE === */
-    .qr-section {
-      text-align: center;
-      margin: 1.5rem 0;
-    }
-    
-    .qr-code {
-      width: 180px;
-      height: 180px;
-      max-width: 100%;
-      background: #fff;
-      margin: 0.75rem auto;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #000;
-      font-size: 0.8rem;
-      overflow: hidden;
-    }
-    
-    .qr-code img {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-    }
-    
-    /* === ALERTS === */
-    .alert {
-      padding: 0.875rem;
-      border-radius: 6px;
-      margin: 0.75rem 0;
-      border-left: 4px solid;
-      font-size: 0.9rem;
-    }
-    
-    .alert-info {
-      background: rgba(74,158,255,0.1);
-      border-color: #4a9eff;
-      color: #93c5fd;
-    }
-    
-    .alert-success {
-      background: rgba(74,222,128,0.1);
-      border-color: #4ade80;
-      color: #86efac;
-    }
-    
-    /* === LISTS === */
-    ul {
-      margin-left: 1.25rem;
-      margin-top: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    
-    li {
-      margin-bottom: 0.5rem;
-      color: #c0c0d0;
-      word-wrap: break-word;
+    .btn-secondary:hover {
+      background: rgba(255,255,255,0.15);
     }
     
     /* === LINKS === */
     a {
-      color: #4a9eff;
+      color: var(--info);
       text-decoration: none;
-      word-wrap: break-word;
     }
     
     a:hover {
@@ -258,238 +271,299 @@
     }
     
     /* === FOOTER === */
-    .footer {
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 3rem 1rem;
       text-align: center;
-      color: #606080;
-      margin-top: 2rem;
-      padding-top: 1.5rem;
-      border-top: 1px solid rgba(255,255,255,0.1);
-      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 4rem;
     }
     
-    .footer a {
-      font-size: 0.85rem;
+    footer a {
+      color: var(--accent);
     }
     
-    /* === COPY BUTTON === */
-    .hash-verify button {
-      margin-top: 0.5rem;
-      padding: 0.5rem 1rem;
-      background: rgba(74,158,255,0.2);
-      border: 1px solid #4a9eff;
-      color: #fff;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 0.85rem;
-      min-height: 44px;
+    /* === RESPONSIVE === */
+    @media (max-width: 768px) {
+      h1 { font-size: 2rem; }
+      .subtitle { font-size: 1rem; }
+      .step-card { padding: 1.5rem; }
+      nav { gap: 1rem; }
+      .header-content { flex-direction: column; gap: 1rem; }
     }
     
-    /* === TABLET BREAKPOINT === */
-    @media (min-width: 600px) {
-      .container {
-        max-width: 600px;
-        padding: 1.5rem;
-      }
-      
-      h1 {
-        font-size: 2.5rem;
-      }
-      
-      .subtitle {
-        font-size: 1.1rem;
-      }
-      
-      .step-card {
-        padding: 1.5rem;
-        margin-bottom: 1.25rem;
-      }
-      
-      .stat-grid {
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1rem;
-      }
-      
-      .qr-code {
-        width: 200px;
-        height: 200px;
-      }
-    }
-    
-    /* === DESKTOP BREAKPOINT === */
-    @media (min-width: 900px) {
-      .container {
-        max-width: 800px;
-        padding: 2rem;
-      }
-      
-      h1 {
-        font-size: 3.5rem;
-      }
-      
-      .subtitle {
-        font-size: 1.2rem;
-        margin-bottom: 3rem;
-      }
-      
-      .step-card {
-        padding: 2rem;
-        margin-bottom: 1.5rem;
-      }
-      
-      .stat-grid {
-        grid-template-columns: repeat(6, 1fr);
-        gap: 1rem;
-      }
-      
-      .qr-code {
-        width: 220px;
-        height: 220px;
-      }
-    }
-    
-    /* === SAFE AREA FOR NOTCH DEVICES === */
-    @supports (padding: max(0px)) {
-      body {
-        padding-left: max(0px, env(safe-area-inset-left));
-        padding-right: max(0px, env(safe-area-inset-right));
-      }
-      
-      .container {
-        padding-left: max(1rem, env(safe-area-inset-left));
-        padding-right: max(1rem, env(safe-area-inset-right));
-      }
+    @media (min-width: 769px) {
+      .container { padding: 3rem 2rem; }
+      h1 { font-size: 3rem; }
+      .subtitle { font-size: 1.25rem; }
+      .step-card { padding: 2.5rem; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
+  <header>
+    <div class="header-content">
+      <a href="/" class="logo">
+        <span class="logo-mark">X</span>
+        MobileMonero<span style="color: var(--text-secondary); margin-left: 0.5rem;">by XMRT DAO</span>
+      </a>
+      <nav>
+        <a href="https://mobilemonero.com/#about">About</a>
+        <a href="https://mobilemonero.com/#pricing">Pricing</a>
+        <a href="https://mobilemonero.com/#faq">FAQ</a>
+        <a href="https://xmrtdao.github.io/university" class="nav-cta">Get Started</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
     <h1>🌙 Night Moves</h1>
-    <p class="subtitle">Mobile Monero Mining — Earn XMR While You Sleep</p>
+    <p class="subtitle">Deploy Ollama + Hermes AI Agents on Android/Termux — Complete Step-by-Step Guide</p>
+  </section>
 
+  <div class="container">
     <div class="alert alert-info">
-      <strong>⚡ Updated Signup Script</strong> — Now with SHA256 hash verification for security!
+      <strong>⚡ Complete Guide</strong> — From fresh Termux install to running AI agents. No prior experience required.
     </div>
 
+    <!-- PHASE 1: TERMUX SETUP -->
     <div class="step-card">
-      <div class="step-number">Step 1</div>
-      <h2 class="step-title">Install Termux</h2>
-      <p>Download Termux from F-Droid (recommended) or Google Play Store.</p>
-      <div class="qr-section">
-        <div class="qr-code">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://f-droid.org/packages/com.termux/" alt="Termux QR Code">
-        </div>
-        <p style="color: #a0a0c0; font-size: 0.9rem;">Scan to download Termux</p>
-        <a href="https://f-droid.org/packages/com.termux/" class="btn" target="_blank" rel="noopener">Get Termux</a>
+      <div class="step-number">Phase 1</div>
+      <h2 class="step-title">Install & Configure Termux</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.1 Download Termux</h3>
+      <p>Get Termux from F-Droid (recommended) or Google Play Store.</p>
+      <div style="text-align: center; margin: 1.5rem 0;">
+        <a href="https://f-droid.org/packages/com.termux/" class="btn" target="_blank" rel="noopener">Download Termux from F-Droid</a>
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.2 Initial Setup</h3>
+      <p>Open Termux and run these commands one at a time:</p>
+      <pre>termux-setup-storage
+pkg update
+pkg upgrade</pre>
+      <p>When prompted, type <code>y</code> and press Enter to confirm.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.3 Install Required Packages</h3>
+      <pre>pkg install python git curl wget nano termux-api termux-services
+pkg install proot proot-distro
+pkg install build-essential clang cmake libjpeg-turbo libwebp libtiff libffi zlib</pre>
+      <p>Grant permissions when prompted:</p>
+      <pre>termux-setup-storage</pre>
+    </div>
+
+    <!-- PHASE 2: PYTHON ENVIRONMENT -->
+    <div class="step-card">
+      <div class="step-number">Phase 2</div>
+      <h2 class="step-title">Set Up Python Environment</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.1 Install Python and Pip</h3>
+      <pre>pkg install python
+pip install --upgrade pip setuptools wheel</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.2 Create Virtual Environment</h3>
+      <pre>mkdir -p ~/hermes-env
+cd ~/hermes-env
+python -m venv venv
+source venv/bin/activate</pre>
+      <p>You should see <code>(venv)</code> in your prompt, indicating the virtual environment is active.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.3 Install Python Dependencies</h3>
+      <pre>pip install requests colorama aiohttp fastapi uvicorn[standard]
+pip install python-dotenv pyyaml rich click
+pip install supabase pydantic python-jose[cryptography]
+pip install passlib[bcrypt] python-multipart</pre>
+      
+      <div class="alert alert-warning">
+        <strong>⚠️ Note:</strong> Installation may take 5-10 minutes on mobile data. Be patient!
       </div>
     </div>
 
+    <!-- PHASE 3: OLLAMA INSTALLATION -->
     <div class="step-card">
-      <div class="step-number">Step 2</div>
-      <h2 class="step-title">Install Python</h2>
-      <p>Open Termux and run:</p>
-      <pre>pkg update && pkg upgrade
-pkg install python</pre>
+      <div class="step-number">Phase 3</div>
+      <h2 class="step-title">Install Ollama for Local AI</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.1 Download Ollama Binary</h3>
+      <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
+      <p>If the script fails, manually install:</p>
+      <pre>curl -LO https://github.com/ollama/ollama/releases/download/v0.1.38/ollama-linux-arm64.tgz
+tar -xzf ollama-linux-arm64.tgz
+sudo mv ollama /usr/local/bin/
+chmod +x /usr/local/bin/ollama</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.2 Start Ollama Server</h3>
+      <pre>ollama serve &</pre>
+      <p>Keep this running in the background. Open a new Termux session for the next steps.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.3 Pull AI Models</h3>
+      <p>For Hermes agents (recommended for mobile):</p>
+      <pre>ollama pull qwen2.5:0.5b
+ollama pull qwen2.5:1.5b
+ollama pull llama3.2:1b</pre>
+      <p>For more capable agents (requires 4GB+ RAM):</p>
+      <pre>ollama pull qwen2.5:3b
+ollama pull llama3.2:3b
+ollama pull mistral:7b</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.4 Verify Installation</h3>
+      <pre>ollama list
+ollama run qwen2.5:0.5b "Hello, are you working?"</pre>
     </div>
 
+    <!-- PHASE 4: HERMES AGENT -->
     <div class="step-card">
-      <div class="step-number">Step 3</div>
-      <h2 class="step-title">Run Signup Script</h2>
-      <p>One command to download, verify, and run:</p>
-      <pre>curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
-      <div class="hash-verify" id="hashCheck">
-        <strong>Expected SHA256:</strong>
-        <code>51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0</code>
-        <br>
-        <small style="color: #a0a0c0; display: block; margin-top: 0.5rem;">The sha256sum command will print the hash. Compare it to verify the script is authentic before it runs!</small>
-      </div>
-    </div>
+      <div class="step-number">Phase 4</div>
+      <h2 class="step-title">Install Hermes Agent</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.1 Clone Hermes Repository</h3>
+      <pre>cd ~
+git clone https://github.com/nousresearch/hermes-agent.git
+cd hermes-agent</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.2 Install Hermes Dependencies</h3>
+      <pre>pip install -e .
+pip install -r requirements.txt</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.3 Configure Environment</h3>
+      <pre>cp .env.example .env
+nano .env</pre>
+      <p>Edit the following values in <code>.env</code>:</p>
+      <pre># Required Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_MODEL=qwen2.5:1.5b
 
-    <div class="step-card">
-      <div class="step-number">Step 4</div>
-      <h2 class="step-title">Start Mining</h2>
-      <p>The signup script will configure your miner and connect you to the pool. You'll see:</p>
-      <ul>
-        <li>Your wallet address</li>
-        <li>Mining hashrate</li>
-        <li>Accepted shares</li>
-        <li>Pending payout</li>
-      </ul>
+# Optional: Supabase Integration
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-key
+
+# Optional: API Configuration
+HERMES_PORT=8080
+HERMES_HOST=0.0.0.0</pre>
+      <p>Press <code>Ctrl+X</code>, then <code>Y</code>, then <code>Enter</code> to save.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.4 Start Hermes</h3>
+      <pre>hermes agent start</pre>
+      <p>Or run directly:</p>
+      <pre>python -m hermes.agent --config .env</pre>
+      
       <div class="alert alert-success">
-        <strong>✅ No root required!</strong> Termux runs in user space.
+        <strong>✅ Success!</strong> Hermes should now be running on <code>http://localhost:8080</code>
       </div>
     </div>
 
+    <!-- PHASE 5: VERIFICATION -->
     <div class="step-card">
-      <h2 class="step-title">📊 Live Pool Stats</h2>
-      <div class="stat-grid">
-        <div class="stat">
-          <div class="stat-value">12.2B</div>
-          <div class="stat-label">Total Hashes</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">191K</div>
-          <div class="stat-label">Valid Shares</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">0</div>
-          <div class="stat-label">Invalid Shares</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">0.009</div>
-          <div class="stat-label">Paid (XMR)</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">0.0026</div>
-          <div class="stat-label">Pending (XMR)</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">100%</div>
-          <div class="stat-label">Success Rate</div>
-        </div>
-      </div>
-      <p style="margin-top: 1rem; text-align: center;">
-        <a href="https://fleet.mobilemonero.com" style="color: #4a9eff;">View Fleet Dashboard →</a>
-      </p>
+      <div class="step-number">Phase 5</div>
+      <h2 class="step-title">Test Your Setup</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.1 Test Ollama API</h3>
+      <pre>curl http://localhost:11434/api/generate -d '{
+  "model": "qwen2.5:0.5b",
+  "prompt": "Say hello in one word"
+}'</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.2 Test Hermes Endpoint</h3>
+      <pre>curl http://localhost:8080/api/chat -H "Content-Type: application/json" -d '{
+  "message": "What is the capital of France?",
+  "model": "qwen2.5:1.5b"
+}'</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.3 Check System Status</h3>
+      <pre>ollama list
+ps aux | grep -E "ollama|hermes"
+free -m  # Check available RAM</pre>
     </div>
 
+    <!-- PHASE 6: MOBILE MINING -->
     <div class="step-card">
-      <h2 class="step-title">📡 Offline Mining via Meshtastic</h2>
-      <p>Connect to the XMRT meshnet for off-grid mining coordination:</p>
+      <div class="step-number">Phase 6</div>
+      <h2 class="step-title">Optional: Enable XMR Mining</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.1 Install XMRig</h3>
+      <pre>pkg install xmrig
+xmrig --version</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.2 Configure Mining Pool</h3>
+      <pre>cd ~
+curl -o config.json -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/configs/pool-config.json
+nano config.json</pre>
+      <p>Update your wallet address in the config file.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.3 Start Mining</h3>
+      <pre>xmrig -c config.json</pre>
+      
+      <div class="alert alert-info">
+        <strong>💡 Pro Tip:</strong> Run mining in a separate Termux session to keep Hermes agents running uninterrupted.
+      </div>
+    </div>
+
+    <!-- TROUBLESHOOTING -->
+    <div class="step-card">
+      <h2 class="step-title">🔧 Troubleshooting</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Common Issues</h3>
       <ul>
-        <li>No internet required after setup</li>
-        <li>LoRa radio sync (915 MHz / 868 MHz / 433 MHz)</li>
-        <li>Share hashrate updates via mesh</li>
-        <li>Coordinate with nearby miners</li>
+        <li><strong>Ollama won't start:</strong> Check if port 11434 is in use: <code>netstat -tlnp | grep 11434</code></li>
+        <li><strong>Out of memory:</strong> Use smaller models (qwen2.5:0.5b or llama3.2:1b)</li>
+        <li><strong>Pip install fails:</strong> Run <code>pkg install rust</code> then retry</li>
+        <li><strong>Hermes 404 errors:</strong> Ensure Ollama is running: <code>ollama serve &</code></li>
+        <li><strong>Permission denied:</strong> Run <code>termux-setup-storage</code> and grant permissions</li>
       </ul>
-      <p style="margin-top: 1rem;">
-        <a href="https://github.com/xmrtdao/mobilemonero" style="color: #4a9eff;">Learn more about Meshtastic integration →</a>
-      </p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Get Help</h3>
+      <p>Join the XMRT DAO Discord or open a GitHub issue:</p>
+      <div style="text-align: center; margin-top: 1rem;">
+        <a href="https://github.com/xmrtdao/mobilemonero/issues" class="btn btn-secondary">Report Issue on GitHub</a>
+        <a href="https://discord.gg/xmrtdao" class="btn btn-secondary">Join Discord</a>
+      </div>
     </div>
 
-    <div class="footer">
-      <p>Built by <a href="https://github.com/xmrtdao/mobilemonero">XMRT DAO</a> 🐙</p>
-      <p style="margin-top: 0.5rem; font-size: 0.85rem;">
-        <a href="https://github.com/xmrtdao/mmlauncher">Mining Launcher</a> • 
-        <a href="https://fleet.mobilemonero.com">Fleet Dashboard</a> • 
-        <a href="https://github.com/xmrtdao/mobilemonero/issues">Issues</a>
-      </p>
+    <!-- QUICK REFERENCE -->
+    <div class="step-card">
+      <h2 class="step-title">📋 Quick Reference</h2>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Essential Commands</h3>
+      <pre># Activate Hermes environment
+cd ~/hermes-env && source venv/bin/activate
+
+# Start Ollama
+ollama serve &
+
+# Start Hermes
+hermes agent start
+
+# Check running processes
+ps aux | grep -E "ollama|hermes"
+
+# View Ollama models
+ollama list
+
+# Stop all services
+pkill -f ollama
+pkill -f hermes</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Useful Shortcuts</h3>
+      <ul>
+        <li><code>Ctrl+C</code> — Stop current process</li>
+        <li><code>Ctrl+Z</code> — Background process</li>
+        <li><code>bg</code> — Resume backgrounded process</li>
+        <li><code>fg</code> — Bring background process to foreground</li>
+        <li><code>exit</code> — Close Termux session</li>
+      </ul>
     </div>
   </div>
 
-  <script>
-    // Auto-verify hash if user pastes their result
-    const expectedHash = '51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0';
-    const hashCheckDiv = document.getElementById('hashCheck');
-    
-    // Add copy button
-    const copyBtn = document.createElement('button');
-    copyBtn.textContent = 'Copy Expected Hash';
-    copyBtn.onclick = () => {
-      navigator.clipboard.writeText(expectedHash);
-      copyBtn.textContent = 'Copied!';
-      setTimeout(() => copyBtn.textContent = 'Copy Expected Hash', 2000);
-    };
-    hashCheckDiv.appendChild(copyBtn);
-  </script>
+  <footer>
+    <p>Built by <a href="https://github.com/xmrtdao">XMRT DAO</a> 🐙</p>
+    <p style="margin-top: 0.75rem; font-size: 0.9rem;">
+      <a href="https://mobilemonero.com">MobileMonero</a> • 
+      <a href="https://github.com/xmrtdao/mobilemonero">GitHub</a> • 
+      <a href="https://xmrtdao.github.io/university">XMRT University</a>
+    </p>
+    <p style="margin-top: 1rem; color: var(--text-secondary); font-size: 0.85rem;">
+      Last updated: June 2, 2026
+    </p>
+  </footer>
 </body>
 </html>
