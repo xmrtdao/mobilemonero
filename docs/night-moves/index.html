@@ -319,17 +319,60 @@
   <section class="hero">
     <h1>🌙 Night Moves</h1>
     <p class="subtitle">Deploy Ollama + Hermes AI Agents on Android/Termux — Complete Step-by-Step Guide</p>
+    <div style="margin-top: 1.5rem;">
+      <a href="https://github.com/xmrtdao/mmlauncher" class="btn" target="_blank" rel="noopener">View mmlauncher Repo →</a>
+      <a href="#quick-start" class="btn btn-secondary" style="margin-left: 0.75rem;">Quick Start ↓</a>
+    </div>
   </section>
 
   <div class="container">
     <div class="alert alert-info">
-      <strong>⚡ Complete Guide</strong> — From fresh Termux install to running AI agents. No prior experience required.
+      <strong>⚡ Official Setup Script</strong> — One command installs everything with hash verification. From the <a href="https://github.com/xmrtdao/mmlauncher" style="color: var(--info); text-decoration: underline;">mmlauncher repo</a>.
+    </div>
+
+    <!-- QUICK START -->
+    <div class="step-card" id="quick-start">
+      <div class="step-number">Quick Start</div>
+      <h2 class="step-title">One-Command Signup (Recommended)</h2>
+      
+      <p style="margin-bottom: 1rem;">This single command downloads, verifies, and runs the official XMRT DAO mining setup:</p>
+      
+      <pre>curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
+      
+      <div class="alert alert-success" style="margin-top: 1rem;">
+        <strong>✅ SHA256 Verified</strong> — Compare the hash output to ensure script authenticity before it runs!
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Expected SHA256 Hash</h3>
+      <pre style="font-size: 0.75rem; color: #4ade80;">51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0</pre>
+      
+      <p style="margin-top: 1rem;"><strong>What this script does:</strong></p>
+      <ul>
+        <li>✅ Installs Termux dependencies (python, clang, nodejs, cmake, make, libuv, libmicrohttpd)</li>
+        <li>✅ Creates your miner identity (unique Worker ID + alias)</li>
+        <li>✅ Generates XMRig config with fleet API (port 19090)</li>
+        <li>✅ Clones and builds XMRig from source</li>
+        <li>✅ Configures pool connection (pool.supportxmr.com:3333)</li>
+        <li>✅ Enables API for fleet dashboard tracking</li>
+      </ul>
+      
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>📊 After Setup:</strong> Track your miner on the <a href="https://relay.mobilemonero.com" style="color: var(--info); text-decoration: underline;">Fleet Dashboard</a> using your Worker ID.
+      </div>
+    </div>
+
+    <!-- MANUAL INSTALL -->
+    <div class="step-card">
+      <div class="step-number">Manual Install</div>
+      <h2 class="step-title">Step-by-Step (Advanced)</h2>
+      
+      <p style="margin-bottom: 1rem;">Prefer to understand each step? Follow the manual process below:</p>
     </div>
 
     <!-- PHASE 1: TERMUX SETUP -->
     <div class="step-card">
-      <div class="step-number">Phase 1</div>
-      <h2 class="step-title">Install & Configure Termux</h2>
+      <div class="step-number">Step 1</div>
+      <h2 class="step-title">Install Termux & Dependencies</h2>
       
       <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.1 Download Termux</h3>
       <p>Get Termux from F-Droid (recommended) or Google Play Store.</p>
@@ -337,164 +380,105 @@
         <a href="https://f-droid.org/packages/com.termux/" class="btn" target="_blank" rel="noopener">Download Termux from F-Droid</a>
       </div>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.2 Initial Setup</h3>
-      <p>Open Termux and run these commands one at a time:</p>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.2 Initial Setup Commands</h3>
       <pre>termux-setup-storage
-pkg update
-pkg upgrade</pre>
-      <p>When prompted, type <code>y</code> and press Enter to confirm.</p>
+pkg update && pkg upgrade -y</pre>
+      <p>Type <code>y</code> when prompted to confirm upgrades.</p>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.3 Install Required Packages</h3>
-      <pre>pkg install python git curl wget nano termux-api termux-services
-pkg install proot proot-distro
-pkg install build-essential clang cmake libjpeg-turbo libwebp libtiff libffi zlib</pre>
-      <p>Grant permissions when prompted:</p>
-      <pre>termux-setup-storage</pre>
-    </div>
-
-    <!-- PHASE 2: PYTHON ENVIRONMENT -->
-    <div class="step-card">
-      <div class="step-number">Phase 2</div>
-      <h2 class="step-title">Set Up Python Environment</h2>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">1.3 Install Build Dependencies</h3>
+      <pre>pkg install -y python clang nodejs openssl-tool git cmake make libuv libmicrohttpd</pre>
+      <p>These are required to build XMRig from source (as used in the official signup script).</p>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.1 Install Python and Pip</h3>
-      <pre>pkg install python
-pip install --upgrade pip setuptools wheel</pre>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.2 Create Virtual Environment</h3>
-      <pre>mkdir -p ~/hermes-env
-cd ~/hermes-env
-python -m venv venv
-source venv/bin/activate</pre>
-      <p>You should see <code>(venv)</code> in your prompt, indicating the virtual environment is active.</p>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">2.3 Install Python Dependencies</h3>
-      <pre>pip install requests colorama aiohttp fastapi uvicorn[standard]
-pip install python-dotenv pyyaml rich click
-pip install supabase pydantic python-jose[cryptography]
-pip install passlib[bcrypt] python-multipart</pre>
-      
-      <div class="alert alert-warning">
-        <strong>⚠️ Note:</strong> Installation may take 5-10 minutes on mobile data. Be patient!
+      <div class="alert alert-warning" style="margin-top: 1rem;">
+        <strong>⚠️ Storage Permission:</strong> When you run <code>termux-setup-storage</code>, grant storage access when prompted. This allows the miner to read/write config files.
       </div>
     </div>
 
-    <!-- PHASE 3: OLLAMA INSTALLATION -->
+    <!-- STEP 2: RUN MINER -->
     <div class="step-card">
-      <div class="step-number">Phase 3</div>
-      <h2 class="step-title">Install Ollama for Local AI</h2>
+      <div class="step-number">Step 2</div>
+      <h2 class="step-title">Start Mining</h2>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.1 Download Ollama Binary</h3>
-      <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
-      <p>If the script fails, manually install:</p>
-      <pre>curl -LO https://github.com/ollama/ollama/releases/download/v0.1.38/ollama-linux-arm64.tgz
-tar -xzf ollama-linux-arm64.tgz
-sudo mv ollama /usr/local/bin/
-chmod +x /usr/local/bin/ollama</pre>
+      <p>After the signup script completes, start your miner:</p>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.2 Start Ollama Server</h3>
-      <pre>ollama serve &</pre>
-      <p>Keep this running in the background. Open a new Termux session for the next steps.</p>
+      <pre>cd xmrig/build && ./xmrig -c ../../config.json</pre>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.3 Pull AI Models</h3>
-      <p>For Hermes agents (recommended for mobile):</p>
-      <pre>ollama pull qwen2.5:0.5b
-ollama pull qwen2.5:1.5b
-ollama pull llama3.2:1b</pre>
-      <p>For more capable agents (requires 4GB+ RAM):</p>
-      <pre>ollama pull qwen2.5:3b
-ollama pull llama3.2:3b
-ollama pull mistral:7b</pre>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Verify Mining is Running</h3>
+      <pre>curl http://127.0.0.1:19090/1/summary</pre>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">3.4 Verify Installation</h3>
-      <pre>ollama list
-ollama run qwen2.5:0.5b "Hello, are you working?"</pre>
+      <p>You should see JSON output with your hashrate, accepted shares, and pool connection status.</p>
+      
+      <div class="alert alert-success" style="margin-top: 1rem;">
+        <strong>✅ Mining Active!</strong> Your Worker ID is now tracking on the <a href="https://relay.mobilemonero.com" style="color: var(--info); text-decoration: underline;">Fleet Dashboard</a>.
+      </div>
     </div>
 
-    <!-- PHASE 4: HERMES AGENT -->
+    <!-- STEP 3: FLEET TRACKING -->
     <div class="step-card">
-      <div class="step-number">Phase 4</div>
-      <h2 class="step-title">Install Hermes Agent</h2>
+      <div class="step-number">Step 3</div>
+      <h2 class="step-title">Track on Fleet Dashboard</h2>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.1 Clone Hermes Repository</h3>
+      <p>Visit the dashboard to see your miner stats:</p>
+      
+      <div style="text-align: center; margin: 1.5rem 0;">
+        <a href="https://relay.mobilemonero.com" class="btn" target="_blank" rel="noopener">Open Fleet Dashboard →</a>
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">What You'll See</h3>
+      <ul>
+        <li><strong>Worker Name:</strong> Your chosen alias (e.g., <code>xmrt-abc123</code>)</li>
+        <li><strong>Worker ID:</strong> Unique 8-character identifier</li>
+        <li><strong>Hashrate:</strong> Real-time mining speed (H/s)</li>
+        <li><strong>Accepted Shares:</strong> Valid proofs submitted to pool</li>
+        <li><strong>Pending Payout:</strong> XMR earned (paid when threshold reached)</li>
+      </ul>
+      
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>📡 API Integration:</strong> Your miner reports to the fleet via the built-in API on port 19090. This enables real-time tracking without manual reporting.
+      </div>
+    </div>
+
+    <!-- OLLAMA + HERMES (OPTIONAL) -->
+    <div class="step-card">
+      <div class="step-number">Optional</div>
+      <h2 class="step-title">Add AI Agents (Ollama + Hermes)</h2>
+      
+      <p>Want to run AI agents alongside mining? Here's how:</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Ollama</h3>
+      <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Pull Lightweight Models</h3>
+      <pre>ollama pull qwen2.5:0.5b
+ollama pull llama3.2:1b</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Ollama Server</h3>
+      <pre>ollama serve &</pre>
+      <p>This runs in the background. Open a new Termux session for the next step.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Hermes Agent</h3>
       <pre>cd ~
 git clone https://github.com/nousresearch/hermes-agent.git
-cd hermes-agent</pre>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.2 Install Hermes Dependencies</h3>
-      <pre>pip install -e .
+cd hermes-agent
+pip install -e .
 pip install -r requirements.txt</pre>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.3 Configure Environment</h3>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Configure Hermes</h3>
       <pre>cp .env.example .env
 nano .env</pre>
-      <p>Edit the following values in <code>.env</code>:</p>
-      <pre># Required Configuration
-OLLAMA_BASE_URL=http://localhost:11434
-DEFAULT_MODEL=qwen2.5:1.5b
-
-# Optional: Supabase Integration
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-anon-key
-
-# Optional: API Configuration
-HERMES_PORT=8080
-HERMES_HOST=0.0.0.0</pre>
-      <p>Press <code>Ctrl+X</code>, then <code>Y</code>, then <code>Enter</code> to save.</p>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">4.4 Start Hermes</h3>
+      <p>Set these values in <code>.env</code>:</p>
+      <pre>OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_MODEL=qwen2.5:0.5b
+HERMES_PORT=8080</pre>
+      
+      <p>Press <code>Ctrl+X</code>, <code>Y</code>, <code>Enter</code> to save.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Hermes</h3>
       <pre>hermes agent start</pre>
-      <p>Or run directly:</p>
-      <pre>python -m hermes.agent --config .env</pre>
       
-      <div class="alert alert-success">
-        <strong>✅ Success!</strong> Hermes should now be running on <code>http://localhost:8080</code>
-      </div>
-    </div>
-
-    <!-- PHASE 5: VERIFICATION -->
-    <div class="step-card">
-      <div class="step-number">Phase 5</div>
-      <h2 class="step-title">Test Your Setup</h2>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.1 Test Ollama API</h3>
-      <pre>curl http://localhost:11434/api/generate -d '{
-  "model": "qwen2.5:0.5b",
-  "prompt": "Say hello in one word"
-}'</pre>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.2 Test Hermes Endpoint</h3>
-      <pre>curl http://localhost:8080/api/chat -H "Content-Type: application/json" -d '{
-  "message": "What is the capital of France?",
-  "model": "qwen2.5:1.5b"
-}'</pre>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">5.3 Check System Status</h3>
-      <pre>ollama list
-ps aux | grep -E "ollama|hermes"
-free -m  # Check available RAM</pre>
-    </div>
-
-    <!-- PHASE 6: MOBILE MINING -->
-    <div class="step-card">
-      <div class="step-number">Phase 6</div>
-      <h2 class="step-title">Optional: Enable XMR Mining</h2>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.1 Install XMRig</h3>
-      <pre>pkg install xmrig
-xmrig --version</pre>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.2 Configure Mining Pool</h3>
-      <pre>cd ~
-curl -o config.json -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/configs/pool-config.json
-nano config.json</pre>
-      <p>Update your wallet address in the config file.</p>
-      
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">6.3 Start Mining</h3>
-      <pre>xmrig -c config.json</pre>
-      
-      <div class="alert alert-info">
-        <strong>💡 Pro Tip:</strong> Run mining in a separate Termux session to keep Hermes agents running uninterrupted.
+      <div class="alert alert-warning" style="margin-top: 1rem;">
+        <strong>⚠️ Resource Warning:</strong> Running mining + AI agents simultaneously requires 4GB+ RAM. Monitor with <code>free -m</code> and stop one service if you see memory pressure.
       </div>
     </div>
 
