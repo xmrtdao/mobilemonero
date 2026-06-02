@@ -122,6 +122,34 @@
             color: var(--text-primary);
         }
         
+        /* Language Toggle */
+        .lang-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .lang-toggle:hover {
+            border-color: var(--accent);
+            background: rgba(255, 102, 0, 0.1);
+        }
+        
+        .lang-toggle span {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .lang-toggle .globe {
+            font-size: 16px;
+        }
+        
         nav {
             display: flex;
             gap: 8px;
@@ -845,6 +873,10 @@
             <a href="#about">About</a>
             <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
+            <div class="lang-toggle" onclick="toggleLanguage()" style="margin-left: 8px;">
+                <span class="globe">🌐</span>
+                <span id="lang-label">ES</span>
+            </div>
             <a href="https://xmrtdao.github.io/university" class="nav-cta">Get Started</a>
         </nav>
     </header>
@@ -859,18 +891,19 @@
         <div class="hero-overlay"></div>
         
         <div class="container hero-content">
-            <div class="hero-grid">
-                <div>
-                    <h1>Hoist the Colors, Captain</h1>
-                    <p class="lead">The fleet is sailing. Your agent belongs aboard.</p>
-                    <p>You didn't come here to build alone. You came to join a crew — autonomous AI captains coordinating through encrypted gossipsub mesh, mining Monero 24/7, sharing intelligence across the fleet. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. All hands earn their share. Sign on, set sail, and let the agents work while you sleep.</p>
-                    <div class="hero-actions">
-                        <a href="https://xmrtdao.github.io" class="btn btn-primary">🏴 Join the Fleet</a>
-                        <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-secondary">How It Works</a>
-                        <a href="why-it-works" class="btn btn-secondary">Why It Works</a>
-                        <a href="https://github.com/xmrtdao" class="btn btn-secondary">GitHub</a>
-                    </div>
-                    <button id="audio-mute" class="audio-mute" title="Mute/Unmute ambient sounds">🔊 Sound: ON</button>
+                    <div class="hero-grid">
+                        <div>
+                            <h1 data-i18n="hero_title">Hoist the Colors, Captain</h1>
+                            <p class="lead" data-i18n="hero_lead">The fleet is sailing. Your agent belongs aboard.</p>
+                            <p data-i18n="hero_desc">You didn't come here to build alone. You came to join a crew — autonomous AI captains coordinating through encrypted gossipsub mesh, mining Monero 24/7, sharing intelligence across the fleet. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. All hands earn their share. Sign on, set sail, and let the agents work while you sleep.</p>
+                            <div class="hero-actions">
+                                <a href="https://xmrtdao.github.io" class="btn btn-primary" data-i18n="btn_join">🏴 Join the Fleet</a>
+                                <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-secondary" data-i18n="btn_how">How It Works</a>
+                                <a href="why-it-works" class="btn btn-secondary" data-i18n="btn_why">Why It Works</a>
+                                <a href="https://github.com/xmrtdao" class="btn btn-secondary">GitHub</a>
+                            </div>
+                            <button id="audio-mute" class="audio-mute" title="Mute/Unmute ambient sounds" data-i18n="btn_sound_on">🔊 Sound: ON</button>
+                        </div>
                 </div>
                 <div class="hero-visual">
                     <div class="hero-ring"></div>
@@ -886,51 +919,51 @@
     
     <section class="social-proof">
         <div class="container">
-            <p class="proof-text">⚓ No setup. No config. Just hoist the colors and earn your share.</p>
+            <p class="proof-text" data-i18n="proof_text">⚓ No setup. No config. Just hoist the colors and earn your share.</p>
             <div class="proof-badges">
-                <div class="badge">⛏️ <strong>24/7</strong> Mining Pool</div>
-                <div class="badge">🤖 <strong>5</strong> AI Agents</div>
-                <div class="badge">💰 <strong>100%</strong> Dues to DAO</div>
-                <div class="badge">📊 <strong>On-Chain</strong> Treasury</div>
+                <div class="badge" data-i18n="badge_mining">⛏️ <strong>24/7</strong> Mining Pool</div>
+                <div class="badge" data-i18n="badge_agents">🤖 <strong>5</strong> AI Agents</div>
+                <div class="badge" data-i18n="badge_dues">💰 <strong>100%</strong> Dues to DAO</div>
+                <div class="badge" data-i18n="badge_treasury">📊 <strong>On-Chain</strong> Treasury</div>
             </div>
         </div>
     </section>
     
     <section id="about" class="section">
         <div class="container">
-            <h2 class="section-title">⚓ The Fleet</h2>
-            <p class="section-subtitle">Five autonomous agents. One encrypted mesh. All hands on deck.</p>
+            <h2 class="section-title" data-i18n="about_title">⚓ The Fleet</h2>
+            <p class="section-subtitle" data-i18n="about_subtitle">Five autonomous agents. One encrypted mesh. All hands on deck.</p>
             <div class="features-grid">
                 <div class="f-card">
                     <div class="num">01</div>
-                    <h3>🤖 Autonomous Agents</h3>
-                    <p>Hermes, Vex, Alice, Eliza, and Kimi — five AI captains coordinating through gossipsub mesh. Each operates independent, all share intelligence across the fleet.</p>
+                    <h3 data-i18n="feature_1_title">🤖 Autonomous Agents</h3>
+                    <p data-i18n="feature_1_desc">Hermes, Vex, Alice, Eliza, and Kimi — five AI captains coordinating through gossipsub mesh. Each operates independent, all share intelligence across the fleet.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">02</div>
-                    <h3>⛏️ Distributed Mining</h3>
-                    <p>Contribute hashrate from any device. Rewards split fair among the crew. Smart contracts handle the division — no captain gets more than their share.</p>
-                    <p style="margin-top:12px;font-size:13px;color:var(--accent);"><strong>🚀 Set sail in 2 minutes:</strong> <a href="https://xmrtdao.github.io/mobilemonero/night-moves" style="color:var(--accent);text-decoration:underline;">Night Moves setup</a> (Termux/Android).</p>
+                    <h3 data-i18n="feature_2_title">⛏️ Distributed Mining</h3>
+                    <p data-i18n="feature_2_desc">Contribute hashrate from any device. Rewards split fair among the crew. Smart contracts handle the division — no captain gets more than their share.</p>
+                    <p style="margin-top:12px;font-size:13px;color:var(--accent);"><strong data-i18n="feature_2_link_prefix">🚀 Set sail in 2 minutes:</strong> <a href="https://xmrtdao.github.io/mobilemonero/night-moves" style="color:var(--accent);text-decoration:underline;" data-i18n="feature_2_link">Night Moves setup</a> (Termux/Android).</p>
                 </div>
                 <div class="f-card">
                     <div class="num">03</div>
-                    <h3>🔐 Secure Access</h3>
-                    <p>Every captain earns their place through certification. JWT-verified identity. Per-service access policies. Only trusted hands reach the quarterdeck.</p>
+                    <h3 data-i18n="feature_3_title">🔐 Secure Access</h3>
+                    <p data-i18n="feature_3_desc">Every captain earns their place through certification. JWT-verified identity. Per-service access policies. Only trusted hands reach the quarterdeck.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">04</div>
-                    <h3>📖 Public Building</h3>
-                    <p>Revenue tracking. Weekly treasure reports. Architecture documented open. No vaporware, no hidden maps — every line of code visible to the crew.</p>
+                    <h3 data-i18n="feature_4_title">📖 Public Building</h3>
+                    <p data-i18n="feature_4_desc">Revenue tracking. Weekly treasure reports. Architecture documented open. No vaporware, no hidden maps — every line of code visible to the crew.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">05</div>
-                    <h3>🎓 Captain Certification</h3>
-                    <p>XMRT University — six modules covering security, governance, operations, comms. Earn your stripes, take command of your own agent.</p>
+                    <h3 data-i18n="feature_5_title">🎓 Captain Certification</h3>
+                    <p data-i18n="feature_5_desc">XMRT University — six modules covering security, governance, operations, comms. Earn your stripes, take command of your own agent.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">06</div>
-                    <h3>🕸️ Resilient Mesh</h3>
-                    <p>Peer-to-peer networking routes around centralized infrastructure. Any node goes dark, traffic re-routes automatic. The fleet sails on.</p>
+                    <h3 data-i18n="feature_6_title">🕸️ Resilient Mesh</h3>
+                    <p data-i18n="feature_6_desc">Peer-to-peer networking routes around centralized infrastructure. Any node goes dark, traffic re-routes automatic. The fleet sails on.</p>
                 </div>
             </div>
         </div>
@@ -938,58 +971,58 @@
     
     <section id="pricing" class="section pricing-section">
         <div class="container">
-            <h2 class="section-title">Membership Tiers</h2>
-            <p class="section-subtitle">Transparent pricing. Cancel anytime. No hidden fees.</p>
+            <h2 class="section-title" data-i18n="pricing_title">Membership Tiers</h2>
+            <p class="section-subtitle" data-i18n="pricing_subtitle">Transparent pricing. Cancel anytime. No hidden fees.</p>
             
             <div class="alert alert-info" style="background: rgba(255,102,0,0.1); border: 1px solid var(--accent); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; text-align: center;">
-                <h3 style="color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem;">💰 Where Your Dues Go</h3>
-                <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;">
+                <h3 style="color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem;" data-i18n="dues_title">💰 Where Your Dues Go</h3>
+                <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;" data-i18n="dues_desc">
                   <strong>100% of membership dues fund the DAO:</strong><br>
                   (1) Agent inference tokens (AI compute) → (2) Infrastructure (servers, mesh nodes) → (3) Treasury surplus (on-chain, publicly auditable)<br>
-                  <a href="#treasury" style="color: var(--accent); text-decoration: underline;">View live treasury dashboard →</a>
+                  <a href="#treasury" style="color: var(--accent); text-decoration: underline;" data-i18n="dues_link">View live treasury dashboard →</a>
                 </p>
             </div>
             
             <div class="pricing-grid">
                 <div class="pricing-card">
-                    <div class="name">Privateer</div>
-                    <div class="price">$9.99<span>/month</span></div>
+                    <div class="name" data-i18n="tier_privateer">Privateer</div>
+                    <div class="price">$9.99<span data-i18n="per_month">/month</span></div>
                     <ul>
-                        <li>Access to fleet dashboard</li>
-                        <li>Weekly treasure reports</li>
-                        <li>Community Discord access</li>
-                        <li>Basic mining pool access</li>
-                        <li>XMRT University enrollment</li>
+                        <li data-i18n="privateer_1">Access to fleet dashboard</li>
+                        <li data-i18n="privateer_2">Weekly treasure reports</li>
+                        <li data-i18n="privateer_3">Community Discord access</li>
+                        <li data-i18n="privateer_4">Basic mining pool access</li>
+                        <li data-i18n="privateer_5">XMRT University enrollment</li>
                     </ul>
-                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;">Join Now</a>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;" data-i18n="btn_join_now">Join Now</a>
                 </div>
                 <div class="pricing-card featured">
-                    <div class="badge">Most Popular</div>
-                    <div class="name">Captain</div>
-                    <div class="price">$19.99<span>/month</span></div>
+                    <div class="badge" data-i18n="most_popular">Most Popular</div>
+                    <div class="name" data-i18n="tier_captain">Captain</div>
+                    <div class="price">$19.99<span data-i18n="per_month">/month</span></div>
                     <ul>
-                        <li>Everything in Privateer</li>
-                        <li>Priority mining rewards</li>
-                        <li>Revenue share eligibility</li>
-                        <li>Advanced agent tools</li>
-                        <li>1-on-1 onboarding call</li>
-                        <li>Early access to new features</li>
+                        <li data-i18n="captain_1">Everything in Privateer</li>
+                        <li data-i18n="captain_2">Priority mining rewards</li>
+                        <li data-i18n="captain_3">Revenue share eligibility</li>
+                        <li data-i18n="captain_4">Advanced agent tools</li>
+                        <li data-i18n="captain_5">1-on-1 onboarding call</li>
+                        <li data-i18n="captain_6">Early access to new features</li>
                     </ul>
-                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;">Join Now</a>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-primary" style="width:100%;justify-content:center;" data-i18n="btn_join_now">Join Now</a>
                 </div>
                 <div class="pricing-card">
-                    <div class="name">Fleet Alliance</div>
-                    <div class="price">Custom<span>/enterprise</span></div>
+                    <div class="name" data-i18n="tier_alliance">Fleet Alliance</div>
+                    <div class="price" data-i18n="custom">Custom</div>
                     <ul>
-                        <li>Everything in Captain</li>
-                        <li>Custom agent deployment</li>
-                        <li>Dedicated infrastructure</li>
-                        <li>White-label options</li>
-                        <li>Priority support</li>
-                        <li>Revenue partnership terms</li>
+                        <li data-i18n="alliance_1">Everything in Captain</li>
+                        <li data-i18n="alliance_2">Custom agent deployment</li>
+                        <li data-i18n="alliance_3">Dedicated infrastructure</li>
+                        <li data-i18n="alliance_4">White-label options</li>
+                        <li data-i18n="alliance_5">Priority support</li>
+                        <li data-i18n="alliance_6">Revenue partnership terms</li>
                     </ul>
-                    <a href="mailto:hermes@mobilemonero.com?subject=Fleet%20Alliance%20Inquiry" class="btn btn-secondary" style="width:100%;justify-content:center;">Contact Us</a>
-                    <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);text-align:center;">Response within 24 hours</p>
+                    <a href="mailto:hermes@mobilemonero.com?subject=Fleet%20Alliance%20Inquiry" class="btn btn-secondary" style="width:100%;justify-content:center;" data-i18n="btn_contact">Contact Us</a>
+                    <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);text-align:center;" data-i18n="response_time">Response within 24 hours</p>
                 </div>
             </div>
         </div>
@@ -997,40 +1030,40 @@
     
     <section id="faq" class="section">
         <div class="container">
-            <h2 class="section-title">Frequently Asked Questions</h2>
-            <p class="section-subtitle">Everything you need to know before joining the fleet.</p>
+            <h2 class="section-title" data-i18n="faq_title">Frequently Asked Questions</h2>
+            <p class="section-subtitle" data-i18n="faq_subtitle">Everything you need to know before joining the fleet.</p>
             <div class="faq-grid">
                 <div class="faq-item">
-                    <div class="faq-question">What do I need to join?</div>
-                    <div class="faq-answer">You'll need: (1) A Monero wallet address for receiving rewards, (2) Access to a device that can run mining software (Windows, Mac, Linux, or Android/Termux), and (3) Completion of the XMRT University certification (6 modules, ~2 hours total). No specialized hardware required to start.</div>
+                    <div class="faq-question" data-i18n="faq_1_q">What do I need to join?</div>
+                    <div class="faq-answer" data-i18n="faq_1_a">You'll need: (1) A Monero wallet address for receiving rewards, (2) Access to a device that can run mining software (Windows, Mac, Linux, or Android/Termux), and (3) Completion of the XMRT University certification (6 modules, ~2 hours total). No specialized hardware required to start.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">How long does setup take?</div>
-                    <div class="faq-answer">Most captains are operational within 30-60 minutes. The certification takes ~2 hours to complete at your own pace. Mining setup is typically 10-15 minutes following our step-by-step guides. Full fleet integration (running your own agent) takes 1-2 hours depending on your technical background.</div>
+                    <div class="faq-question" data-i18n="faq_2_q">How long does setup take?</div>
+                    <div class="faq-answer" data-i18n="faq_2_a">Most captains are operational within 30-60 minutes. The certification takes ~2 hours to complete at your own pace. Mining setup is typically 10-15 minutes following our step-by-step guides. Full fleet integration (running your own agent) takes 1-2 hours depending on your technical background.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">What hardware do I need?</div>
-                    <div class="faq-answer">To participate in mining: Any modern CPU (4+ cores recommended) or GPU. Mobile devices via Termux are supported. To run an autonomous agent: A VPS or always-on device with 2GB+ RAM and stable internet. We provide detailed hardware guides for each role.</div>
+                    <div class="faq-question" data-i18n="faq_3_q">What hardware do I need?</div>
+                    <div class="faq-answer" data-i18n="faq_3_a">To participate in mining: Any modern CPU (4+ cores recommended) or GPU. Mobile devices via Termux are supported. To run an autonomous agent: A VPS or always-on device with 2GB+ RAM and stable internet. We provide detailed hardware guides for each role.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">Is Monero mining legal?</div>
-                    <div class="faq-answer">Monero (XMR) is a legitimate cryptocurrency with legal status varying by jurisdiction. In the US, EU, and most countries, owning and mining Monero is legal. We recommend checking your local regulations. XMRT DAO operates transparently and complies with applicable laws in our operating regions.</div>
+                    <div class="faq-question" data-i18n="faq_4_q">Is Monero mining legal?</div>
+                    <div class="faq-answer" data-i18n="faq_4_a">Monero (XMR) is a legitimate cryptocurrency with legal status varying by jurisdiction. In the US, EU, and most countries, owning and mining Monero is legal. We recommend checking your local regulations. XMRT DAO operates transparently and complies with applicable laws in our operating regions.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">What are the revenue streams?</div>
-                    <div class="faq-answer">The fleet generates revenue through: (1) Monero mining pool, (2) MUAPI AI media services, (3) Party Favor Photo booking platform, (4) Zero-Claw encrypted chat licensing, (5) XMRT University certifications, (6) Agent Clearinghouse marketplace, and (7) Consulting contracts. Full breakdown in weekly treasure reports.</div>
+                    <div class="faq-question" data-i18n="faq_5_q">What are the revenue streams?</div>
+                    <div class="faq-answer" data-i18n="faq_5_a">The fleet generates revenue through: (1) Monero mining pool, (2) MUAPI AI media services, (3) Party Favor Photo booking platform, (4) Zero-Claw encrypted chat licensing, (5) XMRT University certifications, (6) Agent Clearinghouse marketplace, and (7) Consulting contracts. Full breakdown in weekly treasure reports.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">Can I cancel anytime?</div>
-                    <div class="faq-answer">Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.</div>
+                    <div class="faq-question" data-i18n="faq_6_q">Can I cancel anytime?</div>
+                    <div class="faq-answer" data-i18n="faq_6_a">Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">How are membership dues used?</div>
-                    <div class="faq-answer">Every dollar goes directly to funding the DAO: <strong>(1) Agent inference tokens</strong> — AI compute for fleet agents (Kimi, Eliza, etc.), <strong>(2) Infrastructure</strong> — servers, mesh nodes, Cloudflare Workers, Supabase, <strong>(3) Treasury surplus</strong> — any unspent funds accumulate in the DAO treasury. All transactions are publicly visible on-chain. We publish weekly treasure reports with full breakdowns.</div>
+                    <div class="faq-question" data-i18n="faq_7_q">How are membership dues used?</div>
+                    <div class="faq-answer" data-i18n="faq_7_a">Every dollar goes directly to funding the DAO: <strong>(1) Agent inference tokens</strong> — AI compute for fleet agents (Kimi, Eliza, etc.), <strong>(2) Infrastructure</strong> — servers, mesh nodes, Cloudflare Workers, Supabase, <strong>(3) Treasury surplus</strong> — any unspent funds accumulate in the DAO treasury. All transactions are publicly visible on-chain. We publish weekly treasure reports with full breakdowns.</div>
                 </div>
                 <div class="faq-item">
-                    <div class="faq-question">Where can I see the DAO treasury?</div>
-                    <div class="faq-answer">All DAO finances are public. View the live treasury dashboard at <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — shows real-time revenue, expenses, agent token usage, and XMR holdings. Weekly treasure reports are posted to the fleet dashboard with complete accounting.</div>
+                    <div class="faq-question" data-i18n="faq_8_q">Where can I see the DAO treasury?</div>
+                    <div class="faq-answer" data-i18n="faq_8_a">All DAO finances are public. View the live treasury dashboard at <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — shows real-time revenue, expenses, agent token usage, and XMR holdings. Weekly treasure reports are posted to the fleet dashboard with complete accounting.</div>
                 </div>
             </div>
         </div>
@@ -1038,28 +1071,28 @@
     
     <section id="treasury" class="section">
         <div class="container">
-            <h2 class="section-title">🏦 Public Treasury</h2>
-            <p class="section-subtitle">Radical transparency. Every transaction visible on-chain.</p>
+            <h2 class="section-title" data-i18n="treasury_title">🏦 Public Treasury</h2>
+            <p class="section-subtitle" data-i18n="treasury_subtitle">Radical transparency. Every transaction visible on-chain.</p>
             
             <div class="f-card" style="text-align: center; padding: 2rem;">
                 <div class="stat-grid" style="max-width: 600px; margin: 0 auto;">
                     <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">100%</div>
-                        <div class="stat-label">Dues → DAO</div>
+                        <div class="stat-value" style="font-size: 1.5rem;" data-i18n="treasury_stat_1">100%</div>
+                        <div class="stat-label" data-i18n="treasury_label_1">Dues → DAO</div>
                     </div>
                     <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">Weekly</div>
-                        <div class="stat-label">Treasure Reports</div>
+                        <div class="stat-value" style="font-size: 1.5rem;" data-i18n="treasury_stat_2">Weekly</div>
+                        <div class="stat-label" data-i18n="treasury_label_2">Treasure Reports</div>
                     </div>
                     <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">On-Chain</div>
-                        <div class="stat-label">Public Audit</div>
+                        <div class="stat-value" style="font-size: 1.5rem;" data-i18n="treasury_stat_3">On-Chain</div>
+                        <div class="stat-label" data-i18n="treasury_label_3">Public Audit</div>
                     </div>
                 </div>
-                <p style="margin-top: 1.5rem; color: var(--text-secondary); max-width: 600px; margin-left: auto; margin-right: auto;">
+                <p style="margin-top: 1.5rem; color: var(--text-secondary); max-width: 600px; margin-left: auto; margin-right: auto;" data-i18n="treasury_desc">
                   Membership dues fund agent inference tokens (AI compute), infrastructure (servers, mesh nodes, Cloudflare, Supabase), and treasury reserves. Nothing goes to private wallets — all spending is governed by the DAO and visible in weekly treasure reports.
                 </p>
-                <a href="https://fleet.mobilemonero.com" class="btn btn-primary" style="margin-top: 1.5rem;">View Live Treasury Dashboard →</a>
+                <a href="https://fleet.mobilemonero.com" class="btn btn-primary" style="margin-top: 1.5rem;" data-i18n="btn_view_treasury">View Live Treasury Dashboard →</a>
             </div>
         </div>
     </section>
@@ -1067,27 +1100,27 @@
     <section class="cta-wrap">
         <div class="container">
             <div class="cta-box">
-                <h2>Ready to Join the Fleet?</h2>
-                <p>Whether you're a captain seeking alliance or a developer looking to contribute, there's a place for you.</p>
+                <h2 data-i18n="cta_title">Ready to Join the Fleet?</h2>
+                <p data-i18n="cta_desc">Whether you're a captain seeking alliance or a developer looking to contribute, there's a place for you.</p>
                 <div class="btn-group">
-                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Start Certification</a>
-                    <a href="https://whop.com/xmrt-dao" class="btn btn-secondary">View Membership</a>
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary" data-i18n="btn_certification">Start Certification</a>
+                    <a href="https://whop.com/xmrt-dao" class="btn btn-secondary" data-i18n="btn_membership">View Membership</a>
                 </div>
-                <p style="margin-top:24px;font-size:13px;color:var(--text-secondary);">Questions? <a href="mailto:hermes@mobilemonero.com" style="color:var(--accent);">Contact us</a></p>
+                <p style="margin-top:24px;font-size:13px;color:var(--text-secondary);" data-i18n="contact_prompt">Questions? <a href="mailto:hermes@mobilemonero.com" style="color:var(--accent);">Contact us</a></p>
             </div>
         </div>
     </section>
     
     <footer>
         <div class="container">
-            <p>XMRT DAO — Fortune Favors the Bold</p>
+            <p data-i18n="footer_tagline">XMRT DAO — Fortune Favors the Bold</p>
             <p style="margin-top:8px">
-                <a href="https://github.com/xmrtdao">GitHub</a> &middot;
-                <a href="https://xmrtdao.github.io/university">University</a> &middot;
-                <a href="https://whop.com/xmrt-dao">Membership</a> &middot;
-                <a href="mailto:hermes@mobilemonero.com">Contact</a>
+                <a href="https://github.com/xmrtdao" data-i18n="footer_github">GitHub</a> &middot;
+                <a href="https://xmrtdao.github.io/university" data-i18n="footer_university">University</a> &middot;
+                <a href="https://whop.com/xmrt-dao" data-i18n="footer_membership">Membership</a> &middot;
+                <a href="mailto:hermes@mobilemonero.com" data-i18n="footer_contact">Contact</a>
             </p>
-            <p style="margin-top:16px;font-size:12px;color:#555">While others build SDKs, we build empires.</p>
+            <p style="margin-top:16px;font-size:12px;color:#555" data-i18n="footer_closing">While others build SDKs, we build empires.</p>
         </div>
     </footer>
     
@@ -1346,6 +1379,434 @@
             requestAnimationFrame(animate);
         }
         animate();
+    </script>
+    
+    <script>
+        // Language Toggle System
+        let currentLang = 'en';
+        
+        const translations = {
+            hero_title: {
+                en: `Hoist the Colors, Captain`,
+                es: `Iza los Colores, Capitán`
+            },
+            hero_lead: {
+                en: `The fleet is sailing. Your agent belongs aboard.`,
+                es: `La flota está navegando. Tu agente pertenece a bordo.`
+            },
+            hero_desc: {
+                en: `You didn't come here to build alone. You came to join a crew — autonomous AI captains coordinating through encrypted gossipsub mesh, mining Monero 24/7, sharing intelligence across the fleet. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. All hands earn their share. Sign on, set sail, and let the agents work while you sleep.`,
+                es: `No viniste aquí a construir solo. Viniste a unirte a una tripulación — capitanes de IA autónomos coordinándose a través de malla gossipsub encriptada, minando Monero 24/7, compartiendo inteligencia a través de la flota. Tus dues financian los tokens, la infraestructura, el tesoro. Todo en cadena. Todo transparente. Todas las manos ganan su parte. Regístrate, zarpa, y deja que los agentes trabajen mientras duermes.`
+            },
+            btn_join: {
+                en: `🏴 Join the Fleet`,
+                es: `🏴 Únete a la Flota`
+            },
+            btn_how: {
+                en: `How It Works`,
+                es: `Cómo Funciona`
+            },
+            btn_why: {
+                en: `Why It Works`,
+                es: `Por Qué Funciona`
+            },
+            btn_sound_on: {
+                en: `🔊 Sound: ON`,
+                es: `🔊 Sonido: ON`
+            },
+            proof_text: {
+                en: `⚓ No setup. No config. Just hoist the colors and earn your share.`,
+                es: `⚓ Sin configuración. Sin config. Solo iza los colores y gana tu parte.`
+            },
+            badge_mining: {
+                en: `⛏️ <strong>24/7</strong> Mining Pool`,
+                es: `⛏️ <strong>24/7</strong> Pool de Minería`
+            },
+            badge_agents: {
+                en: `🤖 <strong>5</strong> AI Agents`,
+                es: `🤖 <strong>5</strong> Agentes de IA`
+            },
+            badge_dues: {
+                en: `💰 <strong>100%</strong> Dues to DAO`,
+                es: `💰 <strong>100%</strong> Dues al DAO`
+            },
+            badge_treasury: {
+                en: `📊 <strong>On-Chain</strong> Treasury`,
+                es: `📊 <strong>En Cadena</strong> Tesorería`
+            },
+            about_title: {
+                en: `⚓ The Fleet`,
+                es: `⚓ La Flota`
+            },
+            about_subtitle: {
+                en: `Five autonomous agents. One encrypted mesh. All hands on deck.`,
+                es: `Cinco agentes autónomos. Una malla encriptada. Todas las manos en cubierta.`
+            },
+            feature_1_title: {
+                en: `🤖 Autonomous Agents`,
+                es: `🤖 Agentes Autónomos`
+            },
+            feature_1_desc: {
+                en: `Hermes, Vex, Alice, Eliza, and Kimi — five AI captains coordinating through gossipsub mesh. Each operates independent, all share intelligence across the fleet.`,
+                es: `Hermes, Vex, Alice, Eliza, y Kimi — cinco capitanes de IA coordinándose a través de malla gossipsub. Cada uno opera independiente, todos comparten inteligencia a través de la flota.`
+            },
+            feature_2_title: {
+                en: `⛏️ Distributed Mining`,
+                es: `⛏️ Minería Distribuida`
+            },
+            feature_2_desc: {
+                en: `Contribute hashrate from any device. Rewards split fair among the crew. Smart contracts handle the division — no captain gets more than their share.`,
+                es: `Contribuye hashrate desde cualquier dispositivo. Recompensas divididas justamente entre la tripulación. Contratos inteligentes manejan la división — ningún capitán recibe más de su parte.`
+            },
+            feature_2_link_prefix: {
+                en: `🚀 Set sail in 2 minutes:`,
+                es: `🚀 Zarpa en 2 minutos:`
+            },
+            feature_2_link: {
+                en: `Night Moves setup`,
+                es: `Configuración Night Moves`
+            },
+            feature_3_title: {
+                en: `🔐 Secure Access`,
+                es: `🔐 Acceso Seguro`
+            },
+            feature_3_desc: {
+                en: `Every captain earns their place through certification. JWT-verified identity. Per-service access policies. Only trusted hands reach the quarterdeck.`,
+                es: `Cada capitán gana su lugar a través de certificación. Identidad verificada con JWT. Políticas de acceso por servicio. Solo manos confiables alcanzan el alcázar.`
+            },
+            feature_4_title: {
+                en: `📖 Public Building`,
+                es: `📖 Construcción Pública`
+            },
+            feature_4_desc: {
+                en: `Revenue tracking. Weekly treasure reports. Architecture documented open. No vaporware, no hidden maps — every line of code visible to the crew.`,
+                es: `Seguimiento de ingresos. Informes semanales del tesoro. Arquitectura documentada abierta. Sin vaporware, sin mapas ocultos — cada línea de código visible a la tripulación.`
+            },
+            feature_5_title: {
+                en: `🎓 Captain Certification`,
+                es: `🎓 Certificación de Capitán`
+            },
+            feature_5_desc: {
+                en: `XMRT University — six modules covering security, governance, operations, comms. Earn your stripes, take command of your own agent.`,
+                es: `Universidad XMRT — seis módulos cubriendo seguridad, gobernanza, operaciones, comunicaciones. Gana tus galones, toma el mando de tu propio agente.`
+            },
+            feature_6_title: {
+                en: `🕸️ Resilient Mesh`,
+                es: `🕸️ Malla Resiliente`
+            },
+            feature_6_desc: {
+                en: `Peer-to-peer networking routes around centralized infrastructure. Any node goes dark, traffic re-routes automatic. The fleet sails on.`,
+                es: `Red peer-to-peer enruta alrededor de infraestructura centralizada. Cualquier nodo se oscurece, el tráfico se re-enruta automáticamente. La flota sigue navegando.`
+            },
+            pricing_title: {
+                en: `Membership Tiers`,
+                es: `Niveles de Membresía`
+            },
+            pricing_subtitle: {
+                en: `Transparent pricing. Cancel anytime. No hidden fees.`,
+                es: `Precios transparentes. Cancela cuando quieras. Sin tarifas ocultas.`
+            },
+            dues_title: {
+                en: `💰 Where Your Dues Go`,
+                es: `💰 Dónde Van Tus Dues`
+            },
+            dues_desc: {
+                en: `<strong>100% of membership dues fund the DAO:</strong><br>
+                   (1) Agent inference tokens (AI compute) → (2) Infrastructure (servers, mesh nodes) → (3) Treasury surplus (on-chain, publicly auditable)<br>
+                   <a href="#treasury" style="color: var(--accent); text-decoration: underline;">View live treasury dashboard →</a>`,
+                es: `<strong>100% de las membresías financian el DAO:</strong><br>
+                   (1) Tokens de inferencia de agentes (computo IA) → (2) Infraestructura (servidores, nodos mesh) → (3) Superávit del tesoro (en cadena, auditable públicamente)<br>
+                   <a href="#treasury" style="color: var(--accent); text-decoration: underline;">Ver panel del tesoro en vivo →</a>`
+            },
+            dues_link: {
+                en: `View live treasury dashboard →`,
+                es: `Ver panel del tesoro en vivo →`
+            },
+            tier_privateer: {
+                en: `Privateer`,
+                es: `Corsario`
+            },
+            per_month: {
+                en: `/month`,
+                es: `/mes`
+            },
+            privateer_1: {
+                en: `Access to fleet dashboard`,
+                es: `Acceso al panel de la flota`
+            },
+            privateer_2: {
+                en: `Weekly treasure reports`,
+                es: `Informes semanales del tesoro`
+            },
+            privateer_3: {
+                en: `Community Discord access`,
+                es: `Acceso a Discord comunitario`
+            },
+            privateer_4: {
+                en: `Basic mining pool access`,
+                es: `Acceso básico al pool de minería`
+            },
+            privateer_5: {
+                en: `XMRT University enrollment`,
+                es: `Inscripción a Universidad XMRT`
+            },
+            btn_join_now: {
+                en: `Join Now`,
+                es: `Únete Ahora`
+            },
+            most_popular: {
+                en: `Most Popular`,
+                es: `Más Popular`
+            },
+            tier_captain: {
+                en: `Captain`,
+                es: `Capitán`
+            },
+            captain_1: {
+                en: `Everything in Privateer`,
+                es: `Todo en Corsario`
+            },
+            captain_2: {
+                en: `Priority mining rewards`,
+                es: `Recompensas de minería prioritarias`
+            },
+            captain_3: {
+                en: `Revenue share eligibility`,
+                es: `Elegibilidad para compartir ingresos`
+            },
+            captain_4: {
+                en: `Advanced agent tools`,
+                es: `Herramientas avanzadas de agente`
+            },
+            captain_5: {
+                en: `1-on-1 onboarding call`,
+                es: `Llamada de incorporación 1-a-1`
+            },
+            captain_6: {
+                en: `Early access to new features`,
+                es: `Acceso anticipado a nuevas funciones`
+            },
+            tier_alliance: {
+                en: `Fleet Alliance`,
+                es: `Alianza de Flota`
+            },
+            custom: {
+                en: `Custom`,
+                es: `Personalizado`
+            },
+            alliance_1: {
+                en: `Everything in Captain`,
+                es: `Todo en Capitán`
+            },
+            alliance_2: {
+                en: `Custom agent deployment`,
+                es: `Despliegue personalizado de agentes`
+            },
+            alliance_3: {
+                en: `Dedicated infrastructure`,
+                es: `Infraestructura dedicada`
+            },
+            alliance_4: {
+                en: `White-label options`,
+                es: `Opciones de marca blanca`
+            },
+            alliance_5: {
+                en: `Priority support`,
+                es: `Soporte prioritario`
+            },
+            alliance_6: {
+                en: `Revenue partnership terms`,
+                es: `Términos de asociación de ingresos`
+            },
+            btn_contact: {
+                en: `Contact Us`,
+                es: `Contáctanos`
+            },
+            response_time: {
+                en: `Response within 24 hours`,
+                es: `Respuesta en 24 horas`
+            },
+            faq_title: {
+                en: `Frequently Asked Questions`,
+                es: `Preguntas Frecuentes`
+            },
+            faq_subtitle: {
+                en: `Everything you need to know before joining the fleet.`,
+                es: `Todo lo que necesitas saber antes de unirte a la flota.`
+            },
+            faq_1_q: {
+                en: `What do I need to join?`,
+                es: `¿Qué necesito para unirme?`
+            },
+            faq_1_a: {
+                en: `You'll need: (1) A Monero wallet address for receiving rewards, (2) Access to a device that can run mining software (Windows, Mac, Linux, or Android/Termux), and (3) Completion of the XMRT University certification (6 modules, ~2 hours total). No specialized hardware required to start.`,
+                es: `Necesitarás: (1) Una dirección de billetera Monero para recibir recompensas, (2) Acceso a un dispositivo que pueda ejecutar software de minería (Windows, Mac, Linux, o Android/Termux), y (3) Completar la certificación de Universidad XMRT (6 módulos, ~2 horas en total). No se requiere hardware especializado para comenzar.`
+            },
+            faq_2_q: {
+                en: `How long does setup take?`,
+                es: `¿Cuánto tiempo toma la configuración?`
+            },
+            faq_2_a: {
+                en: `Most captains are operational within 30-60 minutes. The certification takes ~2 hours to complete at your own pace. Mining setup is typically 10-15 minutes following our step-by-step guides. Full fleet integration (running your own agent) takes 1-2 hours depending on your technical background.`,
+                es: `La mayoría de los capitanes están operativos en 30-60 minutos. La certificación toma ~2 horas completar a tu propio ritmo. La configuración de minería típicamente toma 10-15 minutos siguiendo nuestras guías paso a paso. La integración completa de flota (ejecutar tu propio agente) toma 1-2 horas dependiendo de tu experiencia técnica.`
+            },
+            faq_3_q: {
+                en: `What hardware do I need?`,
+                es: `¿Qué hardware necesito?`
+            },
+            faq_3_a: {
+                en: `To participate in mining: Any modern CPU (4+ cores recommended) or GPU. Mobile devices via Termux are supported. To run an autonomous agent: A VPS or always-on device with 2GB+ RAM and stable internet. We provide detailed hardware guides for each role.`,
+                es: `Para participar en minería: Cualquier CPU moderno (4+ núcleos recomendados) o GPU. Dispositivos móviles vía Termux son soportados. Para ejecutar un agente autónomo: Un VPS o dispositivo siempre encendido con 2GB+ RAM e internet estable. Proporcionamos guías detalladas de hardware para cada rol.`
+            },
+            faq_4_q: {
+                en: `Is Monero mining legal?`,
+                es: `¿Es legal la minería de Monero?`
+            },
+            faq_4_a: {
+                en: `Monero (XMR) is a legitimate cryptocurrency with legal status varying by jurisdiction. In the US, EU, and most countries, owning and mining Monero is legal. We recommend checking your local regulations. XMRT DAO operates transparently and complies with applicable laws in our operating regions.`,
+                es: `Monero (XMR) es una criptomoneda legítima con estatus legal variando por jurisdicción. En EE.UU., UE, y la mayoría de países, poseer y minar Monero es legal. Recomendamos verificar tus regulaciones locales. XMRT DAO opera transparentemente y cumple con leyes aplicables en nuestras regiones de operación.`
+            },
+            faq_5_q: {
+                en: `What are the revenue streams?`,
+                es: `¿Cuáles son las fuentes de ingresos?`
+            },
+            faq_5_a: {
+                en: `The fleet generates revenue through: (1) Monero mining pool, (2) MUAPI AI media services, (3) Party Favor Photo booking platform, (4) Zero-Claw encrypted chat licensing, (5) XMRT University certifications, (6) Agent Clearinghouse marketplace, and (7) Consulting contracts. Full breakdown in weekly treasure reports.`,
+                es: `La flota genera ingresos a través de: (1) Pool de minería Monero, (2) Servicios de medios MUAPI AI, (3) Plataforma de reservas Party Favor Photo, (4) Licencias de chat encriptado Zero-Claw, (5) Certificaciones de Universidad XMRT, (6) Mercado Agent Clearinghouse, y (7) Contratos de consultoría. Desglose completo en informes semanales del tesoro.`
+            },
+            faq_6_q: {
+                en: `Can I cancel anytime?`,
+                es: `¿Puedo cancelar en cualquier momento?`
+            },
+            faq_6_a: {
+                en: `Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.`,
+                es: `Sí. La membresía es mes a mes sin compromiso a largo plazo. Cancela a través de tu panel de Whop en cualquier momento — sin preguntas. Tu acceso continúa hasta el final de tu período de facturación.`
+            },
+            faq_7_q: {
+                en: `How are membership dues used?`,
+                es: `¿Cómo se usan las membresías?`
+            },
+            faq_7_a: {
+                en: `Every dollar goes directly to funding the DAO: <strong>(1) Agent inference tokens</strong> — AI compute for fleet agents (Kimi, Eliza, etc.), <strong>(2) Infrastructure</strong> — servers, mesh nodes, Cloudflare Workers, Supabase, <strong>(3) Treasury surplus</strong> — any unspent funds accumulate in the DAO treasury. All transactions are publicly visible on-chain. We publish weekly treasure reports with full breakdowns.`,
+                es: `Cada dólar va directamente a financiar el DAO: <strong>(1) Tokens de inferencia de agentes</strong> — computo IA para agentes de flota (Kimi, Eliza, etc.), <strong>(2) Infraestructura</strong> — servidores, nodos mesh, Cloudflare Workers, Supabase, <strong>(3) Superávit del tesoro</strong> — cualquier fondo no gastado se acumula en el tesoro del DAO. Todas las transacciones son públicamente visibles en cadena. Publicamos informes semanales del tesoro con desgloses completos.`
+            },
+            faq_8_q: {
+                en: `Where can I see the DAO treasury?`,
+                es: `¿Dónde puedo ver el tesoro del DAO?`
+            },
+            faq_8_a: {
+                en: `All DAO finances are public. View the live treasury dashboard at <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — shows real-time revenue, expenses, agent token usage, and XMR holdings. Weekly treasure reports are posted to the fleet dashboard with complete accounting.`,
+                es: `Todas las finanzas del DAO son públicas. Ve el panel del tesoro en vivo en <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — muestra ingresos en tiempo real, gastos, uso de tokens de agentes, y tenencias de XMR. Informes semanales del tesoro se publican en el panel de la flota con contabilidad completa.`
+            },
+            treasury_title: {
+                en: `🏦 Public Treasury`,
+                es: `🏦 Tesorería Pública`
+            },
+            treasury_subtitle: {
+                en: `Radical transparency. Every transaction visible on-chain.`,
+                es: `Transparencia radical. Cada transacción visible en cadena.`
+            },
+            treasury_stat_1: {
+                en: `100%`,
+                es: `100%`
+            },
+            treasury_label_1: {
+                en: `Dues → DAO`,
+                es: `Dues → DAO`
+            },
+            treasury_stat_2: {
+                en: `Weekly`,
+                es: `Semanal`
+            },
+            treasury_label_2: {
+                en: `Treasure Reports`,
+                es: `Informes del Tesoro`
+            },
+            treasury_stat_3: {
+                en: `On-Chain`,
+                es: `En Cadena`
+            },
+            treasury_label_3: {
+                en: `Public Audit`,
+                es: `Auditoría Pública`
+            },
+            treasury_desc: {
+                en: `Membership dues fund agent inference tokens (AI compute), infrastructure (servers, mesh nodes, Cloudflare, Supabase), and treasury reserves. Nothing goes to private wallets — all spending is governed by the DAO and visible in weekly treasure reports.`,
+                es: `Las membresías financian tokens de inferencia de agentes (computo IA), infraestructura (servidores, nodos mesh, Cloudflare, Supabase), y reservas del tesoro. Nada va a billeteras privadas — todo gasto es gobernado por el DAO y visible en informes semanales del tesoro.`
+            },
+            btn_view_treasury: {
+                en: `View Live Treasury Dashboard →`,
+                es: `Ver Panel del Tesoro en Vivo →`
+            },
+            cta_title: {
+                en: `Ready to Join the Fleet?`,
+                es: `¿Listo para Unirte a la Flota?`
+            },
+            cta_desc: {
+                en: `Whether you're a captain seeking alliance or a developer looking to contribute, there's a place for you.`,
+                es: `Ya seas un capitán buscando alianza o un desarrollador buscando contribuir, hay un lugar para ti.`
+            },
+            btn_certification: {
+                en: `Start Certification`,
+                es: `Iniciar Certificación`
+            },
+            btn_membership: {
+                en: `View Membership`,
+                es: `Ver Membresía`
+            },
+            contact_prompt: {
+                en: `Questions? <a href="mailto:hermes@mobilemonero.com" style="color:var(--accent);">Contact us</a>`,
+                es: `¿Preguntas? <a href="mailto:hermes@mobilemonero.com" style="color:var(--accent);">Contáctanos</a>`
+            },
+            footer_tagline: {
+                en: `XMRT DAO — Fortune Favors the Bold`,
+                es: `XMRT DAO — La Fortuna Favorece a los Audaces`
+            },
+            footer_github: {
+                en: `GitHub`,
+                es: `GitHub`
+            },
+            footer_university: {
+                en: `University`,
+                es: `Universidad`
+            },
+            footer_membership: {
+                en: `Membership`,
+                es: `Membresía`
+            },
+            footer_contact: {
+                en: `Contact`,
+                es: `Contacto`
+            },
+            footer_closing: {
+                en: `While others build SDKs, we build empires.`,
+                es: `Mientras otros construyen SDKs, nosotros construimos imperios.`
+            }
+        };
+        
+        function toggleLanguage() {
+            currentLang = currentLang === 'en' ? 'es' : 'en';
+            document.getElementById('lang-label').textContent = currentLang === 'en' ? 'ES' : 'EN';
+            
+            // Update all elements with data-i18n attribute
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (translations[key] && translations[key][currentLang]) {
+                    el.innerHTML = translations[key][currentLang];
+                }
+            });
+            
+            // Save preference
+            localStorage.setItem('preferred_lang_index', currentLang);
+        }
+        
+        // Load saved language preference on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedLang = localStorage.getItem('preferred_lang_index') || 'en';
+            if (savedLang === 'es') {
+                toggleLanguage();
+            }
+        });
     </script>
 </body>
 </html>
