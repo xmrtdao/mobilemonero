@@ -291,7 +291,47 @@
             animation: glow 4s ease-in-out infinite;
         }
         
+        /* Radar sweeper - rotating scan line */
+        .hero-ring::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                transparent 0deg,
+                transparent 270deg,
+                rgba(255, 102, 0, 0.1) 280deg,
+                rgba(255, 102, 0, 0.4) 290deg,
+                rgba(255, 102, 0, 0.8) 300deg,
+                rgba(255, 102, 0, 0.4) 310deg,
+                rgba(255, 102, 0, 0.1) 320deg,
+                transparent 330deg,
+                transparent 360deg
+            );
+            animation: radar-sweep 3s linear infinite;
+            pointer-events: none;
+        }
+        
+        /* Radar center pulse */
+        .hero-ring-center {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: var(--accent);
+            border-radius: 50%;
+            box-shadow: 0 0 20px var(--accent), 0 0 40px rgba(255, 102, 0, 0.5);
+            animation: pulse 2s ease-in-out infinite;
+            z-index: 10;
+        }
+        
         @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        @keyframes radar-sweep {
             to {
                 transform: rotate(360deg);
             }
@@ -300,6 +340,17 @@
         @keyframes glow {
             0%, 100% { opacity: 0.4; }
             50% { opacity: 1; }
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.2);
+                opacity: 0.8;
+            }
         }
         
         .hero-stat {
@@ -822,6 +873,7 @@
                 </div>
                 <div class="hero-visual">
                     <div class="hero-ring"></div>
+                    <div class="hero-ring-center"></div>
                     <div class="hero-stat hs-1"><div class="v gradient">100%</div><div class="l">Dues → DAO</div></div>
                     <div class="hero-stat hs-2"><div class="v">5</div><div class="l">AI Agents</div></div>
                     <div class="hero-stat hs-3"><div class="v">7</div><div class="l">Revenue Streams</div></div>
