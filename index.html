@@ -1053,16 +1053,14 @@
         
         function initAudio() {
             // Create sea shanty audio (plays once, not looped)
-            // Public domain Wellerman from a working CDN
-            shantyAudio = new Audio();
-            shantyAudio.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'; // Placeholder - replace with actual shanty
+            // Public domain Wellerman - Kevin MacLeod (local file)
+            shantyAudio = new Audio('audio/shanty.ogg');
             shantyAudio.volume = 0.3;
             shantyAudio.preload = 'auto';
             
             // Create ocean waves audio (loops continuously)
-            // Nature sounds from a working CDN
-            wavesAudio = new Audio();
-            wavesAudio.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'; // Placeholder - replace with actual waves
+            // Public domain ocean waves (local file)
+            wavesAudio = new Audio('audio/waves.ogg');
             wavesAudio.volume = 0.2;
             wavesAudio.loop = true;
             wavesAudio.preload = 'auto';
