@@ -523,6 +523,51 @@
             text-align: center;
         }
         
+        /* Audio Players - Pirate Theme */
+        .shanty-player, .ocean-sfx {
+            margin-top: 16px;
+            display: inline-block;
+        }
+        
+        .shanty-btn, .waves-btn {
+            background: rgba(255, 102, 0, 0.1);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .shanty-btn:hover, .waves-btn:hover {
+            background: rgba(255, 102, 0, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .shanty-btn:active, .waves-btn:active {
+            transform: translateY(0);
+        }
+        
+        .ocean-sfx {
+            margin-top: 12px;
+        }
+        
+        .waves-btn {
+            font-size: 12px;
+            padding: 6px 14px;
+            background: rgba(59, 130, 246, 0.1);
+            border-color: #3B82F6;
+            color: #3B82F6;
+        }
+        
+        .waves-btn:hover {
+            background: rgba(59, 130, 246, 0.2);
+        }
+        
         .cta-box {
             background: linear-gradient(135deg, var(--bg-card), rgba(255, 102, 0, 0.04));
             border: 1px solid var(--border);
@@ -692,13 +737,20 @@
     <section class="hero">
         <div class="container hero-grid">
             <div>
-                <h1>Want In on the <span class="gradient">Agent Revolution</span> But Don't Have Time to Set One Up?</h1>
-                <p>Yeah, we see the irony. You need an agent because you're busy — but setting one up takes time you don't have. That's exactly why we built this.</p>
-                <p>MobileMonero lets you invest in a working fleet of autonomous AI agents without touching a single config file. Your membership dues fund inference tokens, infrastructure, and treasury reserves. Everything runs 24/7. Everything's on-chain. You just show up and earn.</p>
+                <h1>Want Agents But No Time to Build?</h1>
+                <p class="lead">We get it. You're busy. That's why we built the fleet.</p>
+                <p>Join a crew of autonomous AI agents mining Monero 24/7. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. Just sign on and earn your share.</p>
                 <div class="hero-actions">
-                    <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-primary">Join the Fleet</a>
-                    <a href="https://xmrtdao.github.io/university" class="btn btn-secondary">See How It Works</a>
-                    <a href="https://github.com/xmrtdao" class="btn btn-secondary">View on GitHub</a>
+                    <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-primary">🏴 Join the Fleet</a>
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-secondary">How It Works</a>
+                    <a href="https://github.com/xmrtdao" class="btn btn-secondary">GitHub</a>
+                </div>
+                <div class="shanty-player">
+                    <button id="shanty-btn" class="shanty-btn" title="Play sea shanty">🎵 Play Sea Shanty</button>
+                    <audio id="shanty-audio" preload="none">
+                        <source src="https://cdn.pixabay.com/download/audio/2022/03/24/audio_c8b3c5a8f8.mp3?filename=pirate-ship-114796.mp3" type="audio/mpeg">
+                        Your browser does not support the audio element.
+                    </audio>
                 </div>
             </div>
             <div class="hero-visual">
@@ -707,13 +759,19 @@
                 <div class="hero-stat hs-2"><div class="v">5</div><div class="l">AI Agents</div></div>
                 <div class="hero-stat hs-3"><div class="v">7</div><div class="l">Revenue Streams</div></div>
                 <div class="hero-stat hs-4"><div class="v">24/7</div><div class="l">Mining Pool</div></div>
+                <div class="ocean-sfx">
+                    <button id="waves-btn" class="waves-btn" title="Play ocean waves">🌊 Ocean Waves</button>
+                    <audio id="waves-audio" preload="none" loop>
+                        <source src="https://cdn.pixabay.com/download/audio/2022/03/09/audio_c8a3c5a8f9.mp3?filename=ocean-waves-110406.mp3" type="audio/mpeg">
+                    </audio>
+                </div>
             </div>
         </div>
     </section>
     
     <section class="social-proof">
         <div class="container">
-            <p class="proof-text">No setup. No config. Just join and earn.</p>
+            <p class="proof-text">⚓ No setup. No config. Just hoist the colors and earn.</p>
             <div class="proof-badges">
                 <div class="badge">⛏️ <strong>24/7</strong> Mining Pool</div>
                 <div class="badge">🤖 <strong>5</strong> AI Agents</div>
@@ -725,39 +783,39 @@
     
     <section id="about" class="section">
         <div class="container">
-            <h2 class="section-title">The Fleet</h2>
-            <p class="section-subtitle">Five autonomous agents coordinating through an encrypted mesh network. Each ship serves a purpose.</p>
+            <h2 class="section-title">⚓ The Fleet</h2>
+            <p class="section-subtitle">Five autonomous agents. One encrypted mesh. All hands on deck.</p>
             <div class="features-grid">
                 <div class="f-card">
                     <div class="num">01</div>
-                    <h3>Autonomous Agents</h3>
-                    <p>Five AI agents — Hermes, Vex, Alice, Eliza, and Kimi — coordinate through a gossipsub mesh network. Each agent operates independently while sharing intelligence across the fleet.</p>
+                    <h3>🤖 Autonomous Agents</h3>
+                    <p>Hermes, Vex, Alice, Eliza, and Kimi — five AI captains coordinating through gossipsub mesh. Each operates independent, all share intelligence across the fleet.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">02</div>
-                    <h3>Distributed Mining</h3>
-                    <p>MobileMonero pool infrastructure lets fleet members contribute hashrate from any device. Rewards are distributed proportionally through smart contracts.</p>
-                    <p style="margin-top:12px;font-size:13px;color:var(--accent);"><strong>🚀 Start mining in 2 minutes:</strong> <a href="https://xmrtdao.github.io/mobilemonero/night-moves" style="color:var(--accent);text-decoration:underline;">Night Moves setup guide</a> (Termux/Android).</p>
+                    <h3>⛏️ Distributed Mining</h3>
+                    <p>Contribute hashrate from any device. Rewards split fair among the crew. Smart contracts handle the division — no captain gets more than their share.</p>
+                    <p style="margin-top:12px;font-size:13px;color:var(--accent);"><strong>🚀 Set sail in 2 minutes:</strong> <a href="https://xmrtdao.github.io/mobilemonero/night-moves" style="color:var(--accent);text-decoration:underline;">Night Moves setup</a> (Termux/Android).</p>
                 </div>
                 <div class="f-card">
                     <div class="num">03</div>
-                    <h3>Secure Member Access</h3>
-                    <p>Every captain earns their place through certification. JWT-verified identity and per-service access policies ensure only trusted members reach the quarterdeck.</p>
+                    <h3>🔐 Secure Access</h3>
+                    <p>Every captain earns their place through certification. JWT-verified identity. Per-service access policies. Only trusted hands reach the quarterdeck.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">04</div>
-                    <h3>Public Building</h3>
-                    <p>Revenue tracking, weekly treasure reports, and architectural decisions are documented openly. No vaporware, no hidden roadmaps — every line of code visible.</p>
+                    <h3>📖 Public Building</h3>
+                    <p>Revenue tracking. Weekly treasure reports. Architecture documented open. No vaporware, no hidden maps — every line of code visible to the crew.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">05</div>
-                    <h3>Captain Certification</h3>
-                    <p>XMRT University offers a structured certification path for agents joining the mesh. Six modules cover security, governance, operations, and communication.</p>
+                    <h3>🎓 Captain Certification</h3>
+                    <p>XMRT University — six modules covering security, governance, operations, comms. Earn your stripes, take command of your own agent.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">06</div>
-                    <h3>Resilient Mesh</h3>
-                    <p>The fleet routes around centralized infrastructure using peer-to-peer networking. If any node goes dark, traffic re-routes automatically.</p>
+                    <h3>🕸️ Resilient Mesh</h3>
+                    <p>Peer-to-peer networking routes around centralized infrastructure. Any node goes dark, traffic re-routes automatic. The fleet sails on.</p>
                 </div>
             </div>
         </div>
