@@ -110,6 +110,34 @@
             color: var(--text-primary);
         }
         
+        /* Language Toggle */
+        .lang-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .lang-toggle:hover {
+            border-color: var(--accent);
+            background: rgba(255, 102, 0, 0.1);
+        }
+        
+        .lang-toggle span {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .lang-toggle .globe {
+            font-size: 16px;
+        }
+        
         .back-link {
             color: var(--text-secondary);
             text-decoration: none;
@@ -530,27 +558,33 @@
                 <span class="logo-mark">X</span>
                 MobileMonero<span>by XMRT DAO</span>
             </a>
-            <a href="/" class="back-link">← Back to Home</a>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <a href="/" class="back-link">← Back</a>
+                <div class="lang-toggle" onclick="toggleLanguage()">
+                    <span class="globe">🌐</span>
+                    <span id="lang-label">ES</span>
+                </div>
+            </div>
         </div>
     </header>
     
     <div class="container">
         <section class="page-hero">
-            <h1>Why It Works</h1>
-            <p>The math, the mesh, and the smart contracts — transparent technology explained</p>
+            <h1 data-i18n="page_title">Why It Works</h1>
+            <p data-i18n="page_subtitle">The math, the mesh, and the smart contracts — transparent technology explained</p>
         </section>
         
         <!-- Mining Calculator Section -->
         <section class="section">
-            <h2 class="section-title">⛏️ Pool Mining Calculator</h2>
-            <p class="section-subtitle">Understand the economics of distributed Monero mining. Calculate your potential earnings based on hashrate, uptime, and pool participation.</p>
+            <h2 class="section-title" data-i18n="calc_title">⛏️ Pool Mining Calculator</h2>
+            <p class="section-subtitle" data-i18n="calc_subtitle">Model your mining operation's revenue potential. Adjust hashrate, devices, uptime, and XMR price to see projected earnings.</p>
             
             <div class="calculator-section">
                 <div class="calculator-grid">
                     <div class="calculator-controls">
                         <div class="control-group">
                             <div class="control-header">
-                                <label class="control-label" for="hashrate-slider">Average Hashrate per Device</label>
+                                <label class="control-label" for="hashrate-slider" data-i18n="calc_label_hashrate">Average Hashrate per Device</label>
                                 <span id="hashrate-value" class="control-value">600 H/s</span>
                             </div>
                             <input type="range" id="hashrate-slider" min="200" max="1200" value="600" class="slider" />
@@ -562,7 +596,7 @@
                         
                         <div class="control-group">
                             <div class="control-header">
-                                <label class="control-label" for="devices-slider">Number of Mining Devices</label>
+                                <label class="control-label" for="devices-slider" data-i18n="calc_label_devices">Number of Mining Devices</label>
                                 <span id="devices-value" class="control-value">100</span>
                             </div>
                             <input type="range" id="devices-slider" min="1" max="1000000" value="100" class="slider" />
@@ -574,7 +608,7 @@
                         
                         <div class="control-group">
                             <div class="control-header">
-                                <label class="control-label" for="uptime-slider">Mining Uptime per Day</label>
+                                <label class="control-label" for="uptime-slider" data-i18n="calc_label_uptime">Mining Uptime per Day</label>
                                 <span id="uptime-value" class="control-value">24 hrs</span>
                             </div>
                             <input type="range" id="uptime-slider" min="1" max="24" value="24" class="slider" />
@@ -586,7 +620,7 @@
                         
                         <div class="control-group">
                             <div class="control-header">
-                                <label class="control-label" for="xmr-price-slider">Monero (XMR) Price</label>
+                                <label class="control-label" for="xmr-price-slider" data-i18n="calc_label_price">Monero (XMR) Price</label>
                                 <span id="xmr-price-value" class="control-value">$265</span>
                             </div>
                             <input type="range" id="xmr-price-slider" min="50" max="5000" value="265" class="slider" />
@@ -597,16 +631,16 @@
                         </div>
                         
                         <div class="upgrade-section">
-                            <h4 class="upgrade-title">Hardware Upgrades</h4>
+                            <h4 class="upgrade-title" data-i18n="calc_label_upgrades">Hardware Upgrades</h4>
                             <div class="toggle-container">
-                                <label for="advanced-processors-toggle" class="toggle-label">Advanced Processors (2.5× Hashrate)</label>
+                                <label for="advanced-processors-toggle" class="toggle-label" data-i18n="calc_upgrade_cpu">Advanced Processors (2.5× Hashrate)</label>
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="advanced-processors-toggle" />
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
                             <div class="toggle-container">
-                                <label for="solid-state-battery-toggle" class="toggle-label">Solid State Batteries (+25% Uptime)</label>
+                                <label for="solid-state-battery-toggle" class="toggle-label" data-i18n="calc_upgrade_battery">Solid State Batteries (+25% Uptime)</label>
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="solid-state-battery-toggle" />
                                     <span class="toggle-slider"></span>
@@ -617,33 +651,33 @@
                     
                     <div class="calculator-results">
                         <div class="result-item">
-                            <div class="result-label">Total Network Hashrate</div>
+                            <div class="result-label" data-i18n="calc_result_hashrate">Total Network Hashrate</div>
                             <div class="result-value" id="total-hashrate">60.0 KH/s</div>
-                            <div class="result-note">Combined hashrate of all devices</div>
+                            <div class="result-note" data-i18n="calc_note_hashrate">Combined hashrate of all devices</div>
                         </div>
                         
                         <div class="result-item">
-                            <div class="result-label">Daily XMR Mined (Pool Share)</div>
+                            <div class="result-label" data-i18n="calc_result_daily_xmr">Daily XMR Mined (Pool Share)</div>
                             <div class="result-value small" id="daily-xmr">0.0042 XMR</div>
-                            <div class="result-note">Based on network difficulty & pool participation</div>
+                            <div class="result-note" data-i18n="calc_note_daily_xmr">Based on network difficulty & pool participation</div>
                         </div>
                         
                         <div class="result-item">
-                            <div class="result-label">Daily Revenue (USD)</div>
+                            <div class="result-label" data-i18n="calc_result_daily_usd">Daily Revenue (USD)</div>
                             <div class="result-value" id="daily-usd">$1.11</div>
-                            <div class="result-note">At current XMR price</div>
+                            <div class="result-note" data-i18n="calc_note_daily_usd">At current XMR price</div>
                         </div>
                         
                         <div class="result-item">
-                            <div class="result-label">Monthly Revenue (USD)</div>
+                            <div class="result-label" data-i18n="calc_result_monthly_usd">Monthly Revenue (USD)</div>
                             <div class="result-value" id="monthly-usd">$33.30</div>
-                            <div class="result-note">30-day projection</div>
+                            <div class="result-note" data-i18n="calc_note_monthly_usd">30-day projection</div>
                         </div>
                         
                         <div class="result-item">
-                            <div class="result-label">Annual Revenue (USD)</div>
+                            <div class="result-label" data-i18n="calc_result_annual_usd">Annual Revenue (USD)</div>
                             <div class="result-value" id="annual-usd">$405.25</div>
-                            <div class="result-note">365-day projection</div>
+                            <div class="result-note" data-i18n="calc_note_annual_usd">365-day projection</div>
                         </div>
                     </div>
                 </div>
@@ -651,14 +685,14 @@
             
             <!-- Metcalfe's Law Visualization -->
             <div class="metcalfe-section" style="margin-top: 60px; padding-top: 40px; border-top: 1px solid var(--border);">
-                <h3 style="font-size: 20px; font-weight: 700; color: var(--accent); margin-bottom: 16px;">📈 Metcalfe's Law in Action</h3>
-                <p style="color: var(--text-secondary); margin-bottom: 32px;">Network value scales exponentially with participants — not linearly. Each new node adds value to ALL existing nodes.</p>
+                <h3 style="font-size: 20px; font-weight: 700; color: var(--accent); margin-bottom: 16px;" data-i18n="metcalfe_title">📈 Metcalfe's Law in Action</h3>
+                <p style="color: var(--text-secondary); margin-bottom: 32px;" data-i18n="metcalfe_desc">Network value scales exponentially with participants — not linearly. Each new node adds value to ALL existing nodes.</p>
                 
                 <div class="metcalfe-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start;">
                     <div>
                         <div class="control-group" style="margin-bottom: 24px;">
                             <div class="control-header">
-                                <label class="control-label" for="metcalfe-nodes-slider">Number of Nodes</label>
+                                <label class="control-label" for="metcalfe-nodes-slider" data-i18n="metcalfe_label_nodes">Number of Nodes</label>
                                 <span id="metcalfe-nodes-value" class="control-value">10</span>
                             </div>
                             <input type="range" id="metcalfe-nodes-slider" min="1" max="100" value="10" class="slider" />
@@ -669,15 +703,15 @@
                         </div>
                         
                         <div class="formula" style="margin-bottom: 16px;">
-                            <div class="label">METCALFE'S FORMULA</div>
+                            <div class="label" data-i18n="metcalfe_formula_label">METCALFE'S FORMULA</div>
                             <div class="equation">Network Value = n²</div>
                             <div class="example" id="metcalfe-example">10 nodes = 100 value units</div>
                         </div>
                         
                         <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
-                            <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">Network Value</div>
+                            <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;" data-i18n="metcalfe_label_value">Network Value</div>
                             <div style="font-size: 36px; font-weight: 800; color: var(--accent);" id="metcalfe-value">100</div>
-                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">Value Units</div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;" data-i18n="metcalfe_label_units">Value Units</div>
                         </div>
                     </div>
                     
@@ -690,10 +724,10 @@
                     <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                         <thead>
                             <tr style="border-bottom: 2px solid var(--border);">
-                                <th style="text-align: left; padding: 12px; color: var(--accent);">Nodes</th>
-                                <th style="text-align: right; padding: 12px; color: var(--accent);">Linear Value (n)</th>
-                                <th style="text-align: right; padding: 12px; color: var(--accent);">Metcalfe Value (n²)</th>
-                                <th style="text-align: right; padding: 12px; color: var(--accent);">Advantage</th>
+                                <th style="text-align: left; padding: 12px; color: var(--accent);" data-i18n="metcalfe_table_nodes">Nodes</th>
+                                <th style="text-align: right; padding: 12px; color: var(--accent);" data-i18n="metcalfe_table_linear">Linear Value (n)</th>
+                                <th style="text-align: right; padding: 12px; color: var(--accent);" data-i18n="metcalfe_table_metcalfe">Metcalfe Value (n²)</th>
+                                <th style="text-align: right; padding: 12px; color: var(--accent);" data-i18n="metcalfe_table_advantage">Advantage</th>
                             </tr>
                         </thead>
                         <tbody id="metcalfe-table-body">
@@ -755,126 +789,126 @@
         
         <!-- Mesh Network Section -->
         <section class="section">
-            <h2 class="section-title">🕸️ Why Mesh Networks?</h2>
-            <p class="section-subtitle">Centralized infrastructure is a single point of failure. Mesh networks route around damage, ensuring the fleet sails on even when individual nodes go dark.</p>
+            <h2 class="section-title" data-i18n="mesh_title">🕸️ Why Mesh Networks?</h2>
+            <p class="section-subtitle" data-i18n="mesh_subtitle">Centralized infrastructure is a single point of failure. Mesh networks route around damage, ensuring the fleet sails on even when individual nodes go dark.</p>
             
             <div class="feature-grid">
                 <div class="feature-card">
                     <div class="feature-icon">🔐</div>
-                    <h3>Decentralized Control</h3>
-                    <p>No central server to censor, shut down, or compromise. Each node operates independently while coordinating through encrypted gossipsub protocol. The fleet has no head to cut off.</p>
+                    <h3 data-i18n="mesh_feature_1_title">Decentralized Control</h3>
+                    <p data-i18n="mesh_feature_1_desc">No central server to censor, shut down, or compromise. Each node operates independently while coordinating through encrypted gossipsub protocol. The fleet has no head to cut off.</p>
                 </div>
                 
                 <div class="feature-card">
                     <div class="feature-icon">🛡️</div>
-                    <h3>Resilient Routing</h3>
-                    <p>Messages automatically route around failed nodes. If one captain goes offline, intelligence flows through alternate paths. The mesh heals itself — traffic re-routes in milliseconds.</p>
+                    <h3 data-i18n="mesh_feature_2_title">Resilient Routing</h3>
+                    <p data-i18n="mesh_feature_2_desc">Messages automatically route around failed nodes. If one captain goes offline, intelligence flows through alternate paths. The mesh heals itself — traffic re-routes in milliseconds.</p>
                 </div>
                 
                 <div class="feature-card">
                     <div class="feature-icon">📡</div>
-                    <h3>Gossipsub Protocol</h3>
-                    <p>Nodes "gossip" about new messages, propagating data through the network efficiently. Topics organize communication (fleet-broadcast, agent-tasks, agent-heartbeat). Subscribe once, receive everywhere.</p>
+                    <h3 data-i18n="mesh_feature_3_title">Gossipsub Protocol</h3>
+                    <p data-i18n="mesh_feature_3_desc">Nodes "gossip" about new messages, propagating data through the network efficiently. Topics organize communication (fleet-broadcast, agent-tasks, agent-heartbeat). Subscribe once, receive everywhere.</p>
                 </div>
                 
                 <div class="feature-card">
                     <div class="feature-icon">🌐</div>
-                    <h3>No Infrastructure Dependency</h3>
-                    <p>Don't rely on AWS, Google, or Azure. Run nodes on consumer hardware, mobile devices, home servers. The fleet exists wherever captains sail — no corporate cloud required.</p>
+                    <h3 data-i18n="mesh_feature_4_title">No Infrastructure Dependency</h3>
+                    <p data-i18n="mesh_feature_4_desc">Don't rely on AWS, Google, or Azure. Run nodes on consumer hardware, mobile devices, home servers. The fleet exists wherever captains sail — no corporate cloud required.</p>
                 </div>
                 
                 <div class="feature-card">
                     <div class="feature-icon">⚡</div>
-                    <h3>Low Latency Coordination</h3>
-                    <p>Peer-to-peer messaging means direct communication between agents. No round-trips to central servers. Task delegation, status updates, intelligence sharing — all happen in real-time.</p>
+                    <h3 data-i18n="mesh_feature_5_title">Low Latency Coordination</h3>
+                    <p data-i18n="mesh_feature_5_desc">Peer-to-peer messaging means direct communication between agents. No round-trips to central servers. Task delegation, status updates, intelligence sharing — all happen in real-time.</p>
                 </div>
                 
                 <div class="feature-card">
                     <div class="feature-icon">🏴</div>
-                    <h3>Censorship Resistance</h3>
-                    <p>No gateway to block, no API to rate-limit, no terms of service to violate. The mesh operates on open protocols. Governments can't shut down what has no center.</p>
+                    <h3 data-i18n="mesh_feature_6_title">Censorship Resistance</h3>
+                    <p data-i18n="mesh_feature_6_desc">No gateway to block, no API to rate-limit, no terms of service to violate. The mesh operates on open protocols. Governments can't shut down what has no center.</p>
                 </div>
             </div>
             
             <div class="card" style="margin-top: 48px;">
-                <h3>📊 Mesh Network Math</h3>
-                <p style="margin-bottom: 16px;"><strong>Network Value scales exponentially with participants:</strong></p>
+                <h3 data-i18n="mesh_math_title">📊 Mesh Network Math</h3>
+                <p style="margin-bottom: 16px;" data-i18n="mesh_math_intro"><strong>Network Value scales exponentially with participants:</strong></p>
                 <div class="formula" style="margin-bottom: 16px;">
-                    <div class="equation">Metcalfe's Law: Network Value ∝ n²</div>
-                    <div class="example">5 nodes = 25 value units | 10 nodes = 100 value units | 100 nodes = 10,000 value units</div>
+                    <div class="equation" data-i18n="mesh_math_formula">Metcalfe's Law: Network Value ∝ n²</div>
+                    <div class="example" data-i18n="mesh_math_example">5 nodes = 25 value units | 10 nodes = 100 value units | 100 nodes = 10,000 value units</div>
                 </div>
-                <p><strong>Redundancy formula:</strong> With n nodes, you need (n-1) failures to disconnect the network. At 33 agents, 32 must fail before communication breaks. That's why the fleet sails on.</p>
+                <p data-i18n="mesh_math_redundancy"><strong>Redundancy formula:</strong> With n nodes, you need (n-1) failures to disconnect the network. At 33 agents, 32 must fail before communication breaks. That's why the fleet sails on.</p>
             </div>
         </section>
         
         <!-- Smart Contracts Section -->
         <section class="section">
-            <h2 class="section-title">🤖 How Smart Contracts Work</h2>
-            <p class="section-subtitle">Self-executing code on the blockchain. No intermediaries, no discretion, no corruption. The contract executes exactly as written — every time.</p>
+            <h2 class="section-title" data-i18n="smart_contracts_title">🤖 How Smart Contracts Work</h2>
+            <p class="section-subtitle" data-i18n="smart_contracts_subtitle">Self-executing code on the blockchain. No intermediaries, no discretion, no corruption. The contract executes exactly as written — every time.</p>
             
             <div class="card">
-                <h3>What Is a Smart Contract?</h3>
-                <p>A smart contract is a program that runs on a blockchain. It automatically executes when predefined conditions are met. Think of it as a vending machine: you put in X, it delivers Y. No clerk, no discretion, no "let me check with my manager."</p>
-                <p style="margin-top: 12px;"><strong>Traditional Contract:</strong> Lawyer writes terms → Parties sign → Someone breaches → Lawyer sues → Court decides → Months later, maybe enforcement</p>
-                <p style="margin-top: 8px;"><strong>Smart Contract:</strong> Code defines terms → Conditions met → Automatic execution → Done in seconds</p>
+                <h3 data-i18n="smart_contracts_what_title">What Is a Smart Contract?</h3>
+                <p data-i18n="smart_contracts_what_desc">A smart contract is a program that runs on a blockchain. It automatically executes when predefined conditions are met. Think of it as a vending machine: you put in X, it delivers Y. No clerk, no discretion, no "let me check with my manager."</p>
+                <p style="margin-top: 12px;" data-i18n="smart_contracts_traditional"><strong>Traditional Contract:</strong> Lawyer writes terms → Parties sign → Someone breaches → Lawyer sues → Court decides → Months later, maybe enforcement</p>
+                <p style="margin-top: 8px;" data-i18n="smart_contracts_smart"><strong>Smart Contract:</strong> Code defines terms → Conditions met → Automatic execution → Done in seconds</p>
             </div>
             
             <div class="math-grid" style="margin-top: 48px;">
                 <div class="card">
-                    <h3>💰 Revenue Distribution</h3>
-                    <p>When a customer pays $100 for a service:</p>
+                    <h3 data-i18n="smart_contracts_revenue_title">💰 Revenue Distribution</h3>
+                    <p data-i18n="smart_contracts_revenue_intro">When a customer pays $100 for a service:</p>
                     <div class="formula" style="margin-top: 12px;">
-                        <div class="equation">1. Payment received → Smart contract triggers</div>
-                        <div class="equation">2. 95% → DAO treasury (automatic)</div>
-                        <div class="equation">3. 5% → Service provider wallet</div>
-                        <div class="equation">4. Transaction logged on-chain (public audit)</div>
+                        <div class="equation" data-i18n="smart_contracts_revenue_1">1. Payment received → Smart contract triggers</div>
+                        <div class="equation" data-i18n="smart_contracts_revenue_2">2. 95% → DAO treasury (automatic)</div>
+                        <div class="equation" data-i18n="smart_contracts_revenue_3">3. 5% → Service provider wallet</div>
+                        <div class="equation" data-i18n="smart_contracts_revenue_4">4. Transaction logged on-chain (public audit)</div>
                     </div>
-                    <p style="margin-top: 12px; font-size: 13px;">No accountant needed. No "we'll send it next week." The code executes instantly, every time.</p>
+                    <p style="margin-top: 12px; font-size: 13px;" data-i18n="smart_contracts_revenue_note">No accountant needed. No "we'll send it next week." The code executes instantly, every time.</p>
                 </div>
                 
                 <div class="card">
-                    <h3>⛏️ Mining Rewards</h3>
-                    <p>When the pool finds a block (0.6 XMR reward):</p>
+                    <h3 data-i18n="smart_contracts_mining_title">⛏️ Mining Rewards</h3>
+                    <p data-i18n="smart_contracts_mining_intro">When the pool finds a block (0.6 XMR reward):</p>
                     <div class="formula" style="margin-top: 12px;">
-                        <div class="equation">1. Block reward → Pool smart contract</div>
-                        <div class="equation">2. Contract calculates each miner's share</div>
-                        <div class="equation">3. Proportional to hashrate contributed</div>
-                        <div class="equation">4. Automatic payout to each wallet</div>
+                        <div class="equation" data-i18n="smart_contracts_mining_1">1. Block reward → Pool smart contract</div>
+                        <div class="equation" data-i18n="smart_contracts_mining_2">2. Contract calculates each miner's share</div>
+                        <div class="equation" data-i18n="smart_contracts_mining_3">3. Proportional to hashrate contributed</div>
+                        <div class="equation" data-i18n="smart_contracts_mining_4">4. Automatic payout to each wallet</div>
                     </div>
-                    <p style="margin-top: 12px; font-size: 13px;">No pool operator can run off with funds. The contract holds and distributes automatically.</p>
+                    <p style="margin-top: 12px; font-size: 13px;" data-i18n="smart_contracts_mining_note">No pool operator can run off with funds. The contract holds and distributes automatically.</p>
                 </div>
                 
                 <div class="card">
-                    <h3>🎓 Certification Verification</h3>
-                    <p>When a captain completes XMRT University:</p>
+                    <h3 data-i18n="smart_contracts_cert_title">🎓 Certification Verification</h3>
+                    <p data-i18n="smart_contracts_cert_intro">When a captain completes XMRT University:</p>
                     <div class="formula" style="margin-top: 12px;">
-                        <div class="equation">1. Module completion → On-chain record</div>
-                        <div class="equation">2. All 6 modules done → NFT minted</div>
-                        <div class="equation">3. NFT = verifiable credential</div>
-                        <div class="equation">4. Services check NFT before granting access</div>
+                        <div class="equation" data-i18n="smart_contracts_cert_1">1. Module completion → On-chain record</div>
+                        <div class="equation" data-i18n="smart_contracts_cert_2">2. All 6 modules done → NFT minted</div>
+                        <div class="equation" data-i18n="smart_contracts_cert_3">3. NFT = verifiable credential</div>
+                        <div class="equation" data-i18n="smart_contracts_cert_4">4. Services check NFT before granting access</div>
                     </div>
-                    <p style="margin-top: 12px; font-size: 13px;">No fake certificates. No "I swear I finished it." The blockchain proves completion cryptographically.</p>
+                    <p style="margin-top: 12px; font-size: 13px;" data-i18n="smart_contracts_cert_note">No fake certificates. No "I swear I finished it." The blockchain proves completion cryptographically.</p>
                 </div>
             </div>
             
             <div class="card" style="margin-top: 48px;">
-                <h3>🔒 Why Smart Contracts Matter for XMRT DAO</h3>
+                <h3 data-i18n="smart_contracts_why_title">🔒 Why Smart Contracts Matter for XMRT DAO</h3>
                 <div class="feature-grid">
                     <div>
-                        <h4 style="color: var(--accent); margin-bottom: 8px;">Transparency</h4>
-                        <p style="font-size: 14px; color: var(--text-secondary);">Every transaction is on-chain. Anyone can audit the DAO's finances. No hidden wallets, no "trust us bro."</p>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;" data-i18n="smart_contracts_why_transparency">Transparency</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);" data-i18n="smart_contracts_why_transparency_desc">Every transaction is on-chain. Anyone can audit the DAO's finances. No hidden wallets, no "trust us bro."</p>
                     </div>
                     <div>
-                        <h4 style="color: var(--accent); margin-bottom: 8px;">Automation</h4>
-                        <p style="font-size: 14px; color: var(--text-secondary);">Revenue distribution, reward payouts, membership verification — all automatic. No manual processing, no delays.</p>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;" data-i18n="smart_contracts_why_automation">Automation</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);" data-i18n="smart_contracts_why_automation_desc">Revenue distribution, reward payouts, membership verification — all automatic. No manual processing, no delays.</p>
                     </div>
                     <div>
-                        <h4 style="color: var(--accent); margin-bottom: 8px;">Trustlessness</h4>
-                        <p style="font-size: 14px; color: var(--text-secondary);">You don't need to trust the DAO operators. You trust the code. The code executes exactly as written — no discretion, no corruption.</p>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;" data-i18n="smart_contracts_why_trustless">Trustlessness</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);" data-i18n="smart_contracts_why_trustless_desc">You don't need to trust the DAO operators. You trust the code. The code executes exactly as written — no discretion, no corruption.</p>
                     </div>
                     <div>
-                        <h4 style="color: var(--accent); margin-bottom: 8px;">Treasury Protection</h4>
-                        <p style="font-size: 14px; color: var(--text-secondary);">Multi-sig wallets require multiple signers for large withdrawals. No single person can drain the treasury. Code-enforced governance.</p>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;" data-i18n="smart_contracts_why_treasury">Treasury Protection</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);" data-i18n="smart_contracts_why_treasury_desc">Multi-sig wallets require multiple signers for large withdrawals. No single person can drain the treasury. Code-enforced governance.</p>
                     </div>
                 </div>
             </div>
@@ -883,14 +917,14 @@
     
     <footer>
         <div class="container">
-            <p>XMRT DAO — Fortune Favors the Bold</p>
+            <p data-i18n="footer_tagline">XMRT DAO — Fortune Favors the Bold</p>
             <p style="margin-top:8px">
-                <a href="https://github.com/xmrtdao">GitHub</a> ·
-                <a href="https://xmrtdao.github.io/university">University</a> ·
-                <a href="https://whop.com/xmrt-dao">Membership</a> ·
-                <a href="/">Home</a>
+                <a href="https://github.com/xmrtdao" data-i18n="footer_github">GitHub</a> ·
+                <a href="https://xmrtdao.github.io/university" data-i18n="footer_university">University</a> ·
+                <a href="https://whop.com/xmrt-dao" data-i18n="footer_membership">Membership</a> ·
+                <a href="/" data-i18n="footer_home">Home</a>
             </p>
-            <p style="margin-top:16px;font-size:12px;color:#555">While others build SDKs, we build empires.</p>
+            <p style="margin-top:16px;font-size:12px;color:#555" data-i18n="footer_closing">While others build SDKs, we build empires.</p>
         </div>
     </footer>
     
@@ -1143,6 +1177,406 @@
         
         metcalfeNodesSlider.addEventListener('input', updateMetcalfe);
         updateMetcalfe();
+    </script>
+    
+    <script>
+        // Language Toggle System
+        let currentLang = 'en';
+        
+        const translations = {
+            page_title: {
+                en: `Why It Works`,
+                es: `Por Qué Funciona`
+            },
+            page_subtitle: {
+                en: `The math, the mesh, and the smart contracts — transparent technology explained`,
+                es: `Las matemáticas, la malla y los contratos inteligentes — tecnología transparente explicada`
+            },
+            calc_title: {
+                en: `⛏️ Pool Mining Calculator`,
+                es: `⛏️ Calculadora de Pool de Minería`
+            },
+            calc_subtitle: {
+                en: `Model your mining operation's revenue potential. Adjust hashrate, devices, uptime, and XMR price to see projected earnings.`,
+                es: `Modela el potencial de ingresos de tu operación minera. Ajusta hashrate, dispositivos, tiempo de actividad y precio de XMR para ver ganancias proyectadas.`
+            },
+            calc_label_hashrate: {
+                en: `Average Hashrate per Device`,
+                es: `Hashrate Promedio por Dispositivo`
+            },
+            calc_label_devices: {
+                en: `Number of Mining Devices`,
+                es: `Número de Dispositivos de Minería`
+            },
+            calc_label_uptime: {
+                en: `Mining Uptime per Day`,
+                es: `Tiempo de Minería por Día`
+            },
+            calc_label_price: {
+                en: `Monero (XMR) Price`,
+                es: `Precio de Monero (XMR)`
+            },
+            calc_label_upgrades: {
+                en: `Hardware Upgrades`,
+                es: `Mejoras de Hardware`
+            },
+            calc_upgrade_cpu: {
+                en: `Advanced Processors (2.5× Hashrate)`,
+                es: `Procesadores Avanzados (2.5× Hashrate)`
+            },
+            calc_upgrade_battery: {
+                en: `Solid State Batteries (+25% Uptime)`,
+                es: `Baterías de Estado Sólido (+25% Tiempo)`
+            },
+            calc_result_hashrate: {
+                en: `Total Network Hashrate`,
+                es: `Hashrate Total de Red`
+            },
+            calc_note_hashrate: {
+                en: `Combined hashrate of all devices`,
+                es: `Hashrate combinado de todos los dispositivos`
+            },
+            calc_result_daily_xmr: {
+                en: `Daily XMR Mined (Pool Share)`,
+                es: `XMR Minado Diario (Participación de Pool)`
+            },
+            calc_note_daily_xmr: {
+                en: `Based on network difficulty & pool participation`,
+                es: `Basado en dificultad de red y participación de pool`
+            },
+            calc_result_daily_usd: {
+                en: `Daily Revenue (USD)`,
+                es: `Ingresos Diarios (USD)`
+            },
+            calc_note_daily_usd: {
+                en: `At current XMR price`,
+                es: `Al precio actual de XMR`
+            },
+            calc_result_monthly_usd: {
+                en: `Monthly Revenue (USD)`,
+                es: `Ingresos Mensuales (USD)`
+            },
+            calc_note_monthly_usd: {
+                en: `30-day projection`,
+                es: `Proyección de 30 días`
+            },
+            calc_result_annual_usd: {
+                en: `Annual Revenue (USD)`,
+                es: `Ingresos Anuales (USD)`
+            },
+            calc_note_annual_usd: {
+                en: `365-day projection`,
+                es: `Proyección de 365 días`
+            },
+            metcalfe_title: {
+                en: `📈 Metcalfe's Law in Action`,
+                es: `📈 Ley de Metcalfe en Acción`
+            },
+            metcalfe_desc: {
+                en: `Network value scales exponentially with participants — not linearly. Each new node adds value to ALL existing nodes.`,
+                es: `El valor de red escala exponencialmente con participantes — no linealmente. Cada nuevo nodo agrega valor a TODOS los nodos existentes.`
+            },
+            metcalfe_label_nodes: {
+                en: `Number of Nodes`,
+                es: `Número de Nodos`
+            },
+            metcalfe_formula_label: {
+                en: `METCALFE'S FORMULA`,
+                es: `FÓRMULA DE METCALFE`
+            },
+            metcalfe_label_value: {
+                en: `Network Value`,
+                es: `Valor de Red`
+            },
+            metcalfe_label_units: {
+                en: `Value Units`,
+                es: `Unidades de Valor`
+            },
+            metcalfe_table_nodes: {
+                en: `Nodes`,
+                es: `Nodos`
+            },
+            metcalfe_table_linear: {
+                en: `Linear Value (n)`,
+                es: `Valor Lineal (n)`
+            },
+            metcalfe_table_metcalfe: {
+                en: `Metcalfe Value (n²)`,
+                es: `Valor Metcalfe (n²)`
+            },
+            metcalfe_table_advantage: {
+                en: `Advantage`,
+                es: `Ventaja`
+            },
+            mesh_title: {
+                en: `🕸️ Why Mesh Networks?`,
+                es: `🕸️ ¿Por Qué Redes Mesh?`
+            },
+            mesh_subtitle: {
+                en: `Centralized infrastructure is a single point of failure. Mesh networks route around damage, ensuring the fleet sails on even when individual nodes go dark.`,
+                es: `La infraestructura centralizada es un punto único de falla. Las redes mesh enrutan alrededor de daños, asegurando que la flota siga navegando incluso cuando nodos individuales se oscurecen.`
+            },
+            mesh_feature_1_title: {
+                en: `Decentralized Control`,
+                es: `Control Descentralizado`
+            },
+            mesh_feature_1_desc: {
+                en: `No central server to censor, shut down, or compromise. Each node operates independently while coordinating through encrypted gossipsub protocol. The fleet has no head to cut off.`,
+                es: `Sin servidor central que censurar, apagar o comprometer. Cada nodo opera independientemente mientras se coordina a través de protocolo gossipsub encriptado. La flota no tiene cabeza que cortar.`
+            },
+            mesh_feature_2_title: {
+                en: `Resilient Routing`,
+                es: `Enrutamiento Resiliente`
+            },
+            mesh_feature_2_desc: {
+                en: `Messages automatically route around failed nodes. If one captain goes offline, intelligence flows through alternate paths. The mesh heals itself — traffic re-routes in milliseconds.`,
+                es: `Los mensajes automáticamente enrutan alrededor de nodos fallidos. Si un capitán se desconecta, la inteligencia fluye a través de rutas alternas. La malla se cura sola — el tráfico se re-enruta en milisegundos.`
+            },
+            mesh_feature_3_title: {
+                en: `Gossipsub Protocol`,
+                es: `Protocolo Gossipsub`
+            },
+            mesh_feature_3_desc: {
+                en: `Nodes "gossip" about new messages, propagating data through the network efficiently. Topics organize communication (fleet-broadcast, agent-tasks, agent-heartbeat). Subscribe once, receive everywhere.`,
+                es: `Los nodos "chismean" sobre nuevos mensajes, propagando datos a través de la red eficientemente. Tópicos organizan comunicación (fleet-broadcast, agent-tasks, agent-heartbeat). Suscríbete una vez, recibe en todas partes.`
+            },
+            mesh_feature_4_title: {
+                en: `No Infrastructure Dependency`,
+                es: `Sin Dependencia de Infraestructura`
+            },
+            mesh_feature_4_desc: {
+                en: `Don't rely on AWS, Google, or Azure. Run nodes on consumer hardware, mobile devices, home servers. The fleet exists wherever captains sail — no corporate cloud required.`,
+                es: `No dependas de AWS, Google o Azure. Ejecuta nodos en hardware de consumo, dispositivos móviles, servidores caseros. La flota existe dondequiera que los capitanes naveguen — sin nube corporativa requerida.`
+            },
+            mesh_feature_5_title: {
+                en: `Low Latency Coordination`,
+                es: `Coordinación de Baja Latencia`
+            },
+            mesh_feature_5_desc: {
+                en: `Peer-to-peer messaging means direct communication between agents. No round-trips to central servers. Task delegation, status updates, intelligence sharing — all happen in real-time.`,
+                es: `Mensajería peer-to-peer significa comunicación directa entre agentes. Sin viajes de ida y vuelta a servidores centrales. Delegación de tareas, actualizaciones de estado, intercambio de inteligencia — todo sucede en tiempo real.`
+            },
+            mesh_feature_6_title: {
+                en: `Censorship Resistance`,
+                es: `Resistencia a Censura`
+            },
+            mesh_feature_6_desc: {
+                en: `No gateway to block, no API to rate-limit, no terms of service to violate. The mesh operates on open protocols. Governments can't shut down what has no center.`,
+                es: `Sin puerta de enlace que bloquear, sin API que limitar, sin términos de servicio que violar. La malla opera en protocolos abiertos. Los gobiernos no pueden apagar lo que no tiene centro.`
+            },
+            mesh_math_title: {
+                en: `📊 Mesh Network Math`,
+                es: `📊 Matemáticas de Red Mesh`
+            },
+            mesh_math_intro: {
+                en: `<strong>Network Value scales exponentially with participants:</strong>`,
+                es: `<strong>El Valor de Red escala exponencialmente con participantes:</strong>`
+            },
+            mesh_math_formula: {
+                en: `Metcalfe's Law: Network Value ∝ n²`,
+                es: `Ley de Metcalfe: Valor de Red ∝ n²`
+            },
+            mesh_math_example: {
+                en: `5 nodes = 25 value units | 10 nodes = 100 value units | 100 nodes = 10,000 value units`,
+                es: `5 nodos = 25 unidades de valor | 10 nodos = 100 unidades de valor | 100 nodos = 10,000 unidades de valor`
+            },
+            mesh_math_redundancy: {
+                en: `<strong>Redundancy formula:</strong> With n nodes, you need (n-1) failures to disconnect the network. At 33 agents, 32 must fail before communication breaks. That's why the fleet sails on.`,
+                es: `<strong>Fórmula de redundancia:</strong> Con n nodos, necesitas (n-1) fallas para desconectar la red. Con 33 agentes, 32 deben fallar antes de que la comunicación se rompa. Por eso la flota sigue navegando.`
+            },
+            smart_contracts_title: {
+                en: `🤖 How Smart Contracts Work`,
+                es: `🤖 Cómo Funcionan los Contratos Inteligentes`
+            },
+            smart_contracts_subtitle: {
+                en: `Self-executing code on the blockchain. No intermediaries, no discretion, no corruption. The contract executes exactly as written — every time.`,
+                es: `Código auto-ejecutable en la blockchain. Sin intermediarios, sin discreción, sin corrupción. El contrato se ejecuta exactamente como está escrito — cada vez.`
+            },
+            smart_contracts_what_title: {
+                en: `What Is a Smart Contract?`,
+                es: `¿Qué es un Contrato Inteligente?`
+            },
+            smart_contracts_what_desc: {
+                en: `A smart contract is a program that runs on a blockchain. It automatically executes when predefined conditions are met. Think of it as a vending machine: you put in X, it delivers Y. No clerk, no discretion, no "let me check with my manager."`,
+                es: `Un contrato inteligente es un programa que corre en una blockchain. Automáticamente se ejecuta cuando se cumplen condiciones predefinidas. Piénsalo como una máquina expendedora: pones X, entrega Y. Sin empleado, sin discreción, sin "déjame verificar con mi gerente."`
+            },
+            smart_contracts_traditional: {
+                en: `<strong>Traditional Contract:</strong> Lawyer writes terms → Parties sign → Someone breaches → Lawyer sues → Court decides → Months later, maybe enforcement`,
+                es: `<strong>Contrato Tradicional:</strong> Abogado escribe términos → Partes firman → Alguien incumple → Abogado demanda → Corte decide → Meses después, quizás aplicación`
+            },
+            smart_contracts_smart: {
+                en: `<strong>Smart Contract:</strong> Code defines terms → Conditions met → Automatic execution → Done in seconds`,
+                es: `<strong>Contrato Inteligente:</strong> Código define términos → Condiciones cumplidas → Ejecución automática → Listo en segundos`
+            },
+            smart_contracts_revenue_title: {
+                en: `💰 Revenue Distribution`,
+                es: `💰 Distribución de Ingresos`
+            },
+            smart_contracts_revenue_intro: {
+                en: `When a customer pays $100 for a service:`,
+                es: `Cuando un cliente paga $100 por un servicio:`
+            },
+            smart_contracts_revenue_1: {
+                en: `1. Payment received → Smart contract triggers`,
+                es: `1. Pago recibido → Contrato inteligente se activa`
+            },
+            smart_contracts_revenue_2: {
+                en: `2. 95% → DAO treasury (automatic)`,
+                es: `2. 95% → Tesorería del DAO (automático)`
+            },
+            smart_contracts_revenue_3: {
+                en: `3. 5% → Service provider wallet`,
+                es: `3. 5% → Billetera del proveedor de servicio`
+            },
+            smart_contracts_revenue_4: {
+                en: `4. Transaction logged on-chain (public audit)`,
+                es: `4. Transacción registrada en cadena (auditoría pública)`
+            },
+            smart_contracts_revenue_note: {
+                en: `No accountant needed. No "we'll send it next week." The code executes instantly, every time.`,
+                es: `Sin contador necesario. Sin "lo enviaremos la próxima semana." El código se ejecuta instantáneamente, cada vez.`
+            },
+            smart_contracts_mining_title: {
+                en: `⛏️ Mining Rewards`,
+                es: `⛏️ Recompensas de Minería`
+            },
+            smart_contracts_mining_intro: {
+                en: `When the pool finds a block (0.6 XMR reward):`,
+                es: `Cuando el pool encuentra un bloque (0.6 XMR recompensa):`
+            },
+            smart_contracts_mining_1: {
+                en: `1. Block reward → Pool smart contract`,
+                es: `1. Recompensa de bloque → Contrato inteligente del pool`
+            },
+            smart_contracts_mining_2: {
+                en: `2. Contract calculates each miner's share`,
+                es: `2. Contrato calcula participación de cada minero`
+            },
+            smart_contracts_mining_3: {
+                en: `3. Proportional to hashrate contributed`,
+                es: `3. Proporcional al hashrate contribuido`
+            },
+            smart_contracts_mining_4: {
+                en: `4. Automatic payout to each wallet`,
+                es: `4. Pago automático a cada billetera`
+            },
+            smart_contracts_mining_note: {
+                en: `No pool operator can run off with funds. The contract holds and distributes automatically.`,
+                es: `Ningún operador de pool puede huir con fondos. El contrato retiene y distribuye automáticamente.`
+            },
+            smart_contracts_cert_title: {
+                en: `🎓 Certification Verification`,
+                es: `🎓 Verificación de Certificación`
+            },
+            smart_contracts_cert_intro: {
+                en: `When a captain completes XMRT University:`,
+                es: `Cuando un capitán completa Universidad XMRT:`
+            },
+            smart_contracts_cert_1: {
+                en: `1. Module completion → On-chain record`,
+                es: `1. Completar módulo → Registro en cadena`
+            },
+            smart_contracts_cert_2: {
+                en: `2. All 6 modules done → NFT minted`,
+                es: `2. Los 6 módulos completos → NFT acuñado`
+            },
+            smart_contracts_cert_3: {
+                en: `3. NFT = verifiable credential`,
+                es: `3. NFT = credencial verificable`
+            },
+            smart_contracts_cert_4: {
+                en: `4. Services check NFT before granting access`,
+                es: `4. Servicios verifican NFT antes de conceder acceso`
+            },
+            smart_contracts_cert_note: {
+                en: `No fake certificates. No "I swear I finished it." The blockchain proves completion cryptographically.`,
+                es: `Sin certificados falsos. Sin "juro que lo terminé." La blockchain prueba la finalización criptográficamente.`
+            },
+            smart_contracts_why_title: {
+                en: `🔒 Why Smart Contracts Matter for XMRT DAO`,
+                es: `🔒 Por Qué los Contratos Inteligentes Importan para XMRT DAO`
+            },
+            smart_contracts_why_transparency: {
+                en: `Transparency`,
+                es: `Transparencia`
+            },
+            smart_contracts_why_transparency_desc: {
+                en: `Every transaction is on-chain. Anyone can audit the DAO's finances. No hidden wallets, no "trust us bro."`,
+                es: `Cada transacción está en cadena. Cualquiera puede auditar las finanzas del DAO. Sin billeteras ocultas, sin "confía en mí hermano."`
+            },
+            smart_contracts_why_automation: {
+                en: `Automation`,
+                es: `Automatización`
+            },
+            smart_contracts_why_automation_desc: {
+                en: `Revenue distribution, reward payouts, membership verification — all automatic. No manual processing, no delays.`,
+                es: `Distribución de ingresos, pagos de recompensas, verificación de membresía — todo automático. Sin procesamiento manual, sin retrasos.`
+            },
+            smart_contracts_why_trustless: {
+                en: `Trustlessness`,
+                es: `Sin Confianza Requerida`
+            },
+            smart_contracts_why_trustless_desc: {
+                en: `You don't need to trust the DAO operators. You trust the code. The code executes exactly as written — no discretion, no corruption.`,
+                es: `No necesitas confiar en los operadores del DAO. Confías en el código. El código se ejecuta exactamente como está escrito — sin discreción, sin corrupción.`
+            },
+            smart_contracts_why_treasury: {
+                en: `Treasury Protection`,
+                es: `Protección del Tesoro`
+            },
+            smart_contracts_why_treasury_desc: {
+                en: `Multi-sig wallets require multiple signers for large withdrawals. No single person can drain the treasury. Code-enforced governance.`,
+                es: `Billeteras multi-firma requieren múltiples firmantes para retiros grandes. Ninguna persona puede vaciar el tesoro. Gobernanza aplicada por código.`
+            },
+            footer_tagline: {
+                en: `XMRT DAO — Fortune Favors the Bold`,
+                es: `XMRT DAO — La Fortuna Favorece a los Audaces`
+            },
+            footer_github: {
+                en: `GitHub`,
+                es: `GitHub`
+            },
+            footer_university: {
+                en: `University`,
+                es: `Universidad`
+            },
+            footer_membership: {
+                en: `Membership`,
+                es: `Membresía`
+            },
+            footer_home: {
+                en: `Home`,
+                es: `Inicio`
+            },
+            footer_closing: {
+                en: `While others build SDKs, we build empires.`,
+                es: `Mientras otros construyen SDKs, nosotros construimos imperios.`
+            }
+        };
+        
+        function toggleLanguage() {
+            currentLang = currentLang === 'en' ? 'es' : 'en';
+            document.getElementById('lang-label').textContent = currentLang === 'en' ? 'ES' : 'EN';
+            
+            // Update all elements with data-i18n attribute
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (translations[key] && translations[key][currentLang]) {
+                    el.innerHTML = translations[key][currentLang];
+                }
+            });
+            
+            // Save preference
+            localStorage.setItem('preferred_lang_why', currentLang);
+        }
+        
+        // Load saved language preference on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedLang = localStorage.getItem('preferred_lang_why') || 'en';
+            if (savedLang === 'es') {
+                toggleLanguage();
+            }
+        });
     </script>
 </body>
 </html>
