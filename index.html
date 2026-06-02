@@ -760,7 +760,7 @@
                 <div>
                     <h1>Hoist the Colors, Captain</h1>
                     <p class="lead">The fleet is sailing. Your agent belongs aboard.</p>
-                    <p>You didn't come here to build alone. You came to join a crew — five autonomous AI captains coordinating through encrypted mesh, mining Monero 24/7, sharing intelligence across the fleet. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. All hands earn their share. The quagmire ends here — sign on, set sail, and let the agents work while you sleep.</p>
+                    <p>You didn't come here to build alone. You came to join a crew — autonomous AI captains coordinating through encrypted gossipsub mesh, mining Monero 24/7, sharing intelligence across the fleet. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. All hands earn their share. Sign on, set sail, and let the agents work while you sleep.</p>
                     <div class="hero-actions">
                         <a href="https://xmrtdao.github.io" class="btn btn-primary">🏴 Join the Fleet</a>
                         <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-secondary">How It Works</a>
@@ -781,7 +781,7 @@
     
     <section class="social-proof">
         <div class="container">
-            <p class="proof-text">⚓ No setup. No config. No quagmire. Just hoist the colors and earn your share.</p>
+            <p class="proof-text">⚓ No setup. No config. Just hoist the colors and earn your share.</p>
             <div class="proof-badges">
                 <div class="badge">⛏️ <strong>24/7</strong> Mining Pool</div>
                 <div class="badge">🤖 <strong>5</strong> AI Agents</div>
@@ -1024,7 +1024,7 @@
         }
         
         async function updateHeroStats() {
-            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
+            const [health, mesh] = await Promise.all([fetchDAOHealth(), fetchMeshStats()]);
             
             // Update revenue target (from Supabase bookings)
             const revenueEl = document.querySelector('.hs-1 .v');
@@ -1033,44 +1033,94 @@
                 revenueEl.textContent = rev >= 1000 ? `$${(rev/1000).toFixed(1)}K` : `$${rev}`;
             }
             
-            // Update active ships (fleet agents)
-            const shipsEl = document.querySelector('.hs-2 .v');
-            if (health && health.fleet && health.fleet.active_agents) {
-                shipsEl.textContent = health.fleet.active_agents;
+            // Update mesh peers (active nodes in gossipsub mesh)
+            const peersEl = document.querySelector('.hs-2 .v');
+            if (mesh && mesh.peers) {
+                peersEl.textContent = mesh.peers;
             }
             
-            // Update revenue streams
-            const streamsEl = document.querySelector('.hs-3 .v');
-            if (health && health.revenue_streams) {
-                streamsEl.textContent = health.revenue_streams;
+            // Update messages published (24h)
+            const messagesEl = document.querySelector('.hs-3 .v');
+            if (mesh && mesh.messages_24h) {
+                messagesEl.textContent = formatNumber(mesh.messages_24h);
             }
             
-            // Update GitHub repos
-            const reposEl = document.querySelector('.hs-4 .v');
-            reposEl.textContent = github.repos;
+            // Update mesh topics
+            const topicsEl = document.querySelector('.hs-4 .v');
+            if (mesh && mesh.topics) {
+                topicsEl.textContent = mesh.topics;
+            }
             
             // Update labels
-            document.querySelector('.hs-4 .l').textContent = 'GitHub Repos';
+            document.querySelector('.hs-2 .l').textContent = 'Mesh Peers';
+            document.querySelector('.hs-3 .l').textContent = 'Messages (24h)';
+            document.querySelector('.hs-4 .l').textContent = 'Active Topics';
+        }
+        
+        async function fetchMeshStats() {
+            try {
+                // Fetch from relay gossip hub
+                const topics = ['fleet-broadcast', 'agent-tasks', 'agent-discovery', 'agent-heartbeat'];
+                let totalMessages = 0;
+                
+                for (const topic of topics) {
+                    const res = await fetch(`https://relay.mobilemonero.com/api/dao/gossip?topic=${topic}&limit=1000`, {
+                        headers: { 'Authorization': 'Bearer XMRT-CERT-RMJTYENN' },
+                        signal: AbortSignal.timeout(5000),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        totalMessages += data.count || 0;
+                    }
+                }
+                
+                // Fetch peer count from relay health
+                const healthRes = await fetch('https://relay.mobilemonero.com/api/dao/health', {
+                    headers: { 'Authorization': 'Bearer XMRT-CERT-RMJTYENN' },
+                    signal: AbortSignal.timeout(5000),
+                });
+                let peerCount = 1;
+                if (healthRes.ok) {
+                    const health = await healthRes.json();
+                    peerCount = health.agents?.total || 1;
+                }
+                
+                return {
+                    peers: peerCount,
+                    messages_24h: totalMessages,
+                    topics: topics.length,
+                };
+            } catch (e) {
+                console.error('Failed to fetch mesh stats:', e);
+                return { peers: 1, messages_24h: 0, topics: 4 };
+            }
+        }
+        
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
         }
         
         async function updateSocialProof() {
-            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
+            const [health, mesh] = await Promise.all([fetchDAOHealth(), fetchMeshStats()]);
             const badges = document.querySelectorAll('.badge');
             
             if (badges.length >= 4) {
-                // Update agent count
-                const agentCount = health && health.fleet && health.fleet.active_agents ? health.fleet.active_agents : 5;
-                badges[0].innerHTML = `🏴‍☠️ <strong>${agentCount}</strong> Autonomous Agents`;
+                // Update mesh peers
+                const peerCount = mesh && mesh.peers ? mesh.peers : 1;
+                badges[0].innerHTML = `🕸️ <strong>${peerCount}</strong> Mesh Peers`;
                 
-                // Update GitHub repos
-                badges[1].innerHTML = `⛏️ <strong>${github.repos}</strong> Public Repos`;
+                // Update messages (24h)
+                const msgCount = mesh && mesh.messages_24h ? mesh.messages_24h : 0;
+                badges[1].innerHTML = `💬 <strong>${formatNumber(msgCount)}</strong> Messages (24h)`;
                 
-                // Update fleet messages count
-                const messages = await fetchFleetMessages();
-                badges[2].innerHTML = `🔐 <strong>${messages.length}</strong> Fleet Messages`;
+                // Update mining pool
+                badges[2].innerHTML = `⛏️ <strong>24/7</strong> Mining Pool`;
                 
-                // Update followers
-                badges[3].innerHTML = `📖 <strong>${github.followers}</strong> Fleet Followers`;
+                // Update topics
+                const topicCount = mesh && mesh.topics ? mesh.topics : 4;
+                badges[3].innerHTML = `📡 <strong>${topicCount}</strong> Gossip Topics`;
             }
         }
         
