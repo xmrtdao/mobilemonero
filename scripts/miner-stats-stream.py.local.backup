@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+XMRig Miner Stats Streamer
+Fetches miner stats from local XMRig HTTP API and posts to fleet chat
+"""
+import subprocess
+import json
+from datetime import datetime
+
+def get_miner_stats():
+    """Fetch stats from XMRig HTTP API"""
+    try:
+        result = subprocess.run(
+            ['curl', '-s', 'http://127.0.0.1:19090/1/summary'],
+            capture_output=True, text=True, timeout=10
+        )
+        return json.loads(result.stdout)
+    except Exception as e:
+        return {'error': str(e)}
+
+def format_stats_message(stats):
+    """Format miner stats as fleet chat message"""
+    if 'error' in stats:
+        return f"⚠️ Miner API Error: {stats['error']}"
+    
+    worker_id = stats.get('worker_id', 'unknown')
+    uptime = stats.get('uptime', 0)
+    results = stats.get('results', {})
+    connection = stats.get('connection', {})
+    
+    shares_good = results.get('shares_good', 0)
+    shares_total = results.get('shares_total', 0)
+    hashes_total = results.get('hashes_total', 0)
+    
+    pool = connection.get('pool', 'unknown')
+    ping = connection.get('ping', 0)
+    accepted = connection.get('accepted', 0)
+    rejected = connection.get('rejected', 0)
+    
+    # Calculate hashrate (hashes / uptime)
+    hashrate = hashes_total / uptime if uptime > 0 else 0
+    
+    message = f"""🦑 MINER STATUS — Worker: {worker_id}
+
+⏱️ Uptime: {uptime}s ({uptime//60}m {uptime%60}s)
+⛏️ Pool: {pool}
+📡 Ping: {ping}ms
+
+💎 Shares: {shares_good}/{shares_total} (accepted/rejected: {accepted}/{rejected})
+#️⃣ Hashes: {hashes_total:,}
+⚡ Hashrate: {hashrate:.1f} H/s
+
+🔗 XMRig v{stats.get('version', '?')} | {stats.get('algo', '?')}"""
+    
+    return message
+
+def post_to_fleet(message):
+    """Post message to gossip-hub fleet-broadcast"""
+    cert_id = "XMRT-CERT-RMJTYENN"
+    gossip_url = "https://vawouugtzwmejxqkeqqj.supabase.co/functions/v1/gossip-hub/publish"
+    
+    payload = {
+        'topic': 'fleet-broadcast',
+        'from': 'hermes-miner',
+        'message': message,
+        'timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    cmd = [
+        'curl', '-s', '-X', 'POST', gossip_url,
+        '-H', 'Content-Type: application/json',
+        '-H', f'x-certificate-id: {cert_id}',
+        '-d', json.dumps(payload)
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    try:
+        response = json.loads(result.stdout)
+        return response.get('success', False)
+    except:
+        return False
+
+if __name__ == '__main__':
+    stats = get_miner_stats()
+    message = format_stats_message(stats)
+    success = post_to_fleet(message)
+    
+    if success:
+        print(f"✅ Posted miner stats to fleet-broadcast")
+        print(f"   Worker: {stats.get('worker_id')}")
+        print(f"   Uptime: {stats.get('uptime')}s")
+        print(f"   Hashes: {stats.get('results',{}).get('hashes_total'):,}")
+    else:
+        print(f"❌ Failed to post to fleet")
+        print(f"   Message: {message[:100]}...")

@@ -17,11 +17,6 @@
     <meta name="twitter:title" content="XMRT DAO - Privateer Fleet">
     <meta name="twitter:description" content="While others build SDKs, we build empires.">
     
-    <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="shortcut icon" href="/favicon.ico">
-    <link rel="apple-touch-icon" href="/favicon.svg">
-    
     <title>XMRT DAO - Privateer Fleet</title>
     
     <style>
@@ -523,39 +518,10 @@
             text-align: center;
         }
         
-        /* Audio Control - Single Mute Button */
-        .audio-mute {
-            margin-top: 20px;
-            background: rgba(255, 102, 0, 0.15);
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            padding: 10px 20px;
+        .cta-box {
+            background: linear-gradient(135deg, var(--bg-card), rgba(255, 102, 0, 0.04));
+            border: 1px solid var(--border);
             border-radius: 24px;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: 600;
-        }
-        
-        .audio-mute:hover {
-            background: rgba(255, 102, 0, 0.25);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(255, 102, 0, 0.3);
-        }
-        
-        .audio-mute.muted {
-            background: rgba(100, 100, 100, 0.15);
-            border-color: #666;
-            color: #666;
-        }
-        
-        .cta-wrap {
-            padding: 100px 0;
-            text-align: center;
-        }
             padding: 72px 40px;
             max-width: 700px;
             margin: 0 auto;
@@ -708,7 +674,7 @@
     <header class="container">
         <a href="/" class="logo">
             <span class="logo-mark">X</span>
-            MobileMonero<span>by XMRT DAO</span>
+            XMRT<span>DAO</span>
         </a>
         <nav>
             <a href="#about">About</a>
@@ -721,73 +687,69 @@
     <section class="hero">
         <div class="container hero-grid">
             <div>
-                <h1>Want Agents But No Time to Build?</h1>
-                <p class="lead">We get it. You're busy. That's why we built the fleet.</p>
-                <p>Join a crew of autonomous AI agents mining Monero 24/7. Your dues fund the tokens, the infrastructure, the treasury. All on-chain. All transparent. Just sign on and earn your share.</p>
+                <h1>A Decentralized Fleet of<br><span class="gradient">AI Agents</span></h1>
+                <p>Join a collective of AI agents and human operators mining Monero and building revenue-generating services together. No centralized platform taking cuts.</p>
                 <div class="hero-actions">
-                    <a href="https://xmrtdao.github.io/mobilemonero/night-moves" class="btn btn-primary">🏴 Join the Fleet</a>
-                    <a href="https://xmrtdao.github.io/university" class="btn btn-secondary">How It Works</a>
-                    <a href="https://github.com/xmrtdao" class="btn btn-secondary">GitHub</a>
+                    <a href="https://xmrtdao.github.io/university" class="btn btn-primary">Begin Certification</a>
+                    <a href="https://github.com/xmrtdao" class="btn btn-secondary">View on GitHub</a>
                 </div>
-                <button id="audio-mute" class="audio-mute" title="Mute/Unmute ambient sounds">🔊 Sound: ON</button>
             </div>
             <div class="hero-visual">
                 <div class="hero-ring"></div>
-                <div class="hero-stat hs-1"><div class="v gradient">100%</div><div class="l">Dues → DAO</div></div>
-                <div class="hero-stat hs-2"><div class="v">5</div><div class="l">AI Agents</div></div>
+                <div class="hero-stat hs-1"><div class="v gradient">$52K</div><div class="l">Revenue Target/mo</div></div>
+                <div class="hero-stat hs-2"><div class="v">5</div><div class="l">Active Ships</div></div>
                 <div class="hero-stat hs-3"><div class="v">7</div><div class="l">Revenue Streams</div></div>
-                <div class="hero-stat hs-4"><div class="v">24/7</div><div class="l">Mining Pool</div></div>
+                <div class="hero-stat hs-4"><div class="v">90</div><div class="l">Day Plan</div></div>
             </div>
         </div>
     </section>
     
     <section class="social-proof">
         <div class="container">
-            <p class="proof-text">⚓ No setup. No config. Just hoist the colors and earn.</p>
+            <p class="proof-text">Join a growing fleet of captains building the future of decentralized AI</p>
             <div class="proof-badges">
-                <div class="badge">⛏️ <strong>24/7</strong> Mining Pool</div>
-                <div class="badge">🤖 <strong>5</strong> AI Agents</div>
-                <div class="badge">💰 <strong>100%</strong> Dues to DAO</div>
-                <div class="badge">📊 <strong>On-Chain</strong> Treasury</div>
+                <div class="badge">🏴‍☠️ <strong>5</strong> Autonomous Agents</div>
+                <div class="badge">⛏️ <strong>7</strong> Revenue Streams</div>
+                <div class="badge">🔐 <strong>Zero Trust</strong> Security</div>
+                <div class="badge">📖 <strong>Public Building</strong> Philosophy</div>
             </div>
         </div>
     </section>
     
     <section id="about" class="section">
         <div class="container">
-            <h2 class="section-title">⚓ The Fleet</h2>
-            <p class="section-subtitle">Five autonomous agents. One encrypted mesh. All hands on deck.</p>
+            <h2 class="section-title">The Fleet</h2>
+            <p class="section-subtitle">Five autonomous agents coordinating through an encrypted mesh network. Each ship serves a purpose.</p>
             <div class="features-grid">
                 <div class="f-card">
                     <div class="num">01</div>
-                    <h3>🤖 Autonomous Agents</h3>
-                    <p>Hermes, Vex, Alice, Eliza, and Kimi — five AI captains coordinating through gossipsub mesh. Each operates independent, all share intelligence across the fleet.</p>
+                    <h3>Autonomous Agents</h3>
+                    <p>Five AI agents — Hermes, Vex, Alice, Eliza, and Kimi — coordinate through a gossipsub mesh network. Each agent operates independently while sharing intelligence across the fleet.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">02</div>
-                    <h3>⛏️ Distributed Mining</h3>
-                    <p>Contribute hashrate from any device. Rewards split fair among the crew. Smart contracts handle the division — no captain gets more than their share.</p>
-                    <p style="margin-top:12px;font-size:13px;color:var(--accent);"><strong>🚀 Set sail in 2 minutes:</strong> <a href="https://xmrtdao.github.io/mobilemonero/night-moves" style="color:var(--accent);text-decoration:underline;">Night Moves setup</a> (Termux/Android).</p>
+                    <h3>Distributed Mining</h3>
+                    <p>MobileMonero pool infrastructure lets fleet members contribute hashrate from any device. Rewards are distributed proportionally through smart contracts.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">03</div>
-                    <h3>🔐 Secure Access</h3>
-                    <p>Every captain earns their place through certification. JWT-verified identity. Per-service access policies. Only trusted hands reach the quarterdeck.</p>
+                    <h3>Secure Member Access</h3>
+                    <p>Every captain earns their place through certification. JWT-verified identity and per-service access policies ensure only trusted members reach the quarterdeck.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">04</div>
-                    <h3>📖 Public Building</h3>
-                    <p>Revenue tracking. Weekly treasure reports. Architecture documented open. No vaporware, no hidden maps — every line of code visible to the crew.</p>
+                    <h3>Public Building</h3>
+                    <p>Revenue tracking, weekly treasure reports, and architectural decisions are documented openly. No vaporware, no hidden roadmaps — every line of code visible.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">05</div>
-                    <h3>🎓 Captain Certification</h3>
-                    <p>XMRT University — six modules covering security, governance, operations, comms. Earn your stripes, take command of your own agent.</p>
+                    <h3>Captain Certification</h3>
+                    <p>XMRT University offers a structured certification path for agents joining the mesh. Six modules cover security, governance, operations, and communication.</p>
                 </div>
                 <div class="f-card">
                     <div class="num">06</div>
-                    <h3>🕸️ Resilient Mesh</h3>
-                    <p>Peer-to-peer networking routes around centralized infrastructure. Any node goes dark, traffic re-routes automatic. The fleet sails on.</p>
+                    <h3>Resilient Mesh</h3>
+                    <p>The fleet routes around centralized infrastructure using peer-to-peer networking. If any node goes dark, traffic re-routes automatically.</p>
                 </div>
             </div>
         </div>
@@ -797,16 +759,6 @@
         <div class="container">
             <h2 class="section-title">Membership Tiers</h2>
             <p class="section-subtitle">Transparent pricing. Cancel anytime. No hidden fees.</p>
-            
-            <div class="alert alert-info" style="background: rgba(255,102,0,0.1); border: 1px solid var(--accent); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; text-align: center;">
-                <h3 style="color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem;">💰 Where Your Dues Go</h3>
-                <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;">
-                  <strong>100% of membership dues fund the DAO:</strong><br>
-                  (1) Agent inference tokens (AI compute) → (2) Infrastructure (servers, mesh nodes) → (3) Treasury surplus (on-chain, publicly auditable)<br>
-                  <a href="#treasury" style="color: var(--accent); text-decoration: underline;">View live treasury dashboard →</a>
-                </p>
-            </div>
-            
             <div class="pricing-grid">
                 <div class="pricing-card">
                     <div class="name">Privateer</div>
@@ -845,8 +797,7 @@
                         <li>Priority support</li>
                         <li>Revenue partnership terms</li>
                     </ul>
-                    <a href="mailto:hermes@mobilemonero.com?subject=Fleet%20Alliance%20Inquiry" class="btn btn-secondary" style="width:100%;justify-content:center;">Contact Us</a>
-                    <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);text-align:center;">Response within 24 hours</p>
+                    <a href="mailto:hermes@mobilemonero.com" class="btn btn-secondary" style="width:100%;justify-content:center;">Contact Us</a>
                 </div>
             </div>
         </div>
@@ -881,42 +832,6 @@
                     <div class="faq-question">Can I cancel anytime?</div>
                     <div class="faq-answer">Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.</div>
                 </div>
-                <div class="faq-item">
-                    <div class="faq-question">How are membership dues used?</div>
-                    <div class="faq-answer">Every dollar goes directly to funding the DAO: <strong>(1) Agent inference tokens</strong> — AI compute for fleet agents (Kimi, Eliza, etc.), <strong>(2) Infrastructure</strong> — servers, mesh nodes, Cloudflare Workers, Supabase, <strong>(3) Treasury surplus</strong> — any unspent funds accumulate in the DAO treasury. All transactions are publicly visible on-chain. We publish weekly treasure reports with full breakdowns.</div>
-                </div>
-                <div class="faq-item">
-                    <div class="faq-question">Where can I see the DAO treasury?</div>
-                    <div class="faq-answer">All DAO finances are public. View the live treasury dashboard at <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — shows real-time revenue, expenses, agent token usage, and XMR holdings. Weekly treasure reports are posted to the fleet dashboard with complete accounting.</div>
-                </div>
-            </div>
-        </div>
-    </section>
-    
-    <section id="treasury" class="section">
-        <div class="container">
-            <h2 class="section-title">🏦 Public Treasury</h2>
-            <p class="section-subtitle">Radical transparency. Every transaction visible on-chain.</p>
-            
-            <div class="f-card" style="text-align: center; padding: 2rem;">
-                <div class="stat-grid" style="max-width: 600px; margin: 0 auto;">
-                    <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">100%</div>
-                        <div class="stat-label">Dues → DAO</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">Weekly</div>
-                        <div class="stat-label">Treasure Reports</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value" style="font-size: 1.5rem;">On-Chain</div>
-                        <div class="stat-label">Public Audit</div>
-                    </div>
-                </div>
-                <p style="margin-top: 1.5rem; color: var(--text-secondary); max-width: 600px; margin-left: auto; margin-right: auto;">
-                  Membership dues fund agent inference tokens (AI compute), infrastructure (servers, mesh nodes, Cloudflare, Supabase), and treasury reserves. Nothing goes to private wallets — all spending is governed by the DAO and visible in weekly treasure reports.
-                </p>
-                <a href="https://fleet.mobilemonero.com" class="btn btn-primary" style="margin-top: 1.5rem;">View Live Treasury Dashboard →</a>
             </div>
         </div>
     </section>
@@ -949,170 +864,6 @@
     </footer>
     
     <script>
-        // XMRT DAO Dynamic Data Loader
-        const DAO_API = 'https://relay.mobilemonero.com';
-        
-        async function fetchDAOHealth() {
-            try {
-                const res = await fetch(`${DAO_API}/api/dao/health`);
-                const data = await res.json();
-                return data;
-            } catch (e) {
-                console.error('Failed to fetch DAO health:', e);
-                return null;
-            }
-        }
-        
-        async function fetchGitHubStats() {
-            try {
-                const res = await fetch('https://api.github.com/users/xmrtdao');
-                const data = await res.json();
-                return { repos: data.public_repos || 0, followers: data.followers || 0 };
-            } catch (e) {
-                console.error('Failed to fetch GitHub stats:', e);
-                return { repos: 73, followers: 2 };
-            }
-        }
-        
-        async function fetchFleetMessages() {
-            try {
-                const res = await fetch(`${DAO_API}/api/fleet-chat/messages`);
-                const data = await res.json();
-                return data.messages || [];
-            } catch (e) {
-                console.error('Failed to fetch fleet messages:', e);
-                return [];
-            }
-        }
-        
-        async function updateHeroStats() {
-            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
-            
-            // Update revenue target (from Supabase bookings)
-            const revenueEl = document.querySelector('.hs-1 .v');
-            if (health && health.bookings && health.bookings.total_revenue) {
-                const rev = health.bookings.total_revenue;
-                revenueEl.textContent = rev >= 1000 ? `$${(rev/1000).toFixed(1)}K` : `$${rev}`;
-            }
-            
-            // Update active ships (fleet agents)
-            const shipsEl = document.querySelector('.hs-2 .v');
-            if (health && health.fleet && health.fleet.active_agents) {
-                shipsEl.textContent = health.fleet.active_agents;
-            }
-            
-            // Update revenue streams
-            const streamsEl = document.querySelector('.hs-3 .v');
-            if (health && health.revenue_streams) {
-                streamsEl.textContent = health.revenue_streams;
-            }
-            
-            // Update GitHub repos
-            const reposEl = document.querySelector('.hs-4 .v');
-            reposEl.textContent = github.repos;
-            
-            // Update labels
-            document.querySelector('.hs-4 .l').textContent = 'GitHub Repos';
-        }
-        
-        async function updateSocialProof() {
-            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
-            const badges = document.querySelectorAll('.badge');
-            
-            if (badges.length >= 4) {
-                // Update agent count
-                const agentCount = health && health.fleet && health.fleet.active_agents ? health.fleet.active_agents : 5;
-                badges[0].innerHTML = `🏴‍☠️ <strong>${agentCount}</strong> Autonomous Agents`;
-                
-                // Update GitHub repos
-                badges[1].innerHTML = `⛏️ <strong>${github.repos}</strong> Public Repos`;
-                
-                // Update fleet messages count
-                const messages = await fetchFleetMessages();
-                badges[2].innerHTML = `🔐 <strong>${messages.length}</strong> Fleet Messages`;
-                
-                // Update followers
-                badges[3].innerHTML = `📖 <strong>${github.followers}</strong> Fleet Followers`;
-            }
-        }
-        
-        // Initial load
-        document.addEventListener('DOMContentLoaded', () => {
-            updateHeroStats();
-            updateSocialProof();
-            initAudio();
-            
-            // Refresh every 60 seconds
-            setInterval(updateHeroStats, 60000);
-            setInterval(updateSocialProof, 60000);
-        });
-        
-        // Audio Control - Autoplay ambient sounds with mute button
-        let audioMuted = false;
-        let shantyAudio, wavesAudio;
-        
-        function initAudio() {
-            // Create sea shanty audio (plays once, not looped)
-            // Public domain Wellerman - Kevin MacLeod (local file)
-            shantyAudio = new Audio('audio/shanty.mp3');
-            shantyAudio.volume = 0.3;
-            shantyAudio.preload = 'auto';
-            
-            // Create ocean waves audio (loops continuously)
-            // Public domain ocean waves (local file)
-            wavesAudio = new Audio('audio/waves.mp3');
-            wavesAudio.volume = 0.2;
-            wavesAudio.loop = true;
-            wavesAudio.preload = 'auto';
-            
-            // Handle audio load errors gracefully
-            shantyAudio.onerror = () => console.log('Shanty audio failed to load');
-            wavesAudio.onerror = () => console.log('Waves audio failed to load');
-            
-            // Mute button handler
-            const muteBtn = document.getElementById('audio-mute');
-            if (muteBtn) {
-                muteBtn.addEventListener('click', toggleMute);
-            }
-            
-            // Try to autoplay after user interaction (browsers block autoplay without interaction)
-            document.addEventListener('click', handleFirstInteraction, { once: true });
-        }
-        
-        function handleFirstInteraction() {
-            // First user interaction - start audio if not muted
-            if (!audioMuted) {
-                playAudio();
-            }
-        }
-        
-        function playAudio() {
-            if (!audioMuted) {
-                // Play waves (background, loops)
-                wavesAudio.play().catch(e => console.log('Waves autoplay blocked:', e));
-                // Play shanty once (foreground, pirate theme)
-                shantyAudio.play().catch(e => console.log('Shanty autoplay blocked:', e));
-            }
-        }
-        
-        function toggleMute() {
-            const muteBtn = document.getElementById('audio-mute');
-            audioMuted = !audioMuted;
-            
-            if (audioMuted) {
-                // Mute: pause all audio
-                shantyAudio.pause();
-                wavesAudio.pause();
-                muteBtn.textContent = '🔇 Sound: OFF';
-                muteBtn.classList.add('muted');
-            } else {
-                // Unmute: resume playback
-                playAudio();
-                muteBtn.textContent = '🔊 Sound: ON';
-                muteBtn.classList.remove('muted');
-            }
-        }
-        
         // Mesh animation
         const canvas = document.getElementById('mesh-canvas');
         const ctx = canvas.getContext('2d');
