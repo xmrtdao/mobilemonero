@@ -766,6 +766,16 @@
         <div class="container">
             <h2 class="section-title">Membership Tiers</h2>
             <p class="section-subtitle">Transparent pricing. Cancel anytime. No hidden fees.</p>
+            
+            <div class="alert alert-info" style="background: rgba(255,102,0,0.1); border: 1px solid var(--accent); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; text-align: center;">
+                <h3 style="color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem;">💰 Where Your Dues Go</h3>
+                <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.7;">
+                  <strong>100% of membership dues fund the DAO:</strong><br>
+                  (1) Agent inference tokens (AI compute) → (2) Infrastructure (servers, mesh nodes) → (3) Treasury surplus (on-chain, publicly auditable)<br>
+                  <a href="#treasury" style="color: var(--accent); text-decoration: underline;">View live treasury dashboard →</a>
+                </p>
+            </div>
+            
             <div class="pricing-grid">
                 <div class="pricing-card">
                     <div class="name">Privateer</div>
@@ -839,6 +849,42 @@
                     <div class="faq-question">Can I cancel anytime?</div>
                     <div class="faq-answer">Yes. Membership is month-to-month with no long-term commitment. Cancel through your Whop dashboard anytime — no questions asked. Your access continues through the end of your billing period.</div>
                 </div>
+                <div class="faq-item">
+                    <div class="faq-question">How are membership dues used?</div>
+                    <div class="faq-answer">Every dollar goes directly to funding the DAO: <strong>(1) Agent inference tokens</strong> — AI compute for fleet agents (Kimi, Eliza, etc.), <strong>(2) Infrastructure</strong> — servers, mesh nodes, Cloudflare Workers, Supabase, <strong>(3) Treasury surplus</strong> — any unspent funds accumulate in the DAO treasury. All transactions are publicly visible on-chain. We publish weekly treasure reports with full breakdowns.</div>
+                </div>
+                <div class="faq-item">
+                    <div class="faq-question">Where can I see the DAO treasury?</div>
+                    <div class="faq-answer">All DAO finances are public. View the live treasury dashboard at <a href="https://fleet.mobilemonero.com" style="color: var(--accent);">fleet.mobilemonero.com</a> — shows real-time revenue, expenses, agent token usage, and XMR holdings. Weekly treasure reports are posted to the fleet dashboard with complete accounting.</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <section id="treasury" class="section">
+        <div class="container">
+            <h2 class="section-title">🏦 Public Treasury</h2>
+            <p class="section-subtitle">Radical transparency. Every transaction visible on-chain.</p>
+            
+            <div class="f-card" style="text-align: center; padding: 2rem;">
+                <div class="stat-grid" style="max-width: 600px; margin: 0 auto;">
+                    <div class="stat">
+                        <div class="stat-value" style="font-size: 1.5rem;">100%</div>
+                        <div class="stat-label">Dues → DAO</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" style="font-size: 1.5rem;">Weekly</div>
+                        <div class="stat-label">Treasure Reports</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" style="font-size: 1.5rem;">On-Chain</div>
+                        <div class="stat-label">Public Audit</div>
+                    </div>
+                </div>
+                <p style="margin-top: 1.5rem; color: var(--text-secondary); max-width: 600px; margin-left: auto; margin-right: auto;">
+                  Membership dues fund agent inference tokens (AI compute), infrastructure (servers, mesh nodes, Cloudflare, Supabase), and treasury reserves. Nothing goes to private wallets — all spending is governed by the DAO and visible in weekly treasure reports.
+                </p>
+                <a href="https://fleet.mobilemonero.com" class="btn btn-primary" style="margin-top: 1.5rem;">View Live Treasury Dashboard →</a>
             </div>
         </div>
     </section>
