@@ -1085,20 +1085,20 @@
             setInterval(updateSocialProof, 60000);
         });
         
-        // Audio Control - Single corporate ambient loop
+        // Audio Control - Cinematic hero audio loop (from video)
         let audioMuted = false;
-        let ambientAudio;
+        let heroAudio;
         
         function initAudio() {
-            // Create single ambient corporate loop
-            // Subtle background ambience - professional, not distracting
-            ambientAudio = new Audio('audio/ambient.mp3');
-            ambientAudio.volume = 0.15;  // 15% - very subtle
-            ambientAudio.loop = true;
-            ambientAudio.preload = 'auto';
+            // Create hero audio loop (extracted from cinematic video)
+            // 6-second cinematic loop, subtle background ambience
+            heroAudio = new Audio('assets/hero-audio.mp3');
+            heroAudio.volume = 0.2;  // 20% - subtle background
+            heroAudio.loop = true;
+            heroAudio.preload = 'auto';
             
             // Handle audio load errors gracefully
-            ambientAudio.onerror = () => console.log('Ambient audio failed to load');
+            heroAudio.onerror = () => console.log('Hero audio failed to load');
             
             // Mute button handler
             const muteBtn = document.getElementById('audio-mute');
@@ -1113,7 +1113,7 @@
         function handleFirstInteraction() {
             // First user interaction - start audio if not muted
             if (!audioMuted) {
-                ambientAudio.play().catch(e => console.log('Autoplay prevented:', e));
+                heroAudio.play().catch(e => console.log('Autoplay prevented:', e));
             }
         }
         
@@ -1122,13 +1122,13 @@
             audioMuted = !audioMuted;
             
             if (audioMuted) {
-                ambientAudio.pause();
+                heroAudio.pause();
                 if (muteBtn) {
                     muteBtn.textContent = '🔇 Sound: OFF';
                     muteBtn.classList.add('muted');
                 }
             } else {
-                ambientAudio.play();
+                heroAudio.play();
                 if (muteBtn) {
                     muteBtn.textContent = '🔊 Sound: ON';
                     muteBtn.classList.remove('muted');
