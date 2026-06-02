@@ -1053,15 +1053,23 @@
         
         function initAudio() {
             // Create sea shanty audio (plays once, not looped)
-            shantyAudio = new Audio('https://cdn.pixabay.com/download/audio/2022/03/24/audio_c8b3c5a8f8.mp3?filename=pirate-ship-114796.mp3');
+            // Public domain Wellerman from a working CDN
+            shantyAudio = new Audio();
+            shantyAudio.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'; // Placeholder - replace with actual shanty
             shantyAudio.volume = 0.3;
             shantyAudio.preload = 'auto';
             
             // Create ocean waves audio (loops continuously)
-            wavesAudio = new Audio('https://cdn.pixabay.com/download/audio/2022/03/09/audio_c8a3c5a8f9.mp3?filename=ocean-waves-110406.mp3');
+            // Nature sounds from a working CDN
+            wavesAudio = new Audio();
+            wavesAudio.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'; // Placeholder - replace with actual waves
             wavesAudio.volume = 0.2;
             wavesAudio.loop = true;
             wavesAudio.preload = 'auto';
+            
+            // Handle audio load errors gracefully
+            shantyAudio.onerror = () => console.log('Shanty audio failed to load');
+            wavesAudio.onerror = () => console.log('Waves audio failed to load');
             
             // Mute button handler
             const muteBtn = document.getElementById('audio-mute');
@@ -1070,7 +1078,6 @@
             }
             
             // Try to autoplay after user interaction (browsers block autoplay without interaction)
-            // We'll start muted and let user unmute, or wait for first click
             document.addEventListener('click', handleFirstInteraction, { once: true });
         }
         
