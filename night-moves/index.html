@@ -75,16 +75,13 @@ pkg install python</pre>
     <div class="step-card">
       <div class="step-number">Step 3</div>
       <h2 class="step-title">Run Signup Script</h2>
-      <p>Download and verify the signup script:</p>
-      <pre>curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py
-sha256sum signup.py</pre>
+      <p>One command to download, verify, and run:</p>
+      <pre>curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
       <div class="hash-verify" id="hashCheck">
         <strong>Expected SHA256:</strong><br>
         <code>51099f420e25e74997c1de59c2ddaf0f3c40fcebfb3c5b1a07e1e125f5b0d7d0</code><br><br>
-        <small style="color: #a0a0c0;">Run the command above and compare the hash. If it matches, the script is authentic!</small>
+        <small style="color: #a0a0c0;">The sha256sum command will print the hash. Compare it to verify the script is authentic before it runs!</small>
       </div>
-      <p style="margin-top: 1rem;">Then run:</p>
-      <pre>python3 signup.py</pre>
     </div>
 
     <div class="step-card">
