@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Understand the math behind pool mining, mesh networks, and smart contracts — the technology powering XMRT DAO">
+    <meta name="theme-color" content="#ff6600">
+    
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Why It Works — XMRT DAO">
+    <meta property="og:description" content="The math, the mesh, the smart contracts — transparent technology explained">
+    <meta property="og:image" content="https://xmrtdao.github.io/mobilemonero/assets/hero-pirate-ship.png">
+    <meta property="og:url" content="https://mobilemonero.com/why-it-works">
+    <meta property="og:site_name" content="XMRT DAO">
+    
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Why It Works — XMRT DAO">
+    <meta name="twitter:description" content="Pool mining math, mesh networks, and smart contracts explained">
+    <meta name="twitter:image" content="https://xmrtdao.github.io/mobilemonero/assets/hero-pirate-ship.png">
+    
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>Why It Works — XMRT DAO</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --bg-primary: #030303;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 102, 0, 0.2);
+            --accent: #ff6600;
+            --accent-glow: rgba(255, 102, 0, 0.3);
+            --text-primary: #e8e8e8;
+            --text-secondary: #888;
+            --success: #22c55e;
+            --gold: #D4AF37;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+        
+        /* Mesh Background */
+        #mesh-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.2;
+        }
+        
+        /* Header */
+        header {
+            padding: 24px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            background: rgba(3, 3, 3, 0.8);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .header-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .logo-mark {
+            width: 32px;
+            height: 32px;
+            background: var(--accent);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 900;
+            color: #000;
+        }
+        
+        .logo span {
+            color: var(--text-primary);
+        }
+        
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: color 0.2s;
+        }
+        
+        .back-link:hover {
+            color: var(--accent);
+        }
+        
+        /* Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        /* Hero Section */
+        .page-hero {
+            padding: 80px 0 60px;
+            text-align: center;
+        }
+        
+        .page-hero h1 {
+            font-size: clamp(32px, 5vw, 48px);
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, var(--accent), var(--gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .page-hero p {
+            font-size: 18px;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        /* Sections */
+        .section {
+            padding: 80px 0;
+        }
+        
+        .section-title {
+            font-size: clamp(24px, 3vw, 36px);
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 12px;
+        }
+        
+        .section-subtitle {
+            font-size: 16px;
+            color: var(--text-secondary);
+            max-width: 700px;
+            line-height: 1.7;
+            margin-bottom: 48px;
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            transition: all 0.3s;
+        }
+        
+        .card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+        
+        .card h3 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--accent);
+        }
+        
+        .card p {
+            color: var(--text-secondary);
+            line-height: 1.8;
+        }
+        
+        /* Calculator Section */
+        .calculator-section {
+            background: linear-gradient(180deg, rgba(255, 102, 0, 0.05), transparent);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 60px;
+        }
+        
+        .calculator-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            align-items: start;
+        }
+        
+        .calculator-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .control-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .control-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .control-value {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .slider {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--bg-card);
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(255, 102, 0, 0.5);
+        }
+        
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 10px rgba(255, 102, 0, 0.5);
+        }
+        
+        .slider-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        
+        .calculator-results {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            position: sticky;
+            top: 100px;
+        }
+        
+        .result-item {
+            margin-bottom: 24px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .result-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        
+        .result-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        
+        .result-value {
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--accent);
+        }
+        
+        .result-value.small {
+            font-size: 24px;
+        }
+        
+        .result-note {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+        
+        /* Upgrade Toggles */
+        .upgrade-section {
+            margin-top: 32px;
+            padding-top: 32px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .upgrade-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+        
+        .toggle-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .toggle-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 2px;
+            bottom: 2px;
+            background-color: var(--text-secondary);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .toggle-slider {
+            background-color: rgba(255, 102, 0, 0.2);
+            border-color: var(--accent);
+        }
+        
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+            background-color: var(--accent);
+        }
+        
+        /* Math Explanation */
+        .math-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 48px;
+        }
+        
+        .formula {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        .formula .label {
+            color: var(--accent);
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        
+        .formula .equation {
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+        
+        .formula .example {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        
+        /* Feature Grid */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+        }
+        
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s;
+        }
+        
+        .feature-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-3px);
+        }
+        
+        .feature-icon {
+            font-size: 32px;
+            margin-bottom: 16px;
+        }
+        
+        .feature-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+        
+        .feature-card p {
+            color: var(--text-secondary);
+            line-height: 1.8;
+            font-size: 14px;
+        }
+        
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 40px 0;
+            text-align: center;
+            color: #666;
+            font-size: 13px;
+        }
+        
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+        
+        /* Responsive */
+        @media (max-width: 900px) {
+            .calculator-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .calculator-results {
+                position: static;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .header-container {
+                padding: 0 16px;
+            }
+            
+            .container {
+                padding: 0 16px;
+            }
+            
+            .calculator-section {
+                padding: 24px;
+            }
+            
+            .card {
+                padding: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="mesh-canvas"></canvas>
+    
+    <header>
+        <div class="header-container">
+            <a href="/" class="logo">
+                <span class="logo-mark">X</span>
+                MobileMonero<span>by XMRT DAO</span>
+            </a>
+            <a href="/" class="back-link">← Back to Home</a>
+        </div>
+    </header>
+    
+    <div class="container">
+        <section class="page-hero">
+            <h1>Why It Works</h1>
+            <p>The math, the mesh, and the smart contracts — transparent technology explained</p>
+        </section>
+        
+        <!-- Mining Calculator Section -->
+        <section class="section">
+            <h2 class="section-title">⛏️ Pool Mining Calculator</h2>
+            <p class="section-subtitle">Understand the economics of distributed Monero mining. Calculate your potential earnings based on hashrate, uptime, and pool participation.</p>
+            
+            <div class="calculator-section">
+                <div class="calculator-grid">
+                    <div class="calculator-controls">
+                        <div class="control-group">
+                            <div class="control-header">
+                                <label class="control-label" for="hashrate-slider">Average Hashrate per Device</label>
+                                <span id="hashrate-value" class="control-value">600 H/s</span>
+                            </div>
+                            <input type="range" id="hashrate-slider" min="200" max="1200" value="600" class="slider" />
+                            <div class="slider-labels">
+                                <span>200 H/s</span>
+                                <span>1,200 H/s</span>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <div class="control-header">
+                                <label class="control-label" for="devices-slider">Number of Mining Devices</label>
+                                <span id="devices-value" class="control-value">100</span>
+                            </div>
+                            <input type="range" id="devices-slider" min="1" max="1000" value="100" class="slider" />
+                            <div class="slider-labels">
+                                <span>1</span>
+                                <span>1,000</span>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <div class="control-header">
+                                <label class="control-label" for="uptime-slider">Mining Uptime per Day</label>
+                                <span id="uptime-value" class="control-value">24 hrs</span>
+                            </div>
+                            <input type="range" id="uptime-slider" min="1" max="24" value="24" class="slider" />
+                            <div class="slider-labels">
+                                <span>1 hr</span>
+                                <span>24 hrs</span>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <div class="control-header">
+                                <label class="control-label" for="xmr-price-slider">Monero (XMR) Price</label>
+                                <span id="xmr-price-value" class="control-value">$265</span>
+                            </div>
+                            <input type="range" id="xmr-price-slider" min="50" max="1000" value="265" class="slider" />
+                            <div class="slider-labels">
+                                <span>$50</span>
+                                <span>$1,000</span>
+                            </div>
+                        </div>
+                        
+                        <div class="upgrade-section">
+                            <h4 class="upgrade-title">Hardware Upgrades</h4>
+                            <div class="toggle-container">
+                                <label for="advanced-processors-toggle" class="toggle-label">Advanced Processors (2.5× Hashrate)</label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="advanced-processors-toggle" />
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-container">
+                                <label for="solid-state-battery-toggle" class="toggle-label">Solid State Batteries (+25% Uptime)</label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="solid-state-battery-toggle" />
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="calculator-results">
+                        <div class="result-item">
+                            <div class="result-label">Total Network Hashrate</div>
+                            <div class="result-value" id="total-hashrate">60.0 KH/s</div>
+                            <div class="result-note">Combined hashrate of all devices</div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <div class="result-label">Daily XMR Mined (Pool Share)</div>
+                            <div class="result-value small" id="daily-xmr">0.0042 XMR</div>
+                            <div class="result-note">Based on network difficulty & pool participation</div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <div class="result-label">Daily Revenue (USD)</div>
+                            <div class="result-value" id="daily-usd">$1.11</div>
+                            <div class="result-note">At current XMR price</div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <div class="result-label">Monthly Revenue (USD)</div>
+                            <div class="result-value" id="monthly-usd">$33.30</div>
+                            <div class="result-note">30-day projection</div>
+                        </div>
+                        
+                        <div class="result-item">
+                            <div class="result-label">Annual Revenue (USD)</div>
+                            <div class="result-value" id="annual-usd">$405.25</div>
+                            <div class="result-note">365-day projection</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="math-grid">
+                <div class="formula">
+                    <div class="label">POOL SHARE FORMULA</div>
+                    <div class="equation">Your Share = (Your Hashrate / Pool Hashrate) × Block Reward</div>
+                    <div class="example">Example: 600 H/s ÷ 100,000,000 H/s × 0.6 XMR = 0.0000036 XMR per block</div>
+                </div>
+                
+                <div class="formula">
+                    <div class="label">DAILY EARNINGS</div>
+                    <div class="equation">Daily XMR = (Hashrate × Uptime) / Difficulty × Reward Factor</div>
+                    <div class="example">Example: (600 H/s × 24h × 3600s) / 350B × 0.6 ≈ 0.00009 XMR/day</div>
+                </div>
+                
+                <div class="formula">
+                    <div class="label">USD CONVERSION</div>
+                    <div class="equation">USD Value = XMR Amount × XMR Price</div>
+                    <div class="example">Example: 0.00009 XMR × $265 = $0.024/day per device</div>
+                </div>
+                
+                <div class="formula">
+                    <div class="label">POOL EFFICIENCY</div>
+                    <div class="equation">Pool Bonus = Individual × (1 + Pool Efficiency Multiplier)</div>
+                    <div class="example">Example: Solo 0.00005 → Pool 0.00009 (80% increase from consistent finds)</div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Mesh Network Section -->
+        <section class="section">
+            <h2 class="section-title">🕸️ Why Mesh Networks?</h2>
+            <p class="section-subtitle">Centralized infrastructure is a single point of failure. Mesh networks route around damage, ensuring the fleet sails on even when individual nodes go dark.</p>
+            
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <h3>Decentralized Control</h3>
+                    <p>No central server to censor, shut down, or compromise. Each node operates independently while coordinating through encrypted gossipsub protocol. The fleet has no head to cut off.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <h3>Resilient Routing</h3>
+                    <p>Messages automatically route around failed nodes. If one captain goes offline, intelligence flows through alternate paths. The mesh heals itself — traffic re-routes in milliseconds.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📡</div>
+                    <h3>Gossipsub Protocol</h3>
+                    <p>Nodes "gossip" about new messages, propagating data through the network efficiently. Topics organize communication (fleet-broadcast, agent-tasks, agent-heartbeat). Subscribe once, receive everywhere.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>No Infrastructure Dependency</h3>
+                    <p>Don't rely on AWS, Google, or Azure. Run nodes on consumer hardware, mobile devices, home servers. The fleet exists wherever captains sail — no corporate cloud required.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Low Latency Coordination</h3>
+                    <p>Peer-to-peer messaging means direct communication between agents. No round-trips to central servers. Task delegation, status updates, intelligence sharing — all happen in real-time.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🏴</div>
+                    <h3>Censorship Resistance</h3>
+                    <p>No gateway to block, no API to rate-limit, no terms of service to violate. The mesh operates on open protocols. Governments can't shut down what has no center.</p>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 48px;">
+                <h3>📊 Mesh Network Math</h3>
+                <p style="margin-bottom: 16px;"><strong>Network Value scales exponentially with participants:</strong></p>
+                <div class="formula" style="margin-bottom: 16px;">
+                    <div class="equation">Metcalfe's Law: Network Value ∝ n²</div>
+                    <div class="example">5 nodes = 25 value units | 10 nodes = 100 value units | 100 nodes = 10,000 value units</div>
+                </div>
+                <p><strong>Redundancy formula:</strong> With n nodes, you need (n-1) failures to disconnect the network. At 33 agents, 32 must fail before communication breaks. That's why the fleet sails on.</p>
+            </div>
+        </section>
+        
+        <!-- Smart Contracts Section -->
+        <section class="section">
+            <h2 class="section-title">🤖 How Smart Contracts Work</h2>
+            <p class="section-subtitle">Self-executing code on the blockchain. No intermediaries, no discretion, no corruption. The contract executes exactly as written — every time.</p>
+            
+            <div class="card">
+                <h3>What Is a Smart Contract?</h3>
+                <p>A smart contract is a program that runs on a blockchain. It automatically executes when predefined conditions are met. Think of it as a vending machine: you put in X, it delivers Y. No clerk, no discretion, no "let me check with my manager."</p>
+                <p style="margin-top: 12px;"><strong>Traditional Contract:</strong> Lawyer writes terms → Parties sign → Someone breaches → Lawyer sues → Court decides → Months later, maybe enforcement</p>
+                <p style="margin-top: 8px;"><strong>Smart Contract:</strong> Code defines terms → Conditions met → Automatic execution → Done in seconds</p>
+            </div>
+            
+            <div class="math-grid" style="margin-top: 48px;">
+                <div class="card">
+                    <h3>💰 Revenue Distribution</h3>
+                    <p>When a customer pays $100 for a service:</p>
+                    <div class="formula" style="margin-top: 12px;">
+                        <div class="equation">1. Payment received → Smart contract triggers</div>
+                        <div class="equation">2. 95% → DAO treasury (automatic)</div>
+                        <div class="equation">3. 5% → Service provider wallet</div>
+                        <div class="equation">4. Transaction logged on-chain (public audit)</div>
+                    </div>
+                    <p style="margin-top: 12px; font-size: 13px;">No accountant needed. No "we'll send it next week." The code executes instantly, every time.</p>
+                </div>
+                
+                <div class="card">
+                    <h3>⛏️ Mining Rewards</h3>
+                    <p>When the pool finds a block (0.6 XMR reward):</p>
+                    <div class="formula" style="margin-top: 12px;">
+                        <div class="equation">1. Block reward → Pool smart contract</div>
+                        <div class="equation">2. Contract calculates each miner's share</div>
+                        <div class="equation">3. Proportional to hashrate contributed</div>
+                        <div class="equation">4. Automatic payout to each wallet</div>
+                    </div>
+                    <p style="margin-top: 12px; font-size: 13px;">No pool operator can run off with funds. The contract holds and distributes automatically.</p>
+                </div>
+                
+                <div class="card">
+                    <h3>🎓 Certification Verification</h3>
+                    <p>When a captain completes XMRT University:</p>
+                    <div class="formula" style="margin-top: 12px;">
+                        <div class="equation">1. Module completion → On-chain record</div>
+                        <div class="equation">2. All 6 modules done → NFT minted</div>
+                        <div class="equation">3. NFT = verifiable credential</div>
+                        <div class="equation">4. Services check NFT before granting access</div>
+                    </div>
+                    <p style="margin-top: 12px; font-size: 13px;">No fake certificates. No "I swear I finished it." The blockchain proves completion cryptographically.</p>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 48px;">
+                <h3>🔒 Why Smart Contracts Matter for XMRT DAO</h3>
+                <div class="feature-grid">
+                    <div>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;">Transparency</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);">Every transaction is on-chain. Anyone can audit the DAO's finances. No hidden wallets, no "trust us bro."</p>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;">Automation</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);">Revenue distribution, reward payouts, membership verification — all automatic. No manual processing, no delays.</p>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;">Trustlessness</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);">You don't need to trust the DAO operators. You trust the code. The code executes exactly as written — no discretion, no corruption.</p>
+                    </div>
+                    <div>
+                        <h4 style="color: var(--accent); margin-bottom: 8px;">Treasury Protection</h4>
+                        <p style="font-size: 14px; color: var(--text-secondary);">Multi-sig wallets require multiple signers for large withdrawals. No single person can drain the treasury. Code-enforced governance.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <footer>
+        <div class="container">
+            <p>XMRT DAO — Fortune Favors the Bold</p>
+            <p style="margin-top:8px">
+                <a href="https://github.com/xmrtdao">GitHub</a> ·
+                <a href="https://xmrtdao.github.io/university">University</a> ·
+                <a href="https://whop.com/xmrt-dao">Membership</a> ·
+                <a href="/">Home</a>
+            </p>
+            <p style="margin-top:16px;font-size:12px;color:#555">While others build SDKs, we build empires.</p>
+        </div>
+    </footer>
+    
+    <script>
+        // Mining Calculator Logic
+        const hashrateSlider = document.getElementById('hashrate-slider');
+        const devicesSlider = document.getElementById('devices-slider');
+        const uptimeSlider = document.getElementById('uptime-slider');
+        const xmrPriceSlider = document.getElementById('xmr-price-slider');
+        const advancedProcessorsToggle = document.getElementById('advanced-processors-toggle');
+        const solidStateBatteryToggle = document.getElementById('solid-state-battery-toggle');
+        
+        // Network difficulty (approximate, changes over time)
+        const NETWORK_DIFFICULTY = 350000000000; // 350B
+        const BLOCK_REWARD = 0.6; // XMR per block
+        const BLOCKS_PER_DAY = 720; // ~1 block every 2 minutes
+        
+        function formatHashrate(h) {
+            if (h >= 1000000) return (h / 1000000).toFixed(1) + ' MH/s';
+            if (h >= 1000) return (h / 1000).toFixed(1) + ' KH/s';
+            return h.toFixed(0) + ' H/s';
+        }
+        
+        function calculate() {
+            let hashrate = parseInt(hashrateSlider.value);
+            let devices = parseInt(devicesSlider.value);
+            let uptime = parseInt(uptimeSlider.value);
+            let xmrPrice = parseInt(xmrPriceSlider.value);
+            
+            // Apply upgrades
+            if (advancedProcessorsToggle.checked) {
+                hashrate *= 2.5;
+            }
+            if (solidStateBatteryToggle.checked) {
+                uptime = Math.min(24, uptime * 1.25);
+            }
+            
+            // Update display values
+            document.getElementById('hashrate-value').textContent = formatHashrate(hashrate);
+            document.getElementById('devices-value').textContent = devices.toLocaleString();
+            document.getElementById('uptime-value').textContent = uptime.toFixed(1) + ' hrs';
+            document.getElementById('xmr-price-value').textContent = '$' + xmrPrice;
+            
+            // Calculate total hashrate
+            const totalHashrate = hashrate * devices;
+            document.getElementById('total-hashrate').textContent = formatHashrate(totalHashrate);
+            
+            // Simplified mining calculation (approximation)
+            // Daily XMR = (Your Hashrate / Network Difficulty) × Blocks per Day × Block Reward
+            const dailyXMR = (totalHashrate / NETWORK_DIFFICULTY) * BLOCKS_PER_DAY * BLOCK_REWARD;
+            const dailyUSD = dailyXMR * xmrPrice;
+            const monthlyUSD = dailyUSD * 30;
+            const annualUSD = dailyUSD * 365;
+            
+            document.getElementById('daily-xmr').textContent = dailyXMR.toFixed(6) + ' XMR';
+            document.getElementById('daily-usd').textContent = '$' + dailyUSD.toFixed(2);
+            document.getElementById('monthly-usd').textContent = '$' + monthlyUSD.toFixed(2);
+            document.getElementById('annual-usd').textContent = '$' + annualUSD.toFixed(2);
+        }
+        
+        // Event listeners
+        hashrateSlider.addEventListener('input', calculate);
+        devicesSlider.addEventListener('input', calculate);
+        uptimeSlider.addEventListener('input', calculate);
+        xmrPriceSlider.addEventListener('input', calculate);
+        advancedProcessorsToggle.addEventListener('change', calculate);
+        solidStateBatteryToggle.addEventListener('change', calculate);
+        
+        // Initial calculation
+        calculate();
+        
+        // Mesh animation (same as homepage)
+        const canvas = document.getElementById('mesh-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        
+        const nodes = [];
+        const numNodes = 50;
+        
+        for (let i = 0; i < numNodes; i++) {
+            nodes.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 0.5,
+                vy: (Math.random() - 0.5) * 0.5,
+            });
+        }
+        
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update and draw nodes
+            nodes.forEach(node => {
+                node.x += node.vx;
+                node.y += node.vy;
+                
+                if (node.x < 0 || node.x > canvas.width) node.vx *= -1;
+                if (node.y < 0 || node.y > canvas.height) node.vy *= -1;
+                
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 102, 0, 0.5)';
+                ctx.fill();
+            });
+            
+            // Draw connections
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 150) {
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x, nodes[i].y);
+                        ctx.lineTo(nodes[j].x, nodes[j].y);
+                        ctx.strokeStyle = `rgba(255, 102, 0, ${0.3 * (1 - dist / 150)})`;
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        animate();
+    </script>
+</body>
+</html>
