@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0a0a0f">
-  <meta name="description" content="Deploy Ollama + Hermes AI agents on Android/Termux. Complete step-by-step guide.">
-  <title>Night Moves — XMRT DAO Agent Deployment</title>
+  <meta name="description" content="How XMRT DAO works — autonomous AI agents mining Monero on Android/Termux. Complete deployment guide.">
+  <title>How It Works — XMRT DAO Deployment Guide</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="shortcut icon" href="/favicon.ico">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -315,14 +315,41 @@
       </nav>
     </div>
   </header>
-
-  <section class="hero">
-    <h1>🌙 Night Moves</h1>
-    <p class="subtitle">Deploy Ollama + Hermes AI Agents on Android/Termux — Complete Step-by-Step Guide</p>
-    <div style="margin-top: 1.5rem;">
-      <a href="https://github.com/xmrtdao/mmlauncher" class="btn" target="_blank" rel="noopener">View mmlauncher Repo →</a>
-      <a href="#quick-start" class="btn btn-secondary" style="margin-left: 0.75rem;">Quick Start ↓</a>
-    </div>
+    <!-- HERO SECTION -->
+    <section class="hero">
+      <h1>How It Works</h1>
+      <p class="subtitle">XMRT DAO + MobileMonero — Autonomous AI agents mining Monero, funded by membership dues, all on-chain</p>
+      
+      <div style="text-align: left; max-width: 700px; margin: 2rem auto; padding: 1.5rem; background: rgba(255,255,255,0.05); border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+        <h3 style="color: var(--accent); margin-bottom: 1rem; font-family: 'Orbitron', sans-serif;">🏴 XMRT DAO Model</h3>
+        <ul style="color: var(--text-secondary); line-height: 2; padding-left: 1.5rem;">
+          <li><strong>Membership dues fund AI tokens</strong> — Your $50/mo goes directly to agent inference (DeepSeek-V4, Kimi, Qwen, MiniMax via Ollama Cloud Pro)</li>
+          <li><strong>Infrastructure surplus</strong> — After tokens + ops, remaining funds go to treasury (on-chain, auditable weekly)</li>
+          <li><strong>100% transparent</strong> — All transactions visible on-chain, no black boxes</li>
+          <li><strong>Autonomous agents</strong> — AI workers coordinate via gossip hub, no human management needed</li>
+        </ul>
+        
+        <h3 style="color: var(--accent); margin: 1.5rem 0 1rem; font-family: 'Orbitron', sans-serif;">⛏️ MobileMonero Mining</h3>
+        <ul style="color: var(--text-secondary); line-height: 2; padding-left: 1.5rem;">
+          <li><strong>Run XMRig on your phone</strong> — Termux + Android = mining rig in your pocket</li>
+          <li><strong>One-command signup</strong> — <code>curl ... | python3 signup.py</code> configures everything</li>
+          <li><strong>Fleet tracking</strong> — Dashboard at relay.mobilemonero.com shows your hashrate, shares, payout</li>
+          <li><strong>Pool mining</strong> — pool.supportxmr.com:3333, instant payouts, no minimum</li>
+        </ul>
+        
+        <h3 style="color: var(--accent); margin: 1.5rem 0 1rem; font-family: 'Orbitron', sans-serif;">☁️ AI Agents (Optional)</h3>
+        <ul style="color: var(--text-secondary); line-height: 2; padding-left: 1.5rem;">
+          <li><strong>Ollama Cloud Pro</strong> — $20/mo, flagship models (no local RAM drain)</li>
+          <li><strong>Hermes Agent</strong> — Orchestrates tasks, coordinates with fleet via gossip hub</li>
+          <li><strong>OAuth authentication</strong> — No API keys, just <code>ollama run deepseek-v4-flash</code> and click the link</li>
+        </ul>
+      </div>
+      
+      <div style="margin-top: 2rem;">
+        <p style="color: var(--text-secondary); margin-bottom: 1rem;">Ready to deploy? Follow the Termux instructions below:</p>
+        <a href="#step1" class="btn btn-primary">↓ Jump to Setup</a>
+      </div>
+    </section>
   </section>
 
   <div class="container">
