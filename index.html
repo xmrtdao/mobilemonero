@@ -154,12 +154,21 @@
         
         /* Hero Section */
         .hero {
-            min-height: calc(100vh - 80px);
+            min-height: 100vh;
             display: flex;
             align-items: center;
-            padding: 0;
+            padding: 80px 0 40px;
             position: relative;
             overflow: hidden;
+        }
+        
+        /* Mobile-first: content first, visual secondary */
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 40px;
+            align-items: center;
+            width: 100%;
         }
         
         .hero-video {
@@ -186,22 +195,15 @@
             position: relative;
             z-index: 2;
             width: 100%;
-        }
-        
-        .hero-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 60px;
-            align-items: center;
-            width: 100%;
+            text-align: left;
         }
         
         .hero h1 {
-            font-size: clamp(36px, 4.5vw, 64px);
+            font-size: clamp(32px, 8vw, 64px);
             font-weight: 800;
             line-height: 1.05;
             letter-spacing: -2px;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
         
         .hero h1 .gradient {
@@ -214,19 +216,20 @@
         .hero p {
             font-size: 18px;
             color: var(--text-secondary);
-            max-width: 480px;
+            max-width: 540px;
             line-height: 1.7;
-            margin-bottom: 36px;
+            margin-bottom: 24px;
         }
         
         .hero-actions {
             display: flex;
             gap: 12px;
             flex-wrap: wrap;
+            margin-bottom: 16px;
         }
         
         .btn {
-            padding: 14px 28px;
+            padding: 16px 24px;
             border-radius: 10px;
             font-size: 15px;
             font-weight: 600;
@@ -265,11 +268,12 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            order: 2;
         }
         
         .hero-ring {
-            width: 320px;
-            height: 320px;
+            width: 280px;
+            height: 280px;
             border-radius: 50%;
             border: 1px solid var(--border);
             position: relative;
@@ -659,37 +663,49 @@
             .hero-grid {
                 grid-template-columns: 1fr;
                 gap: 32px;
-                text-align: center;
+                text-align: left;
             }
             
             .hero {
-                min-height: auto;
-                padding-top: 60px;
+                min-height: 100vh;
+                padding: 70px 0 30px;
+                align-items: flex-start;
             }
             
             .hero-visual {
-                order: -1;
+                order: 2;
+                margin-top: 20px;
             }
             
             .hero p {
                 max-width: 100%;
+                font-size: 16px;
             }
             
             .hero-actions {
-                justify-content: center;
+                justify-content: flex-start;
+                gap: 10px;
             }
             
             .hero-ring {
-                width: 220px;
-                height: 220px;
+                width: 200px;
+                height: 200px;
             }
             
             .hero-stat .v {
-                font-size: 20px;
+                font-size: 18px;
             }
             
             .hs-1 .v {
-                font-size: 32px;
+                font-size: 26px;
+            }
+            
+            .hero-content {
+                text-align: left;
+            }
+            
+            .hero-content > div {
+                text-align: left;
             }
             
             .features-grid {
@@ -722,21 +738,46 @@
         
         @media (max-width: 480px) {
             .hero h1 {
-                font-size: 28px;
+                font-size: 26px;
                 letter-spacing: -1px;
+                margin-bottom: 12px;
             }
             
             .hero p {
-                font-size: 15px;
+                font-size: 14px;
+                line-height: 1.6;
+                margin-bottom: 20px;
             }
             
             .btn {
-                padding: 12px 20px;
+                padding: 14px 18px;
                 font-size: 14px;
+                width: 100%;
+                justify-content: center;
             }
             
             .container {
                 padding: 0 16px;
+            }
+            
+            .hero-actions {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .audio-mute {
+                width: 100%;
+                justify-content: center;
+                margin-top: 12px;
+            }
+            
+            .hero-visual {
+                margin-top: 24px;
+            }
+            
+            .hero-ring {
+                width: 180px;
+                height: 180px;
             }
         }
     </style>
