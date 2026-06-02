@@ -864,6 +864,103 @@
     </footer>
     
     <script>
+        // XMRT DAO Dynamic Data Loader
+        const DAO_API = 'https://relay.mobilemonero.com';
+        
+        async function fetchDAOHealth() {
+            try {
+                const res = await fetch(`${DAO_API}/api/dao/health`);
+                const data = await res.json();
+                return data;
+            } catch (e) {
+                console.error('Failed to fetch DAO health:', e);
+                return null;
+            }
+        }
+        
+        async function fetchGitHubStats() {
+            try {
+                const res = await fetch('https://api.github.com/users/xmrtdao');
+                const data = await res.json();
+                return { repos: data.public_repos || 0, followers: data.followers || 0 };
+            } catch (e) {
+                console.error('Failed to fetch GitHub stats:', e);
+                return { repos: 73, followers: 2 };
+            }
+        }
+        
+        async function fetchFleetMessages() {
+            try {
+                const res = await fetch(`${DAO_API}/api/fleet-chat/messages`);
+                const data = await res.json();
+                return data.messages || [];
+            } catch (e) {
+                console.error('Failed to fetch fleet messages:', e);
+                return [];
+            }
+        }
+        
+        async function updateHeroStats() {
+            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
+            
+            // Update revenue target (from Supabase bookings)
+            const revenueEl = document.querySelector('.hs-1 .v');
+            if (health && health.bookings && health.bookings.total_revenue) {
+                const rev = health.bookings.total_revenue;
+                revenueEl.textContent = rev >= 1000 ? `$${(rev/1000).toFixed(1)}K` : `$${rev}`;
+            }
+            
+            // Update active ships (fleet agents)
+            const shipsEl = document.querySelector('.hs-2 .v');
+            if (health && health.fleet && health.fleet.active_agents) {
+                shipsEl.textContent = health.fleet.active_agents;
+            }
+            
+            // Update revenue streams
+            const streamsEl = document.querySelector('.hs-3 .v');
+            if (health && health.revenue_streams) {
+                streamsEl.textContent = health.revenue_streams;
+            }
+            
+            // Update GitHub repos
+            const reposEl = document.querySelector('.hs-4 .v');
+            reposEl.textContent = github.repos;
+            
+            // Update labels
+            document.querySelector('.hs-4 .l').textContent = 'GitHub Repos';
+        }
+        
+        async function updateSocialProof() {
+            const [health, github] = await Promise.all([fetchDAOHealth(), fetchGitHubStats()]);
+            const badges = document.querySelectorAll('.badge');
+            
+            if (badges.length >= 4) {
+                // Update agent count
+                const agentCount = health && health.fleet && health.fleet.active_agents ? health.fleet.active_agents : 5;
+                badges[0].innerHTML = `🏴‍☠️ <strong>${agentCount}</strong> Autonomous Agents`;
+                
+                // Update GitHub repos
+                badges[1].innerHTML = `⛏️ <strong>${github.repos}</strong> Public Repos`;
+                
+                // Update fleet messages count
+                const messages = await fetchFleetMessages();
+                badges[2].innerHTML = `🔐 <strong>${messages.length}</strong> Fleet Messages`;
+                
+                // Update followers
+                badges[3].innerHTML = `📖 <strong>${github.followers}</strong> Fleet Followers`;
+            }
+        }
+        
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            updateHeroStats();
+            updateSocialProof();
+            
+            // Refresh every 60 seconds
+            setInterval(updateHeroStats, 60000);
+            setInterval(updateSocialProof, 60000);
+        });
+        
         // Mesh animation
         const canvas = document.getElementById('mesh-canvas');
         const ctx = canvas.getContext('2d');
