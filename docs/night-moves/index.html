@@ -441,44 +441,137 @@ pkg update && pkg upgrade -y</pre>
     <!-- OLLAMA + HERMES (OPTIONAL) -->
     <div class="step-card">
       <div class="step-number">Optional</div>
-      <h2 class="step-title">Add AI Agents (Ollama + Hermes)</h2>
+      <h2 class="step-title">Add AI Agents (Ollama Cloud + Hermes)</h2>
       
-      <p>Want to run AI agents alongside mining? Here's how:</p>
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>☁️ Recommended: Ollama Cloud Pro</strong> — Run agents on powerful cloud GPUs instead of your phone. No RAM drain, no battery drain, full-speed inference.
+      </div>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Ollama</h3>
-      <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Why Ollama Cloud?</h3>
+      <ul>
+        <li><strong>Local Ollama:</strong> Requires 4-8GB RAM, drains battery, slow on mobile chips, limited to tiny models (0.5B-3B params)</li>
+        <li><strong>Ollama Cloud Pro ($20/mo):</strong> Run flagship models (DeepSeek-V4, Kimi, Qwen, MiniMax) with unlimited context, no local resource usage</li>
+      </ul>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Pull Lightweight Models</h3>
-      <pre>ollama pull qwen2.5:0.5b
-ollama pull llama3.2:1b</pre>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Recommended Models</h3>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Ollama Server</h3>
-      <pre>ollama serve &</pre>
-      <p>This runs in the background. Open a new Termux session for the next step.</p>
+      <p><strong>For Efficiency (Fast, Cheap, High-Throughput):</strong></p>
+      <ul>
+        <li><code>deepseek-v4-flash</code> — Best cost/performance ratio, ideal for agent loops</li>
+        <li><code>minimax</code> — Ultra-fast responses, great for real-time chat</li>
+      </ul>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Hermes Agent</h3>
+      <p><strong>For Completeness & Creativity (Deep Reasoning, Long Context):</strong></p>
+      <ul>
+        <li><code>kimi</code> — 200K+ context, excellent for document analysis</li>
+        <li><code>qwen</code> — Strong multilingual + coding capabilities</li>
+      </ul>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 1: Subscribe to Ollama Cloud Pro</h3>
+      <pre>Visit: https://ollama.com/pro
+Price: $20/month
+Includes: Unlimited API calls, all models, 200K+ context</pre>
+      <div style="text-align: center; margin: 1rem 0;">
+        <a href="https://ollama.com/pro" class="btn" target="_blank" rel="noopener">Get Ollama Cloud Pro →</a>
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 2: Get Your API Key</h3>
+      <ol>
+        <li>Log in to <a href="https://ollama.com" style="color: var(--info);">ollama.com</a></li>
+        <li>Go to Settings → API Keys</li>
+        <li>Click "Create New Key"</li>
+        <li>Copy the key (starts with <code>sk-</code>)</li>
+      </ol>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 3: Install Hermes Agent</h3>
       <pre>cd ~
 git clone https://github.com/nousresearch/hermes-agent.git
 cd hermes-agent
 pip install -e .
 pip install -r requirements.txt</pre>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Configure Hermes</h3>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 4: Configure for Ollama Cloud</h3>
       <pre>cp .env.example .env
 nano .env</pre>
       
       <p>Set these values in <code>.env</code>:</p>
-      <pre>OLLAMA_BASE_URL=http://localhost:11434
-DEFAULT_MODEL=qwen2.5:0.5b
-HERMES_PORT=8080</pre>
+      <pre># Ollama Cloud Configuration
+OLLAMA_BASE_URL=https://api.ollama.com/v1
+OLLAMA_API_KEY=sk-your-key-here
+DEFAULT_MODEL=deepseek-v4-flash
+
+# Alternative models by use case:
+# - Efficiency: deepseek-v4-flash, minimax
+# - Creativity: kimi, qwen
+# - Coding: qwen-coder, deepseek-coder
+# - Long context: kimi (200K+)</pre>
       
       <p>Press <code>Ctrl+X</code>, <code>Y</code>, <code>Enter</code> to save.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 5: Start Hermes</h3>
+      <pre>hermes agent start</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 6: Test Your Agent</h3>
+      <pre>curl https://api.ollama.com/v1/chat/completions \
+  -H "Authorization: Bearer sk-your-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Say hello in one word"}]
+  }'</pre>
+      
+      <div class="alert alert-success" style="margin-top: 1rem;">
+        <strong>✅ Cloud Agents Active!</strong> Your Hermes agent is now running on Ollama Cloud — no local RAM usage, full-speed inference.
+      </div>
+      
+      <div class="alert alert-warning" style="margin-top: 1rem;">
+        <strong>⚠️ Local Ollama (Alternative):</strong> If you prefer running models locally instead of cloud, see the <a href="#local-ollama" style="color: var(--info); text-decoration: underline;">Local Ollama Setup</a> section below. Requires 4GB+ RAM for usable models.
+      </div>
+    </div>
+
+    <!-- LOCAL OLLAMA (ALTERNATIVE) -->
+    <div class="step-card" id="local-ollama">
+      <div class="step-number">Alternative</div>
+      <h2 class="step-title">Local Ollama Setup (Advanced)</h2>
+      
+      <div class="alert alert-warning" style="margin-top: 1rem;">
+        <strong>⚠️ Hardware Requirements:</strong> Minimum 4GB RAM for 1B-3B models, 8GB+ for 7B+ models. Significant battery drain. Slower inference than cloud.
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Ollama</h3>
+      <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Pull Mobile-Optimized Models</h3>
+      <pre># Tiny models (under 2GB RAM)
+ollama pull qwen2.5:0.5b
+ollama pull llama3.2:1b
+
+# Medium models (3-4GB RAM)
+ollama pull qwen2.5:1.5b
+ollama pull llama3.2:3b
+
+# Large models (6GB+ RAM, not recommended on mobile)
+ollama pull mistral:7b
+ollama pull llama3.1:8b</pre>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Ollama Server</h3>
+      <pre>ollama serve &</pre>
+      <p>This runs in the background. Open a new Termux session for Hermes.</p>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Configure Hermes for Local</h3>
+      <pre>cd ~/hermes-agent
+nano .env</pre>
+      
+      <p>Set these values:</p>
+      <pre>OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_MODEL=qwen2.5:1.5b
+HERMES_PORT=8080</pre>
       
       <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Hermes</h3>
       <pre>hermes agent start</pre>
       
-      <div class="alert alert-warning" style="margin-top: 1rem;">
-        <strong>⚠️ Resource Warning:</strong> Running mining + AI agents simultaneously requires 4GB+ RAM. Monitor with <code>free -m</code> and stop one service if you see memory pressure.
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>💡 Hybrid Approach:</strong> Run mining on your phone, run Hermes agents on Ollama Cloud. Best of both worlds — local XMR earnings + cloud AI power.
       </div>
     </div>
 
