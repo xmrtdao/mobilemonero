@@ -3,595 +3,614 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zero-Claw Chat — Encrypted Attorney-Client Communications</title>
-    <meta name="description" content="Zero-knowledge encrypted chat for attorney-client privilege. E2E encryption, no logs, can't be subpoenaed.">
-    
+    <title>Zero-Claw — Attorney-Client Privileged Communications</title>
+    <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* ═══════════════════════════════════════════════════════════════
+           ZERO-CLAW PROFESSIONAL LEGAL THEME
+           ═══════════════════════════════════════════════════════════════ */
         
         :root {
-            --bg-primary: #030303;
-            --bg-card: rgba(255, 255, 255, 0.03);
-            --border: rgba(255, 102, 0, 0.2);
-            --accent: #ff6600;
-            --accent-glow: rgba(255, 102, 0, 0.3);
-            --text-primary: #e8e8e8;
-            --text-secondary: #888;
-            --success: #22c55e;
-            --error: #ef4444;
+            /* Legal Professional Palette */
+            --navy-deep: #0a0e1a;
+            --navy-rich: #1a1f3a;
+            --navy-light: #2a3150;
+            --gold-primary: #D4AF37;
+            --gold-light: #FFD700;
+            --gold-dark: #B8860B;
+            --cream: #F5F1E8;
+            --cream-dark: #E8E4D5;
+            --text-primary: #F5F1E8;
+            --text-secondary: #C9B896;
+            --text-muted: #8B7355;
+            --success: #4CAF50;
+            --warning: #FF9800;
+            --danger: #f44336;
+            
+            /* Typography */
+            --font-heading: 'Georgia', 'Times New Roman', serif;
+            --font-body: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            --font-mono: 'Consolas', 'Monaco', monospace;
+            
+            /* Spacing */
+            --spacing-xs: 0.5rem;
+            --spacing-sm: 1rem;
+            --spacing-md: 1.5rem;
+            --spacing-lg: 2rem;
+            --spacing-xl: 3rem;
+            
+            /* Borders */
+            --border-radius: 4px;
+            --border-radius-lg: 8px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-primary);
+            font-family: var(--font-body);
+            background: var(--navy-deep);
             color: var(--text-primary);
+            line-height: 1.6;
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            overflow-x: hidden;
         }
         
-        /* Header */
+        /* ═══════════════════════════════════════════════════════════════
+           LAW LIBRARY BACKDROP
+           ═══════════════════════════════════════════════════════════════ */
+        
+        .library-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: 
+                linear-gradient(135deg, 
+                    rgba(10, 14, 26, 0.95) 0%, 
+                    rgba(26, 31, 58, 0.90) 50%,
+                    rgba(10, 14, 26, 0.95) 100%
+                ),
+                url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><rect fill="%231a1510" width="1200" height="800"/><g fill="%232a2015"><rect x="50" y="50" width="100" height="140" rx="2"/><rect x="160" y="50" width="80" height="140" rx="2"/><rect x="250" y="50" width="90" height="140" rx="2"/><rect x="350" y="50" width="110" height="140" rx="2"/><rect x="470" y="50" width="95" height="140" rx="2"/><rect x="575" y="50" width="85" height="140" rx="2"/><rect x="670" y="50" width="100" height="140" rx="2"/><rect x="780" y="50" width="90" height="140" rx="2"/><rect x="880" y="50" width="105" height="140" rx="2"/><rect x="995" y="50" width="95" height="140" rx="2"/><rect x="1100" y="50" width="50" height="140" rx="2"/><rect x="50" y="200" width="100" height="140" rx="2"/><rect x="160" y="200" width="80" height="140" rx="2"/><rect x="250" y="200" width="90" height="140" rx="2"/><rect x="350" y="200" width="110" height="140" rx="2"/><rect x="470" y="200" width="95" height="140" rx="2"/><rect x="575" y="200" width="85" height="140" rx="2"/><rect x="670" y="200" width="100" height="140" rx="2"/><rect x="780" y="200" width="90" height="140" rx="2"/><rect x="880" y="200" width="105" height="140" rx="2"/><rect x="995" y="200" width="95" height="140" rx="2"/><rect x="1100" y="200" width="50" height="140" rx="2"/><rect x="50" y="350" width="100" height="140" rx="2"/><rect x="160" y="350" width="80" height="140" rx="2"/><rect x="250" y="350" width="90" height="140" rx="2"/><rect x="350" y="350" width="110" height="140" rx="2"/><rect x="470" y="350" width="95" height="140" rx="2"/><rect x="575" y="350" width="85" height="140" rx="2"/><rect x="670" y="350" width="100" height="140" rx="2"/><rect x="780" y="350" width="90" height="140" rx="2"/><rect x="880" y="350" width="105" height="140" rx="2"/><rect x="995" y="350" width="95" height="140" rx="2"/><rect x="1100" y="350" width="50" height="140" rx="2"/><rect x="50" y="500" width="100" height="140" rx="2"/><rect x="160" y="500" width="80" height="140" rx="2"/><rect x="250" y="500" width="90" height="140" rx="2"/><rect x="350" y="500" width="110" height="140" rx="2"/><rect x="470" y="500" width="95" height="140" rx="2"/><rect x="575" y="500" width="85" height="140" rx="2"/><rect x="670" y="500" width="100" height="140" rx="2"/><rect x="780" y="500" width="90" height="140" rx="2"/><rect x="880" y="500" width="105" height="140" rx="2"/><rect x="995" y="500" width="95" height="140" rx="2"/><rect x="1100" y="500" width="50" height="140" rx="2"/></g><g fill="none" stroke="%23D4AF37" stroke-width="1" opacity="0.3"><rect x="48" y="48" width="104" height="144" rx="3"/><rect x="158" y="48" width="84" height="144" rx="3"/><rect x="248" y="48" width="94" height="144" rx="3"/><rect x="348" y="48" width="114" height="144" rx="3"/><rect x="468" y="48" width="99" height="144" rx="3"/><rect x="573" y="48" width="89" height="144" rx="3"/><rect x="668" y="48" width="104" height="144" rx="3"/><rect x="778" y="48" width="94" height="144" rx="3"/><rect x="878" y="48" width="109" height="144" rx="3"/><rect x="993" y="48" width="99" height="144" rx="3"/><rect x="1098" y="48" width="54" height="144" rx="3"/></g></svg>');
+            background-size: cover;
+            background-position: center;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           HEADER & NAVIGATION
+           ═══════════════════════════════════════════════════════════════ */
+        
         header {
-            padding: 1rem 2rem;
-            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, var(--navy-deep) 0%, rgba(10, 14, 26, 0.95) 100%);
+            border-bottom: 2px solid var(--gold-dark);
+            padding: var(--spacing-md) var(--spacing-lg);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: rgba(3, 3, 3, 0.8);
-            backdrop-filter: blur(12px);
+        }
+        
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
         }
         
         .logo {
-            font-size: 1.25rem;
-            font-weight: 700;
-            color: var(--accent);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
+            width: 180px;
+            height: auto;
         }
         
-        .logo span { color: var(--text-primary); }
-        
-        .status-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 999px;
+        .tagline {
+            font-family: var(--font-heading);
             font-size: 0.75rem;
-            font-weight: 600;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
         }
         
-        .status-badge.connected {
-            background: rgba(34, 197, 94, 0.1);
-            border-color: var(--success);
-            color: var(--success);
-        }
-        
-        /* Main Chat Area */
-        main {
-            flex: 1;
+        nav {
             display: flex;
-            max-width: 1200px;
-            margin: 0 auto;
-            width: 100%;
-            padding: 1rem;
-            gap: 1rem;
+            gap: var(--spacing-xs);
         }
         
-        /* Connection Panel */
-        .connection-panel {
-            width: 320px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            height: fit-content;
-        }
-        
-        .connection-panel h2 {
-            font-size: 1rem;
-            margin-bottom: 1rem;
-            color: var(--accent);
-        }
-        
-        .form-group {
-            margin-bottom: 1rem;
-        }
-        
-        .form-group label {
-            display: block;
-            font-size: 0.875rem;
+        nav a {
             color: var(--text-secondary);
-            margin-bottom: 0.5rem;
+            text-decoration: none;
+            padding: var(--spacing-xs) var(--spacing-sm);
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
         }
         
-        .form-group input {
-            width: 100%;
-            padding: 0.75rem;
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.875rem;
+        nav a:hover,
+        nav a.active {
+            color: var(--gold-primary);
+            background: rgba(212, 175, 55, 0.1);
+            border-color: var(--gold-dark);
         }
         
-        .form-group input:focus {
-            outline: none;
-            border-color: var(--accent);
+        nav a.active {
+            box-shadow: 0 0 15px rgba(212, 175, 55, 0.3);
         }
         
-        .btn {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s;
+        /* ═══════════════════════════════════════════════════════════════
+           MAIN CONTENT AREA
+           ═══════════════════════════════════════════════════════════════ */
+        
+        main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: var(--spacing-xl) var(--spacing-lg);
         }
         
-        .btn-primary {
-            background: var(--accent);
-            color: #000;
+        .hero-section {
+            text-align: center;
+            margin-bottom: var(--spacing-xl);
+            padding: var(--spacing-xl);
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
+            border: 1px solid var(--gold-dark);
+            border-radius: var(--border-radius-lg);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         }
         
-        .btn-primary:hover {
-            background: #ff8533;
-            transform: translateY(-1px);
+        .hero-title {
+            font-family: var(--font-heading);
+            font-size: 2.5rem;
+            color: var(--gold-primary);
+            margin-bottom: var(--spacing-sm);
+            text-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
         }
         
-        .btn-danger {
-            background: var(--error);
-            color: #fff;
-            margin-top: 0.5rem;
+        .hero-subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto var(--spacing-md);
         }
         
-        /* Chat Area */
-        .chat-container {
-            flex: 1;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
+        .hero-features {
             display: flex;
-            flex-direction: column;
+            justify-content: center;
+            gap: var(--spacing-lg);
+            flex-wrap: wrap;
+            margin-top: var(--spacing-lg);
+        }
+        
+        .feature-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--spacing-xs);
+            padding: var(--spacing-xs) var(--spacing-sm);
+            background: rgba(212, 175, 55, 0.1);
+            border: 1px solid var(--gold-dark);
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            color: var(--gold-primary);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           FEATURE CARDS (User Flow)
+           ═══════════════════════════════════════════════════════════════ */
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: var(--spacing-lg);
+            margin-bottom: var(--spacing-xl);
+        }
+        
+        .feature-card {
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.9) 0%, rgba(10, 14, 26, 0.9) 100%);
+            border: 1px solid var(--navy-light);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
             overflow: hidden;
         }
         
-        .chat-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--gold-dark), var(--gold-primary), var(--gold-dark));
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+        
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--gold-dark);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+        }
+        
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: var(--spacing-sm);
+        }
+        
+        .feature-title {
+            font-family: var(--font-heading);
+            font-size: 1.4rem;
+            color: var(--gold-primary);
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .feature-description {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-bottom: var(--spacing-md);
+            line-height: 1.7;
+        }
+        
+        .feature-status {
+            display: inline-flex;
             align-items: center;
-        }
-        
-        .chat-header h2 {
-            font-size: 1rem;
-            color: var(--text-primary);
-        }
-        
-        .room-info {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
-        
-        .messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 1.5rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-        
-        .message {
-            max-width: 70%;
-            padding: 0.75rem 1rem;
-            border-radius: 12px;
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-        }
-        
-        .message.own {
-            align-self: flex-end;
-            background: rgba(255, 102, 0, 0.1);
-            border-color: var(--accent);
-        }
-        
-        .message-header {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.25rem;
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-        
-        .message-content {
-            font-size: 0.875rem;
-            line-height: 1.5;
-            word-wrap: break-word;
-        }
-        
-        .system-message {
-            text-align: center;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            padding: 0.5rem;
-        }
-        
-        .message-input {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid var(--border);
-            display: flex;
-            gap: 0.75rem;
-        }
-        
-        .message-input input {
-            flex: 1;
-            padding: 0.75rem 1rem;
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.875rem;
-        }
-        
-        .message-input input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-        
-        .message-input button {
-            padding: 0.75rem 1.5rem;
-            background: var(--accent);
-            color: #000;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .message-input button:hover {
-            background: #ff8533;
-        }
-        
-        .message-input button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        /* Encryption Badge */
-        .encryption-badge {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            padding: 0.5rem 1rem;
-            background: var(--bg-primary);
-            border-radius: 8px;
-            margin-top: 1rem;
-        }
-        
-        .encryption-badge svg {
-            width: 1rem;
-            height: 1rem;
+            gap: var(--spacing-xs);
+            padding: var(--spacing-xs) var(--spacing-sm);
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid var(--success);
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
             color: var(--success);
         }
         
-        /* Responsive */
+        .feature-status.live::before {
+            content: '●';
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           USER FLOW STEPS
+           ═══════════════════════════════════════════════════════════════ */
+        
+        .user-flow {
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.95) 0%, rgba(10, 14, 26, 0.95) 100%);
+            border: 1px solid var(--gold-dark);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-xl);
+            margin-bottom: var(--spacing-xl);
+        }
+        
+        .flow-title {
+            font-family: var(--font-heading);
+            font-size: 1.8rem;
+            color: var(--gold-primary);
+            text-align: center;
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .flow-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--spacing-md);
+            counter-reset: step;
+        }
+        
+        .flow-step {
+            text-align: center;
+            padding: var(--spacing-md);
+            position: relative;
+        }
+        
+        .flow-step::before {
+            counter-increment: step;
+            content: counter(step);
+            display: block;
+            width: 50px;
+            height: 50px;
+            line-height: 50px;
+            margin: 0 auto var(--spacing-sm);
+            background: linear-gradient(135deg, var(--gold-dark), var(--gold-primary));
+            border-radius: 50%;
+            font-family: var(--font-heading);
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--navy-deep);
+            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.4);
+        }
+        
+        .flow-step-title {
+            font-family: var(--font-heading);
+            font-size: 1.1rem;
+            color: var(--text-primary);
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .flow-step-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           FOOTER
+           ═══════════════════════════════════════════════════════════════ */
+        
+        footer {
+            background: var(--navy-deep);
+            border-top: 2px solid var(--gold-dark);
+            padding: var(--spacing-lg);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: var(--spacing-lg);
+            margin-bottom: var(--spacing-sm);
+        }
+        
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .footer-links a:hover {
+            color: var(--gold-primary);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════
+           RESPONSIVE
+           ═══════════════════════════════════════════════════════════════ */
+        
         @media (max-width: 768px) {
-            main {
+            .header-content {
                 flex-direction: column;
+                gap: var(--spacing-md);
             }
             
-            .connection-panel {
-                width: 100%;
+            nav {
+                flex-wrap: wrap;
+                justify-content: center;
             }
             
-            .message {
-                max-width: 85%;
+            .hero-title {
+                font-size: 1.8rem;
+            }
+            
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .flow-steps {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
     </style>
 </head>
 <body>
-    <header>
-        <a href="/" class="logo">
-        <header>
-            <a href="/" class="logo">🔐 <span>Zero-Claw Chat</span></a>
-            <div class="status-badge" id="status-badge">Disconnected</div>
-        </header>
-        
-        <nav style="background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 0.75rem 2rem; display: flex; gap: 1rem; justify-content: center;">
-            <a href="/zero-claw/" style="color: var(--accent); text-decoration: none; font-weight: 600;">💬 Chat</a>
-            <a href="/zero-claw/create-room.html" style="color: var(--text-primary); text-decoration: none;">🏠 Create Room</a>
-            <a href="/zero-claw/paperhawk.html" style="color: var(--text-primary); text-decoration: none;">🦅 Document Audit</a>
-        </nav>
+    <!-- Law Library Backdrop -->
+    <div class="library-backdrop"></div>
     
-    <main>
-        <!-- Connection Panel -->
-        <div class="connection-panel" id="connection-panel">
-            <h2>Connect to Encrypted Room</h2>
-            
-            <div class="form-group">
-                <label>Relay Server</label>
-                <input type="text" id="relay-url" value="wss://chat.mobilemonero.com" placeholder="wss://...">
-            </div>
-            
-            <div class="form-group">
-                <label>Your Email</label>
-                <input type="email" id="username" placeholder="attorney@lawfirm.com">
-            </div>
-            
-            <div class="form-group">
-                <label>Case/Room ID</label>
-                <input type="text" id="room-id" placeholder="case-123" value="case-123">
-            </div>
-            
-            <div class="form-group">
-                <label>Shared Secret Password</label>
-                <input type="password" id="password" placeholder="Enter shared secret">
-            </div>
-            
-            <button class="btn btn-primary" onclick="connect()">Connect</button>
-            
-            <div class="encryption-badge">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                </svg>
-                <span>E2E Encrypted • Server Cannot Read</span>
-            </div>
-        </div>
-        
-        <!-- Chat Container -->
-        <div class="chat-container" id="chat-container" style="opacity: 0.5; pointer-events: none;">
-            <div class="chat-header">
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="assets/logo.svg" alt="Zero-Claw Logo" class="logo">
                 <div>
-                    <h2 id="chat-room-title">Room: case-123</h2>
-                    <div class="room-info" id="room-info">Waiting for connection...</div>
+                    <div class="tagline">Attorney-Client Privileged Communications</div>
                 </div>
             </div>
-            
-            <div class="messages" id="messages">
-                <div class="system-message">Connect to start encrypted chat</div>
-            </div>
-            
-            <div class="message-input">
-                <input type="text" id="message-input" placeholder="Type encrypted message..." disabled onkeypress="if(event.key==='Enter') sendMessage()">
-                <button onclick="sendMessage()" id="send-btn" disabled>Send</button>
-            </div>
+            <nav>
+                <a href="#encrypted-chat" class="active">🔐 Chat</a>
+                <a href="#create-room">📁 Create Room</a>
+                <a href="#document-audit">🦅 Document Audit</a>
+                <a href="#tribunal">⚖️ Tribunal</a>
+                <a href="#legal-library">📚 Legal Library</a>
+            </nav>
         </div>
+    </header>
+    
+    <!-- Main Content -->
+    <main>
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <h1 class="hero-title">⚖️ Zero-Claw Legal Platform</h1>
+            <p class="hero-subtitle">
+                The only chat platform that can't be subpoenaed. 
+                End-to-end encrypted attorney-client communications with integrated 
+                document intelligence and multi-agent legal tribunal.
+            </p>
+            <div class="hero-features">
+                <div class="feature-badge">🔒 E2E Encrypted</div>
+                <div class="feature-badge">⚖️ ABA Model Rule 1.6 Compliant</div>
+                <div class="feature-badge">📄 14 Statutory Checks</div>
+                <div class="feature-badge">🤖 8-Agent Tribunal</div>
+                <div class="feature-badge">🚫 Zero Logs</div>
+            </div>
+        </section>
+        
+        <!-- User Flow -->
+        <section class="user-flow">
+            <h2 class="flow-title">How It Works</h2>
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="flow-step-title">Create Room</div>
+                    <div class="flow-step-desc">Generate encrypted chat room with unique credentials</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">Invite Parties</div>
+                    <div class="flow-step-desc">Send secure invitations to attorney and client</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">Upload Documents</div>
+                    <div class="flow-step-desc">Submit contracts, invoices, evidence for analysis</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">Run Compliance</div>
+                    <div class="flow-step-desc">PaperHawk checks 14 statutory requirements</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">Request Tribunal</div>
+                    <div class="flow-step-desc">8-agent AI deliberation on legal issues</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">Receive Verdict</div>
+                    <div class="flow-step-desc">Judge decision with reasoning and remedies</div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Feature Cards -->
+        <section class="features-grid">
+            <!-- Encrypted Chat -->
+            <div class="feature-card" onclick="window.location.href='index.html'">
+                <div class="feature-icon">🔐</div>
+                <h3 class="feature-title">Encrypted Chat</h3>
+                <p class="feature-description">
+                    End-to-end encrypted attorney-client communications. 
+                    Server cannot read message content. SRP-6a authentication. 
+                    Keys wiped on disconnect. ABA Model Rule 1.6 compliant.
+                </p>
+                <div class="feature-status live">Live</div>
+            </div>
+            
+            <!-- Create Room -->
+            <div class="feature-card" onclick="window.location.href='create-room.html'">
+                <div class="feature-icon">📁</div>
+                <h3 class="feature-title">Create Room</h3>
+                <p class="feature-description">
+                    Generate dedicated chat rooms for each case or client. 
+                    Automatic invitation emails. Unique room ID and password. 
+                    Non-technical setup via web interface.
+                </p>
+                <div class="feature-status live">Live</div>
+            </div>
+            
+            <!-- Document Audit -->
+            <div class="feature-card" onclick="window.location.href='paperhawk.html'">
+                <div class="feature-icon">🦅</div>
+                <h3 class="feature-title">PaperHawk Audit</h3>
+                <p class="feature-description">
+                    Document intelligence with 14 statutory compliance checks. 
+                    HU VAT Act, ISA standards, GDPR Art. 28, AML sanctions. 
+                    Automated red flag detection with citation enforcement.
+                </p>
+                <div class="feature-status live">Live</div>
+            </div>
+            
+            <!-- ModelCourt Tribunal -->
+            <div class="feature-card" onclick="window.location.href='tribunal.html'">
+                <div class="feature-icon">⚖️</div>
+                <h3 class="feature-title">ModelCourt Tribunal</h3>
+                <p class="feature-description">
+                    8-agent AI legal deliberation system. Evidence Clerk, 
+                    Advocates, Risk Officer, Domain Expert, Cross-Examination, 
+                    Agreement Clerk, and Judge. 6-wave structured analysis.
+                </p>
+                <div class="feature-status live">Live</div>
+            </div>
+            
+            <!-- Legal Library -->
+            <div class="feature-card" id="legal-library">
+                <div class="feature-icon">📚</div>
+                <h3 class="feature-title">Legal Library</h3>
+                <p class="feature-description">
+                    Access to statutory references, case law, compliance 
+                    checklists, and legal research tools. Integrated with 
+                    PaperHawk domain checks and ModelCourt reasoning.
+                </p>
+                <div class="feature-status">Coming Soon</div>
+            </div>
+            
+            <!-- Settings -->
+            <div class="feature-card">
+                <div class="feature-icon">⚙️</div>
+                <h3 class="feature-title">Settings</h3>
+                <p class="feature-description">
+                    Configure encryption preferences, notification settings, 
+                    room expiration policies, custom branding for law firms, 
+                    and integration with practice management systems.
+                </p>
+                <div class="feature-status">Coming Soon</div>
+            </div>
+        </section>
     </main>
     
+    <!-- Footer -->
+    <footer>
+        <div class="footer-links">
+            <a href="#">Documentation</a>
+            <a href="#">Privacy Policy</a>
+            <a href="#">Terms of Service</a>
+            <a href="#">ABA Compliance</a>
+            <a href="#">Contact Support</a>
+        </div>
+        <p>© 2026 XMRT DAO. Zero-Claw — The Only Chat Platform That Can't Be Subpoenaed.</p>
+        <p style="margin-top: 0.5rem; font-size: 0.75rem;">
+            ABA Model Rule 1.6 Compliant | E2E Encrypted | Zero Logs | Zero Knowledge
+        </p>
+    </footer>
+    
     <script>
-        // Encryption module (HKDF + AES-like)
-        class EncryptionManager {
-            constructor(masterSecret) {
-                this.masterSecret = masterSecret;
-                this.roomKeys = new Map();
-            }
-            
-            async deriveRoomKey(roomId) {
-                if (this.roomKeys.has(roomId)) return this.roomKeys.get(roomId);
-                
-                const enc = new TextEncoder();
-                const keyData = await crypto.subtle.importKey(
-                    'raw', enc.encode(this.masterSecret), 'PBKDF2', false, ['deriveKey']
-                );
-                
-                const roomKey = await crypto.subtle.deriveKey(
-                    {
-                        name: 'PBKDF2',
-                        salt: enc.encode(roomId),
-                        iterations: 100000,
-                        hash: 'SHA-256'
-                    },
-                    keyData,
-                    { name: 'AES-GCM', length: 256 },
-                    false,
-                    ['encrypt', 'decrypt']
-                );
-                
-                this.roomKeys.set(roomId, roomKey);
-                return roomKey;
-            }
-            
-            async encryptMessage(roomId, message) {
-                const key = await this.deriveRoomKey(roomId);
-                const enc = new TextEncoder();
-                const iv = crypto.getRandomValues(new Uint8Array(12));
-                
-                const ciphertext = await crypto.subtle.encrypt(
-                    { name: 'AES-GCM', iv },
-                    key,
-                    enc.encode(JSON.stringify(message))
-                );
-                
-                const blob = new Uint8Array(iv.length + ciphertext.byteLength);
-                blob.set(iv, 0);
-                blob.set(new Uint8Array(ciphertext), iv.length);
-                
-                return btoa(String.fromCharCode(...blob));
-            }
-            
-            async decryptMessage(roomId, ciphertextB64) {
-                const key = await this.deriveRoomKey(roomId);
-                const blob = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
-                
-                const iv = blob.slice(0, 12);
-                const ciphertext = blob.slice(12);
-                
-                const plaintext = await crypto.subtle.decrypt(
-                    { name: 'AES-GCM', iv },
-                    key,
-                    ciphertext
-                );
-                
-                return JSON.parse(new TextDecoder().decode(plaintext));
-            }
-            
-            wipe() {
-                this.roomKeys.clear();
-            }
-        }
-        
-        // Global state
-        let ws = null;
-        let encryption = null;
-        let username = null;
-        let roomId = null;
-        
-        // UI Elements
-        const statusEl = document.getElementById('status');
-        const messagesEl = document.getElementById('messages');
-        const messageInput = document.getElementById('message-input');
-        const sendBtn = document.getElementById('send-btn');
-        const chatContainer = document.getElementById('chat-container');
-        
-        function addMessage(content, isOwn = false, isSystem = false) {
-            if (isSystem) {
-                const div = document.createElement('div');
-                div.className = 'system-message';
-                div.textContent = content;
-                messagesEl.appendChild(div);
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-                return;
-            }
-            
-            const div = document.createElement('div');
-            div.className = `message ${isOwn ? 'own' : ''}`;
-            div.innerHTML = `
-                <div class="message-header">
-                    <span>${isOwn ? 'You' : content.from}</span>
-                    <span>${new Date(content.timestamp).toLocaleTimeString()}</span>
-                </div>
-                <div class="message-content">${escapeHtml(content.content)}</div>
-            `;
-            messagesEl.appendChild(div);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        async function connect() {
-            const relayUrl = document.getElementById('relay-url').value;
-            const user = document.getElementById('username').value;
-            const room = document.getElementById('room-id').value;
-            const password = document.getElementById('password').value;
-            
-            if (!user || !room || !password) {
-                alert('Please fill in all fields');
-                return;
-            }
-            
-            try {
-                ws = new WebSocket(relayUrl);
-                
-                ws.onopen = async () => {
-                    console.log('Connected to relay');
-                    
-                    // Register
-                    ws.send(JSON.stringify({
-                        type: 'register',
-                        username: user,
-                        room_id: room
-                    }));
-                    
-                    // Initialize encryption
-                    encryption = new EncryptionManager(password);
-                    username = user;
-                    roomId = room;
-                    
-                    // Update UI
-                    statusEl.textContent = 'Connected';
-                    statusEl.classList.add('connected');
-                    document.getElementById('chat-room-title').textContent = `Room: ${room}`;
-                    document.getElementById('room-info').textContent = `Logged in as ${user}`;
-                    chatContainer.style.opacity = '1';
-                    chatContainer.style.pointerEvents = 'auto';
-                    messageInput.disabled = false;
-                    sendBtn.disabled = false;
-                    
-                    addMessage('Connected to encrypted room', false, true);
-                };
-                
-                ws.onmessage = async (event) => {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.type === 'registered') {
-                        addMessage('Successfully registered in room', false, true);
-                    } else if (data.type === 'message') {
-                        try {
-                            const decrypted = await encryption.decryptMessage(roomId, data.ciphertext);
-                            const isOwn = data.from === username;
-                            addMessage(decrypted, isOwn);
-                        } catch (e) {
-                            console.error('Decryption failed:', e);
-                            addMessage('⚠️ Decryption failed', false, true);
-                        }
-                    } else if (data.type === 'user_joined') {
-                        addMessage(`${data.username} joined the room`, false, true);
-                    } else if (data.type === 'user_left') {
-                        addMessage(`${data.username} left the room`, false, true);
+        // Smooth scroll for navigation
+        document.querySelectorAll('nav a, .feature-card').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                const href = this.getAttribute('href');
+                if (href.startsWith('#')) {
+                    e.preventDefault();
+                    const target = document.querySelector(href);
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }
-                };
-                
-                ws.onclose = () => {
-                    statusEl.textContent = 'Disconnected';
-                    statusEl.classList.remove('connected');
-                    chatContainer.style.opacity = '0.5';
-                    chatContainer.style.pointerEvents = 'none';
-                    messageInput.disabled = true;
-                    sendBtn.disabled = true;
-                    addMessage('Disconnected from server', false, true);
-                    
-                    if (encryption) encryption.wipe();
-                };
-                
-                ws.onerror = (e) => {
-                    console.error('WebSocket error:', e);
-                    addMessage('Connection error', false, true);
-                };
-                
-            } catch (e) {
-                alert('Connection failed: ' + e.message);
-            }
-        }
+                }
+            });
+        });
         
-        async function sendMessage() {
-            const content = messageInput.value.trim();
-            if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
+        // Update active nav on scroll
+        window.addEventListener('scroll', () => {
+            const sections = document.querySelectorAll('section');
+            const navLinks = document.querySelectorAll('nav a');
             
-            try {
-                const message = {
-                    from: username,
-                    content: content,
-                    type: 'chat'
-                };
-                
-                const ciphertext = await encryption.encryptMessage(roomId, message);
-                
-                ws.send(JSON.stringify({
-                    type: 'message',
-                    ciphertext: ciphertext
-                }));
-                
-                messageInput.value = '';
-                
-            } catch (e) {
-                console.error('Encryption failed:', e);
-                alert('Encryption failed');
-            }
-        }
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
+                if (window.pageYOffset >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+            
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.classList.add('active');
+                }
+            });
+        });
     </script>
 </body>
 </html>

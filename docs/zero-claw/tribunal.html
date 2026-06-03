@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ModelCourt Tribunal — Zero-Claw</title>
+    <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+    <style>
+        :root {
+            --navy-deep: #0a0e1a;
+            --navy-rich: #1a1f3a;
+            --gold-primary: #D4AF37;
+            --gold-dark: #B8860B;
+            --text-primary: #F5F1E8;
+            --text-secondary: #C9B896;
+            --success: #4CAF50;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--navy-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        
+        .library-backdrop {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1;
+            background: linear-gradient(135deg, rgba(10, 14, 26, 0.95) 0%, rgba(26, 31, 58, 0.90) 50%, rgba(10, 14, 26, 0.95) 100%);
+        }
+        
+        header {
+            background: linear-gradient(180deg, var(--navy-deep) 0%, rgba(10, 14, 26, 0.95) 100%);
+            border-bottom: 2px solid var(--gold-dark);
+            padding: 1.5rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            width: 180px;
+            height: auto;
+        }
+        
+        nav { display: flex; gap: 0.5rem; }
+        
+        nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        
+        nav a:hover, nav a.active {
+            color: var(--gold-primary);
+            background: rgba(212, 175, 55, 0.1);
+        }
+        
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+        
+        .tribunal-header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem;
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
+            border: 1px solid var(--gold-dark);
+            border-radius: 8px;
+        }
+        
+        .tribunal-title {
+            font-family: 'Georgia', serif;
+            font-size: 2.5rem;
+            color: var(--gold-primary);
+            margin-bottom: 1rem;
+        }
+        
+        .form-container {
+            background: rgba(26, 31, 58, 0.9);
+            border: 1px solid var(--gold-dark);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        label {
+            display: block;
+            color: var(--gold-primary);
+            font-family: 'Georgia', serif;
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--navy-deep);
+            border: 1px solid var(--gold-dark);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--gold-primary);
+            box-shadow: 0 0 10px rgba(212, 175, 55, 0.3);
+        }
+        
+        button {
+            background: linear-gradient(135deg, var(--gold-dark), var(--gold-primary));
+            color: var(--navy-deep);
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(212, 175, 55, 0.4);
+        }
+        
+        .results-container {
+            background: rgba(26, 31, 58, 0.9);
+            border: 1px solid var(--gold-dark);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-top: 2rem;
+            display: none;
+        }
+        
+        .results-container.show {
+            display: block;
+        }
+        
+        .verdict-box {
+            background: rgba(10, 14, 26, 0.8);
+            border: 2px solid var(--gold-primary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .verdict-title {
+            font-family: 'Georgia', serif;
+            color: var(--gold-primary);
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .agent-waves {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        
+        .wave-card {
+            background: var(--navy-deep);
+            border: 1px solid var(--gold-dark);
+            border-radius: 4px;
+            padding: 1rem;
+        }
+        
+        .wave-title {
+            color: var(--gold-primary);
+            font-family: 'Georgia', serif;
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            display: none;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(212, 175, 55, 0.2);
+            border-top-color: var(--gold-primary);
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="library-backdrop"></div>
+    
+    <header>
+        <div class="header-content">
+            <img src="assets/logo.svg" alt="Zero-Claw" class="logo">
+            <nav>
+                <a href="index.html">🔐 Chat</a>
+                <a href="create-room.html">📁 Create Room</a>
+                <a href="paperhawk.html">🦅 Document Audit</a>
+                <a href="tribunal.html" class="active">⚖️ Tribunal</a>
+            </nav>
+        </div>
+    </header>
+    
+    <main>
+        <div class="tribunal-header">
+            <h1 class="tribunal-title">⚖️ ModelCourt Tribunal</h1>
+            <p style="color: var(--text-secondary); max-width: 600px; margin: 0 auto;">
+                8-agent AI legal deliberation system. Submit your case for structured analysis 
+                by Evidence Clerk, Advocates, Risk Officer, Domain Expert, Cross-Examination, 
+                Agreement Clerk, and Judge.
+            </p>
+        </div>
+        
+        <div class="form-container">
+            <div class="form-group">
+                <label for="caseId">Case ID</label>
+                <input type="text" id="caseId" placeholder="e.g., case-2026-001">
+            </div>
+            
+            <div class="form-group">
+                <label for="issue">Legal Issue</label>
+                <input type="text" id="issue" placeholder="e.g., Was there a material breach of contract?">
+            </div>
+            
+            <div class="form-group">
+                <label for="claimant">Claimant</label>
+                <input type="text" id="claimant" placeholder="Claimant name">
+            </div>
+            
+            <div class="form-group">
+                <label for="respondent">Respondent</label>
+                <input type="text" id="respondent" placeholder="Respondent name">
+            </div>
+            
+            <div class="form-group">
+                <label for="documents">Case Documents</label>
+                <textarea id="documents" rows="6" placeholder="Paste contract text, correspondence, or case facts here..."></textarea>
+            </div>
+            
+            <button onclick="submitTribunal()">🏛️ Submit to Tribunal</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="color: var(--gold-primary);">Tribunal deliberating... (6 waves, 8 agents)</p>
+        </div>
+        
+        <div class="results-container" id="results">
+            <div class="verdict-box">
+                <h2 class="verdict-title">⚖️ Judge's Verdict</h2>
+                <div id="verdictContent"></div>
+            </div>
+            
+            <h3 style="color: var(--gold-primary); font-family: 'Georgia', serif; margin-bottom: 1rem;">Deliberation Waves</h3>
+            <div class="agent-waves" id="wavesContent"></div>
+        </div>
+    </main>
+    
+    <script>
+        async function submitTribunal() {
+            const caseId = document.getElementById('caseId').value;
+            const issue = document.getElementById('issue').value;
+            const claimant = document.getElementById('claimant').value;
+            const respondent = document.getElementById('respondent').value;
+            const documents = document.getElementById('documents').value;
+            
+            if (!caseId || !issue) {
+                alert('Case ID and Legal Issue are required');
+                return;
+            }
+            
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('results').classList.remove('show');
+            
+            try {
+                const response = await fetch('https://modelcourt.mobilemonero.com/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        case_id: caseId,
+                        issue: issue,
+                        parties: { claimant, respondent },
+                        documents: [{ type: 'case_summary', content: documents }]
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.tribunal_result) {
+                    displayResults(data);
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error submitting to tribunal: ' + error.message);
+            } finally {
+                document.getElementById('loading').classList.remove('show');
+            }
+        }
+        
+        function displayResults(data) {
+            const result = data.tribunal_result;
+            
+            // Verdict
+            document.getElementById('verdictContent').innerHTML = `
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;"><strong>Verdict:</strong> ${result.judge.verdict}</p>
+                <p style="margin-bottom: 1rem;"><strong>Confidence:</strong> ${(result.judge.confidence * 100).toFixed(0)}%</p>
+                <p style="margin-bottom: 1rem;"><strong>Reasoning:</strong> ${result.judge.reasoning}</p>
+                <p style="margin-bottom: 1rem;"><strong>Legal Basis:</strong> ${result.judge.legal_basis.join(', ')}</p>
+                <p><strong>Remedies:</strong> ${result.judge.remedies.join(', ')}</p>
+            `;
+            
+            // Waves
+            document.getElementById('wavesContent').innerHTML = `
+                <div class="wave-card">
+                    <div class="wave-title">Wave 1: Evidence Clerk</div>
+                    <p>${result.evidence_clerk.facts.length} facts, ${result.evidence_clerk.timeline.length} timeline events</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 2: Claimant Advocate</div>
+                    <p>${result.claimant_advocate.position}</p>
+                    <p style="margin-top: 0.5rem; color: var(--gold-primary);">Confidence: ${(result.claimant_advocate.confidence * 100).toFixed(0)}%</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 2: Defense Counsel</div>
+                    <p>${result.carrier_counsel.position}</p>
+                    <p style="margin-top: 0.5rem; color: var(--gold-primary);">Confidence: ${(result.carrier_counsel.confidence * 100).toFixed(0)}%</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 2: Risk Officer</div>
+                    <p>Severity: ${result.risk_officer.severity}</p>
+                    <p style="margin-top: 0.5rem;">${result.risk_officer.recommendations.join(', ')}</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 3: Domain Expert</div>
+                    <p>${result.domain_expert.expert_opinion}</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 4: Cross-Examination</div>
+                    <p>${result.cross_examination.factual_disputes.length} disputes identified</p>
+                </div>
+                <div class="wave-card">
+                    <div class="wave-title">Wave 5: Agreement Clerk</div>
+                    <p>${result.agreement_clerk.areas_of_agreement.length} areas of agreement</p>
+                </div>
+            `;
+            
+            document.getElementById('results').classList.add('show');
+        }
+    </script>
+</body>
+</html>
