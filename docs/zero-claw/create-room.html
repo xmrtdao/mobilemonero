@@ -39,6 +39,9 @@
             align-items: center;
             background: rgba(3, 3, 3, 0.8);
             backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
         
         .logo {
@@ -48,6 +51,28 @@
             text-decoration: none;
             display: flex;
             align-items: center;
+            gap: 0.5rem;
+        }
+        
+        nav {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        nav a:hover, nav a.active {
+            color: var(--accent);
+            background: rgba(255, 102, 0, 0.1);
+        }
             gap: 0.5rem;
         }
         
@@ -465,10 +490,17 @@
 </head>
 <body>
     <header>
-        <a href="/" class="logo">
-            🔐 <span>Zero-Claw Rooms</span>
-        </a>
-    </header>
+            <a href="/" class="logo">
+                🔐 <span>Zero-Claw Rooms</span>
+            </a>
+            <nav>
+                <a href="index.html">Home</a>
+                <a href="chat.html">Chat</a>
+                <a href="create-room.html" class="active">Rooms</a>
+                <a href="paperhawk.html">Audit</a>
+                <a href="tribunal.html">Tribunal</a>
+            </nav>
+        </header>
     
     <main>
         <div class="page-title">
