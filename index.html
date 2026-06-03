@@ -876,9 +876,9 @@
                     <div class="hero-ring"></div>
                     <div class="hero-ring-center"></div>
                     <div class="hero-stat hs-1"><div class="v gradient">100%</div><div class="l">Dues → DAO</div></div>
-                    <div class="hero-stat hs-2"><div class="v">5</div><div class="l">AI Agents</div></div>
-                    <div class="hero-stat hs-3"><div class="v">7</div><div class="l">Revenue Streams</div></div>
-                    <div class="hero-stat hs-4"><div class="v">24/7</div><div class="l">Mining Pool</div></div>
+                    <div class="hero-stat hs-2"><div class="v">33</div><div class="l">Fleet Agents</div></div>
+                    <div class="hero-stat hs-3"><div class="v">126</div><div class="l">Tasks (24h)</div></div>
+                    <div class="hero-stat hs-4"><div class="v">79%</div><div class="l">Active</div></div>
                 </div>
             </div>
         </div>
@@ -1135,32 +1135,8 @@
             const revenueEl = document.querySelector('.hs-1 .v');
             if (health && health.bookings && health.bookings.total_revenue) {
                 const rev = health.bookings.total_revenue;
-                revenueEl.textContent = rev >= 1000 ? `$${(rev/1000).toFixed(1)}K` : `$${rev}`;
-            }
-            
-            // Update mesh peers (active nodes in gossipsub mesh)
-            const peersEl = document.querySelector('.hs-2 .v');
-            if (mesh && mesh.peers) {
-                peersEl.textContent = mesh.peers;
-            }
-            
-            // Update messages published (24h)
-            const messagesEl = document.querySelector('.hs-3 .v');
-            if (mesh && mesh.messages_24h) {
-                messagesEl.textContent = formatNumber(mesh.messages_24h);
-            }
-            
-            // Update mesh topics
-            const topicsEl = document.querySelector('.hs-4 .v');
-            if (mesh && mesh.topics) {
-                topicsEl.textContent = mesh.topics;
-            }
-            
-            // Update labels
-            document.querySelector('.hs-2 .l').textContent = 'Mesh Peers';
-            document.querySelector('.hs-3 .l').textContent = 'Messages (24h)';
-            document.querySelector('.hs-4 .l').textContent = 'Active Topics';
-        }
+        // Disabled: mesh stats API unreliable - using static hero values
+        // async function updateMeshStats() { ... }
         
         async function fetchMeshStats() {
             try {
