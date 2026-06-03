@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ModelCourt Tribunal — Zero-Claw</title>
     <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --navy-deep: #0a0e1a;
             --navy-rich: #1a1f3a;
             --gold-primary: #D4AF37;
+            --gold-light: #FFD700;
             --gold-dark: #B8860B;
             --text-primary: #F5F1E8;
             --text-secondary: #C9B896;
@@ -18,27 +20,37 @@
         
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
+        html { scroll-behavior: smooth; }
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Inter', system-ui, sans-serif;
             background: var(--navy-deep);
             color: var(--text-primary);
             min-height: 100vh;
+            line-height: 1.7;
         }
         
         .library-backdrop {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
             z-index: -1;
-            background: linear-gradient(135deg, rgba(10, 14, 26, 0.95) 0%, rgba(26, 31, 58, 0.90) 50%, rgba(10, 14, 26, 0.95) 100%);
+            background: 
+                linear-gradient(135deg, rgba(10, 14, 26, 0.92) 0%, rgba(26, 31, 58, 0.88) 50%, rgba(10, 14, 26, 0.92) 100%),
+                url('https://images.unsplash.com/photo-1589829545856-d10d557cf95f?ixlib=rb-4.0.3&auto=format&fit=crop&w=2070&q=80');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
         }
         
         header {
-            background: linear-gradient(180deg, var(--navy-deep) 0%, rgba(10, 14, 26, 0.95) 100%);
-            border-bottom: 2px solid var(--gold-dark);
+            background: linear-gradient(180deg, rgba(10, 14, 26, 0.98) 0%, rgba(10, 14, 26, 0.92) 100%);
+            border-bottom: 1px solid rgba(212, 175, 55, 0.4);
             padding: 1.5rem 2rem;
             position: sticky;
             top: 0;
             z-index: 100;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
         }
         
         .header-content {
@@ -47,6 +59,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+        
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
         
         .logo {
@@ -61,13 +79,16 @@
             text-decoration: none;
             padding: 0.5rem 1rem;
             border-radius: 4px;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
+            font-weight: 500;
             transition: all 0.3s ease;
+            border: 1px solid transparent;
         }
         
         nav a:hover, nav a.active {
             color: var(--gold-primary);
             background: rgba(212, 175, 55, 0.1);
+            border-color: rgba(212, 175, 55, 0.3);
         }
         
         main {
@@ -79,145 +100,224 @@
         .tribunal-header {
             text-align: center;
             margin-bottom: 3rem;
-            padding: 2rem;
+            padding: 2.5rem;
             background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
-            border: 1px solid var(--gold-dark);
-            border-radius: 8px;
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            border-radius: 12px;
+            backdrop-filter: blur(20px);
         }
         
         .tribunal-title {
-            font-family: 'Georgia', serif;
-            font-size: 2.5rem;
-            color: var(--gold-primary);
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(2rem, 4vw, 3rem);
+            background: linear-gradient(135deg, var(--gold-light), var(--gold-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin-bottom: 1rem;
+            font-weight: 700;
+        }
+        
+        .tribunal-subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            max-width: 700px;
+            margin: 0 auto;
+            line-height: 1.8;
         }
         
         .form-container {
-            background: rgba(26, 31, 58, 0.9);
-            border: 1px solid var(--gold-dark);
-            border-radius: 8px;
-            padding: 2rem;
+            background: rgba(26, 31, 58, 0.8);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: 12px;
+            padding: 2.5rem;
             margin-bottom: 2rem;
+            backdrop-filter: blur(20px);
         }
         
-        .form-group {
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
             margin-bottom: 1.5rem;
         }
+        
+        .form-group { margin-bottom: 1.5rem; }
         
         label {
             display: block;
             color: var(--gold-primary);
-            font-family: 'Georgia', serif;
+            font-family: 'Playfair Display', serif;
             margin-bottom: 0.5rem;
-            font-size: 1rem;
+            font-size: 0.95rem;
+            font-weight: 600;
         }
         
         input, textarea, select {
             width: 100%;
-            padding: 0.75rem;
-            background: var(--navy-deep);
-            border: 1px solid var(--gold-dark);
-            border-radius: 4px;
+            padding: 0.875rem;
+            background: rgba(10, 14, 26, 0.6);
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            border-radius: 6px;
             color: var(--text-primary);
             font-size: 1rem;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.3s ease;
         }
         
         input:focus, textarea:focus {
             outline: none;
             border-color: var(--gold-primary);
-            box-shadow: 0 0 10px rgba(212, 175, 55, 0.3);
+            box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.1);
         }
+        
+        textarea { resize: vertical; min-height: 120px; }
         
         button {
             background: linear-gradient(135deg, var(--gold-dark), var(--gold-primary));
             color: var(--navy-deep);
             border: none;
             padding: 1rem 2rem;
-            border-radius: 4px;
+            border-radius: 6px;
             font-size: 1rem;
-            font-weight: bold;
+            font-weight: 600;
             cursor: pointer;
             width: 100%;
             transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
         }
         
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(212, 175, 55, 0.4);
+            box-shadow: 0 8px 25px rgba(212, 175, 55, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
         
         .results-container {
-            background: rgba(26, 31, 58, 0.9);
-            border: 1px solid var(--gold-dark);
-            border-radius: 8px;
-            padding: 2rem;
+            background: rgba(26, 31, 58, 0.8);
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            border-radius: 12px;
+            padding: 2.5rem;
             margin-top: 2rem;
             display: none;
+            backdrop-filter: blur(20px);
         }
         
-        .results-container.show {
-            display: block;
+        .results-container.show { display: block; animation: fadeIn 0.5s ease; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         
         .verdict-box {
             background: rgba(10, 14, 26, 0.8);
             border: 2px solid var(--gold-primary);
             border-radius: 8px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            padding: 2rem;
+            margin-bottom: 2rem;
         }
         
         .verdict-title {
-            font-family: 'Georgia', serif;
+            font-family: 'Playfair Display', serif;
             color: var(--gold-primary);
-            font-size: 1.5rem;
+            font-size: 1.75rem;
+            margin-bottom: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .verdict-content p {
             margin-bottom: 1rem;
+            line-height: 1.8;
+        }
+        
+        .verdict-content strong {
+            color: var(--gold-primary);
         }
         
         .agent-waves {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-top: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
         }
         
         .wave-card {
-            background: var(--navy-deep);
-            border: 1px solid var(--gold-dark);
-            border-radius: 4px;
-            padding: 1rem;
+            background: rgba(10, 14, 26, 0.6);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        
+        .wave-card:hover {
+            border-color: var(--gold-primary);
+            transform: translateY(-4px);
         }
         
         .wave-title {
             color: var(--gold-primary);
-            font-family: 'Georgia', serif;
-            font-size: 1rem;
-            margin-bottom: 0.5rem;
+            font-family: 'Playfair Display', serif;
+            font-size: 1.1rem;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .wave-content {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.7;
         }
         
         .loading {
             text-align: center;
-            padding: 2rem;
+            padding: 3rem;
             display: none;
         }
         
-        .loading.show {
-            display: block;
-        }
+        .loading.show { display: block; }
         
         .spinner {
-            border: 4px solid rgba(212, 175, 55, 0.2);
+            width: 60px;
+            height: 60px;
+            border: 3px solid rgba(212, 175, 55, 0.2);
             border-top-color: var(--gold-primary);
             border-radius: 50%;
-            width: 50px;
-            height: 50px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 1rem;
+            margin: 0 auto 1.5rem;
         }
         
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        
+        .loading-text {
+            color: var(--gold-primary);
+            font-size: 1rem;
+        }
+        
+        .loading-subtext {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+        
+        .error-message {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.4);
+            color: #f44336;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+            display: none;
+        }
+        
+        .error-message.show { display: block; }
     </style>
 </head>
 <body>
@@ -225,12 +325,14 @@
     
     <header>
         <div class="header-content">
-            <img src="assets/logo.svg" alt="Zero-Claw" class="logo">
+            <div class="logo-container">
+                <img src="assets/logo.svg" alt="Zero-Claw" class="logo">
+            </div>
             <nav>
-                <a href="index.html">🔐 Chat</a>
-                <a href="create-room.html">📁 Create Room</a>
-                <a href="paperhawk.html">🦅 Document Audit</a>
-                <a href="tribunal.html" class="active">⚖️ Tribunal</a>
+                <a href="index.html">Chat</a>
+                <a href="create-room.html">Rooms</a>
+                <a href="paperhawk.html">Audit</a>
+                <a href="tribunal.html" class="active">Tribunal</a>
             </nav>
         </div>
     </header>
@@ -238,17 +340,29 @@
     <main>
         <div class="tribunal-header">
             <h1 class="tribunal-title">⚖️ ModelCourt Tribunal</h1>
-            <p style="color: var(--text-secondary); max-width: 600px; margin: 0 auto;">
+            <p class="tribunal-subtitle">
                 8-agent AI legal deliberation system. Submit your case for structured analysis 
                 by Evidence Clerk, Advocates, Risk Officer, Domain Expert, Cross-Examination, 
-                Agreement Clerk, and Judge.
+                Agreement Clerk, and Judge. Results in ~30-60 seconds.
             </p>
         </div>
         
         <div class="form-container">
-            <div class="form-group">
-                <label for="caseId">Case ID</label>
-                <input type="text" id="caseId" placeholder="e.g., case-2026-001">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="caseId">Case ID</label>
+                    <input type="text" id="caseId" placeholder="e.g., case-2026-001">
+                </div>
+                
+                <div class="form-group">
+                    <label for="claimant">Claimant</label>
+                    <input type="text" id="claimant" placeholder="Claimant name">
+                </div>
+                
+                <div class="form-group">
+                    <label for="respondent">Respondent</label>
+                    <input type="text" id="respondent" placeholder="Respondent name">
+                </div>
             </div>
             
             <div class="form-group">
@@ -257,51 +371,51 @@
             </div>
             
             <div class="form-group">
-                <label for="claimant">Claimant</label>
-                <input type="text" id="claimant" placeholder="Claimant name">
+                <label for="documents">Case Documents & Facts</label>
+                <textarea id="documents" placeholder="Paste contract text, correspondence, case facts, timeline, or any relevant documents here..."></textarea>
             </div>
             
-            <div class="form-group">
-                <label for="respondent">Respondent</label>
-                <input type="text" id="respondent" placeholder="Respondent name">
-            </div>
-            
-            <div class="form-group">
-                <label for="documents">Case Documents</label>
-                <textarea id="documents" rows="6" placeholder="Paste contract text, correspondence, or case facts here..."></textarea>
-            </div>
-            
-            <button onclick="submitTribunal()">🏛️ Submit to Tribunal</button>
+            <button onclick="submitTribunal()" id="submitBtn">🏛️ Submit to Tribunal</button>
+            <div class="error-message" id="errorMessage"></div>
         </div>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p style="color: var(--gold-primary);">Tribunal deliberating... (6 waves, 8 agents)</p>
+            <p class="loading-text">Tribunal deliberating...</p>
+            <p class="loading-subtext">6 waves • 8 agents • AI analysis in progress</p>
         </div>
         
         <div class="results-container" id="results">
             <div class="verdict-box">
                 <h2 class="verdict-title">⚖️ Judge's Verdict</h2>
-                <div id="verdictContent"></div>
+                <div class="verdict-content" id="verdictContent"></div>
             </div>
             
-            <h3 style="color: var(--gold-primary); font-family: 'Georgia', serif; margin-bottom: 1rem;">Deliberation Waves</h3>
+            <h3 style="color: var(--gold-primary); font-family: 'Playfair Display', serif; font-size: 1.5rem; margin-bottom: 1.5rem;">Deliberation Waves</h3>
             <div class="agent-waves" id="wavesContent"></div>
         </div>
     </main>
     
     <script>
         async function submitTribunal() {
-            const caseId = document.getElementById('caseId').value;
-            const issue = document.getElementById('issue').value;
-            const claimant = document.getElementById('claimant').value;
-            const respondent = document.getElementById('respondent').value;
-            const documents = document.getElementById('documents').value;
+            const caseId = document.getElementById('caseId').value.trim();
+            const issue = document.getElementById('issue').value.trim();
+            const claimant = document.getElementById('claimant').value.trim();
+            const respondent = document.getElementById('respondent').value.trim();
+            const documents = document.getElementById('documents').value.trim();
+            
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.classList.remove('show');
             
             if (!caseId || !issue) {
-                alert('Case ID and Legal Issue are required');
+                errorEl.textContent = '❌ Case ID and Legal Issue are required';
+                errorEl.classList.add('show');
                 return;
             }
+            
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Deliberating...';
             
             document.getElementById('loading').classList.add('show');
             document.getElementById('results').classList.remove('show');
@@ -313,74 +427,102 @@
                     body: JSON.stringify({
                         case_id: caseId,
                         issue: issue,
-                        parties: { claimant, respondent },
-                        documents: [{ type: 'case_summary', content: documents }]
+                        parties: { claimant: claimant || 'Claimant', respondent: respondent || 'Respondent' },
+                        documents: [{ type: 'case_summary', content: documents || 'No additional documents provided' }]
                     })
                 });
                 
                 const data = await response.json();
                 
-                if (data.tribunal_result) {
+                if (data.tribunal_result && data.tribunal_result.judge) {
                     displayResults(data);
                 } else {
-                    alert('Error: ' + (data.error || 'Unknown error'));
+                    throw new Error(data.error || 'Unknown error from tribunal');
                 }
             } catch (error) {
-                alert('Error submitting to tribunal: ' + error.message);
+                errorEl.textContent = '❌ Error: ' + error.message;
+                errorEl.classList.add('show');
             } finally {
                 document.getElementById('loading').classList.remove('show');
+                btn.disabled = false;
+                btn.textContent = '🏛️ Submit to Tribunal';
             }
         }
         
         function displayResults(data) {
             const result = data.tribunal_result;
             
-            // Verdict
             document.getElementById('verdictContent').innerHTML = `
-                <p style="font-size: 1.2rem; margin-bottom: 1rem;"><strong>Verdict:</strong> ${result.judge.verdict}</p>
+                <p style="font-size: 1.15rem; margin-bottom: 1rem;"><strong>Verdict:</strong> ${result.judge.verdict}</p>
                 <p style="margin-bottom: 1rem;"><strong>Confidence:</strong> ${(result.judge.confidence * 100).toFixed(0)}%</p>
                 <p style="margin-bottom: 1rem;"><strong>Reasoning:</strong> ${result.judge.reasoning}</p>
                 <p style="margin-bottom: 1rem;"><strong>Legal Basis:</strong> ${result.judge.legal_basis.join(', ')}</p>
                 <p><strong>Remedies:</strong> ${result.judge.remedies.join(', ')}</p>
             `;
             
-            // Waves
             document.getElementById('wavesContent').innerHTML = `
                 <div class="wave-card">
                     <div class="wave-title">Wave 1: Evidence Clerk</div>
-                    <p>${result.evidence_clerk.facts.length} facts, ${result.evidence_clerk.timeline.length} timeline events</p>
+                    <div class="wave-content">
+                        <strong>${result.evidence_clerk.facts.length}</strong> facts extracted<br>
+                        <strong>${result.evidence_clerk.timeline.length}</strong> timeline events<br>
+                        <strong>${result.evidence_clerk.parties.length}</strong> parties identified
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 2: Claimant Advocate</div>
-                    <p>${result.claimant_advocate.position}</p>
-                    <p style="margin-top: 0.5rem; color: var(--gold-primary);">Confidence: ${(result.claimant_advocate.confidence * 100).toFixed(0)}%</p>
+                    <div class="wave-content">
+                        ${result.claimant_advocate.position}<br><br>
+                        <span style="color: var(--gold-primary);">Confidence: ${(result.claimant_advocate.confidence * 100).toFixed(0)}%</span>
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 2: Defense Counsel</div>
-                    <p>${result.carrier_counsel.position}</p>
-                    <p style="margin-top: 0.5rem; color: var(--gold-primary);">Confidence: ${(result.carrier_counsel.confidence * 100).toFixed(0)}%</p>
+                    <div class="wave-content">
+                        ${result.carrier_counsel.position}<br><br>
+                        <span style="color: var(--gold-primary);">Confidence: ${(result.carrier_counsel.confidence * 100).toFixed(0)}%</span>
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 2: Risk Officer</div>
-                    <p>Severity: ${result.risk_officer.severity}</p>
-                    <p style="margin-top: 0.5rem;">${result.risk_officer.recommendations.join(', ')}</p>
+                    <div class="wave-content">
+                        Severity: <strong>${result.risk_officer.severity}</strong><br><br>
+                        ${result.risk_officer.recommendations.join(', ')}
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 3: Domain Expert</div>
-                    <p>${result.domain_expert.expert_opinion}</p>
+                    <div class="wave-content">
+                        <strong>${result.domain_expert.expertise_area}</strong><br><br>
+                        ${result.domain_expert.expert_opinion}
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 4: Cross-Examination</div>
-                    <p>${result.cross_examination.factual_disputes.length} disputes identified</p>
+                    <div class="wave-content">
+                        <strong>${result.cross_examination.factual_disputes.length}</strong> disputes identified<br>
+                        <strong>${result.cross_examination.weak_arguments.length}</strong> weak arguments found
+                    </div>
                 </div>
                 <div class="wave-card">
                     <div class="wave-title">Wave 5: Agreement Clerk</div>
-                    <p>${result.agreement_clerk.areas_of_agreement.length} areas of agreement</p>
+                    <div class="wave-content">
+                        <strong>${result.agreement_clerk.areas_of_agreement.length}</strong> areas of agreement<br>
+                        <strong>${result.agreement_clerk.irreconcilable_differences.length}</strong> remaining differences
+                    </div>
                 </div>
             `;
             
             document.getElementById('results').classList.add('show');
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+        
+        // Enter key to submit
+        document.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && (e.target.id === 'caseId' || e.target.id === 'issue')) {
+                submitTribunal();
+            }
+        });
     </script>
 </body>
 </html>
