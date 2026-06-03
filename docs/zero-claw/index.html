@@ -302,10 +302,16 @@
 <body>
     <header>
         <a href="/" class="logo">
-            🔐 <span>Zero-Claw Chat</span>
-        </a>
-        <div id="status" class="status-badge">Disconnected</div>
-    </header>
+        <header>
+            <a href="/" class="logo">🔐 <span>Zero-Claw Chat</span></a>
+            <div class="status-badge" id="status-badge">Disconnected</div>
+        </header>
+        
+        <nav style="background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 0.75rem 2rem; display: flex; gap: 1rem; justify-content: center;">
+            <a href="/zero-claw/" style="color: var(--accent); text-decoration: none; font-weight: 600;">💬 Chat</a>
+            <a href="/zero-claw/create-room.html" style="color: var(--text-primary); text-decoration: none;">🏠 Create Room</a>
+            <a href="/zero-claw/paperhawk.html" style="color: var(--text-primary); text-decoration: none;">🦅 Document Audit</a>
+        </nav>
     
     <main>
         <!-- Connection Panel -->
