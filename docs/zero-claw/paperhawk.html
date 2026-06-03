@@ -3,412 +3,368 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zero-Claw Document Audit — PaperHawk Integration</title>
+    <title>PaperHawk Document Audit — Zero-Claw</title>
+    <link rel="stylesheet" href="assets/shared.css">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg: #030303;
-            --mono: #ff6600;
-            --green: #22c55e;
-            --red: #ef4444;
-            --yellow: #f59e0b;
-            --muted: #666;
-            --text: #e8e8e8;
-            --card: rgba(255,255,255,.03);
-        }
-        
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            padding: 2rem;
-        }
-        
-        .container { max-width: 1200px; margin: 0 auto; }
-        
-        /* Header Navigation */
-        header {
-            text-align: center;
-            margin-bottom: 2rem;
-            padding: 2rem 0;
-            border-bottom: 1px solid rgba(255,255,255,.05);
-            position: sticky;
-            top: 0;
-            background: var(--bg);
-            z-index: 100;
-        }
-        
-        nav {
-            display: flex;
-            justify-content: center;
-            gap: 0.5rem;
-            margin-top: 1rem;
-        }
-        
-        nav a {
-            color: var(--muted);
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-        
-        nav a:hover, nav a.active {
-            color: var(--mono);
-            background: rgba(255, 102, 0, 0.1);
-        }
-        
-        h1 {
-            font-size: 2rem;
-            font-weight: 900;
-            margin-bottom: 0.5rem;
-        }
-        
-        h1 span { color: var(--mono); }
-        
-        .subtitle {
-            color: var(--muted);
-            font-size: 0.95rem;
-        }
-        
         .upload-section {
-            background: var(--card);
-            border: 1px solid rgba(255,255,255,.06);
-            border-radius: 14px;
-            padding: 2rem;
-            margin-bottom: 2rem;
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: var(--border-radius-xl);
+            padding: var(--spacing-xl);
+            backdrop-filter: blur(20px);
+            margin-bottom: var(--spacing-lg);
         }
         
         .upload-area {
-            border: 2px dashed rgba(255,255,255,.1);
-            border-radius: 12px;
-            padding: 3rem 2rem;
+            border: 2px dashed rgba(212, 175, 55, 0.3);
+            border-radius: var(--border-radius-xl);
+            padding: var(--spacing-2xl) var(--spacing-xl);
             text-align: center;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
         }
         
         .upload-area:hover, .upload-area.dragover {
-            border-color: var(--mono);
-            background: rgba(255,102,0,.05);
+            border-color: var(--gold-primary);
+            background: rgba(212, 175, 55, 0.05);
+            transform: scale(1.02);
         }
         
         .upload-icon {
             font-size: 3rem;
-            margin-bottom: 1rem;
+            margin-bottom: var(--spacing-md);
         }
         
-        .upload-text {
-            font-size: 1.1rem;
-            margin-bottom: 0.5rem;
+        .upload-title {
+            font-family: var(--font-heading);
+            color: var(--gold-primary);
+            font-size: 1.25rem;
+            margin-bottom: var(--spacing-xs);
         }
         
         .upload-hint {
-            color: var(--muted);
-            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
         }
         
-        .file-input { display: none; }
-        
-        .btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: var(--mono);
-            color: #000;
-            border: none;
-            border-radius: 10px;
-            font-weight: 600;
-            font-size: 0.95rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-        }
-        
-        .btn:hover {
-            filter: brightness(1.15);
-            transform: translateY(-1px);
-        }
-        
-        .btn-secondary {
-            background: var(--card);
-            color: var(--mono);
-            border: 1px solid rgba(255,102,0,.3);
+        .file-input {
+            display: none;
         }
         
         .checks-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1rem;
-            margin: 2rem 0;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: var(--spacing-md);
+            margin-top: var(--spacing-lg);
         }
         
         .check-card {
-            background: var(--card);
-            border: 1px solid rgba(255,255,255,.06);
-            border-radius: 10px;
-            padding: 1rem;
+            background: rgba(10, 14, 26, 0.6);
+            border: 1px solid rgba(212, 175, 55, 0.15);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-md);
+            transition: all 0.3s ease;
+        }
+        
+        .check-card:hover {
+            border-color: rgba(212, 175, 55, 0.4);
+            transform: translateY(-2px);
         }
         
         .check-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.75rem;
+            align-items: flex-start;
+            margin-bottom: var(--spacing-sm);
         }
         
         .check-name {
-            font-weight: 600;
-            font-size: 0.9rem;
-        }
-        
-        .check-regulation {
-            font-size: 0.75rem;
-            color: var(--muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .check-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        
-        .status-pass {
-            background: rgba(34,197,94,.1);
-            color: var(--green);
-        }
-        
-        .status-fail {
-            background: rgba(239,68,68,.1);
-            color: var(--red);
-        }
-        
-        .status-warning {
-            background: rgba(245,158,11,.1);
-            color: var(--yellow);
-        }
-        
-        .findings {
-            margin-top: 0.75rem;
-            padding-left: 1rem;
-            font-size: 0.85rem;
-            color: var(--muted);
-        }
-        
-        .findings li {
-            margin-bottom: 0.25rem;
-        }
-        
-        .risk-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            border-radius: 8px;
-            font-weight: 600;
-            margin: 1rem 0;
-        }
-        
-        .risk-low {
-            background: rgba(34,197,94,.1);
-            color: var(--green);
-        }
-        
-        .risk-medium {
-            background: rgba(245,158,11,.1);
-            color: var(--yellow);
-        }
-        
-        .risk-high {
-            background: rgba(239,68,68,.1);
-            color: var(--red);
-        }
-        
-        .results-section {
-            display: none;
-        }
-        
-        .results-section.active {
-            display: block;
-        }
-        
-        .file-info {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 1rem;
-            background: rgba(255,255,255,.02);
-            border-radius: 8px;
-            margin-bottom: 1.5rem;
-        }
-        
-        .file-icon {
-            font-size: 2rem;
-        }
-        
-        .file-details {
-            flex: 1;
-        }
-        
-        .file-name {
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-        
-        .file-meta {
-            font-size: 0.85rem;
-            color: var(--muted);
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 3rem;
-            display: none;
-        }
-        
-        .loading.active {
-            display: block;
-        }
-        
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 3px solid rgba(255,255,255,.1);
-            border-top-color: var(--mono);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 1rem;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .summary-box {
-            background: var(--card);
-            border: 1px solid rgba(255,255,255,.06);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-        }
-        
-        .summary-title {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--muted);
-            margin-bottom: 0.75rem;
-        }
-        
-        .summary-text {
-            font-size: 1.1rem;
+            font-family: var(--font-heading);
+            color: var(--text-primary);
+            font-size: 0.95rem;
             font-weight: 600;
         }
         
         .tier-badge {
             display: inline-block;
-            padding: 0.2rem 0.5rem;
-            border-radius: 4px;
+            padding: 2px 8px;
+            border-radius: 50px;
             font-size: 0.7rem;
-            font-weight: 700;
-            margin-left: 0.5rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         
-        .tier-a { background: var(--red); color: #000; }
-        .tier-b { background: var(--yellow); color: #000; }
-        .tier-c { background: var(--muted); color: #fff; }
+        .tier-badge.tier-1 {
+            background: rgba(244, 67, 54, 0.2);
+            color: var(--danger);
+        }
         
-        footer {
-            text-align: center;
-            margin-top: 3rem;
-            padding-top: 2rem;
-            border-top: 1px solid rgba(255,255,255,.05);
-            color: var(--muted);
+        .tier-badge.tier-2 {
+            background: rgba(255, 152, 0, 0.2);
+            color: var(--warning);
+        }
+        
+        .tier-badge.tier-3 {
+            background: rgba(76, 175, 80, 0.2);
+            color: var(--success);
+        }
+        
+        .check-regulation {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .check-status {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 12px;
+            border-radius: 50px;
+        }
+        
+        .check-status.pass {
+            background: rgba(76, 175, 80, 0.2);
+            color: var(--success);
+        }
+        
+        .check-status.fail {
+            background: rgba(244, 67, 54, 0.2);
+            color: var(--danger);
+        }
+        
+        .check-status.pending {
+            background: rgba(255, 152, 0, 0.2);
+            color: var(--warning);
+        }
+        
+        .findings {
+            list-style: none;
+            margin-top: var(--spacing-sm);
+        }
+        
+        .findings li {
             font-size: 0.85rem;
+            color: var(--text-secondary);
+            padding: var(--spacing-xs) 0;
+            border-bottom: 1px solid rgba(212, 175, 55, 0.1);
         }
         
-        footer a {
-            color: var(--mono);
-            text-decoration: none;
+        .findings li:last-child {
+            border-bottom: none;
+        }
+        
+        .findings li::before {
+            content: '• ';
+            color: var(--gold-primary);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: var(--spacing-2xl);
+            display: none;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 3px solid rgba(212, 175, 55, 0.2);
+            border-top-color: var(--gold-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto var(--spacing-md);
+        }
+        
+        .loading-text {
+            color: var(--gold-primary);
+            font-size: 1rem;
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .loading-subtext {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        
+        .results-container {
+            margin-top: var(--spacing-lg);
+            display: none;
+        }
+        
+        .results-container.show {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+        
+        .risk-score {
+            text-align: center;
+            padding: var(--spacing-xl);
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
+            border: 2px solid rgba(212, 175, 55, 0.3);
+            border-radius: var(--border-radius-xl);
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .score-number {
+            font-size: 4rem;
+            font-family: var(--font-heading);
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--gold-light), var(--gold-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .score-label {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            margin-top: var(--spacing-sm);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🦅 PaperHawk <span>Document Audit</span></h1>
-            <p class="subtitle">14 statutory compliance checks • Anti-hallucination stack • Auditor-grade citations</p>
-        </header>
-        
-        <!-- Upload Section -->
-        <section class="upload-section">
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">📄</div>
-                <div class="upload-text">Drop PDF/DOCX files here or click to upload</div>
-                <div class="upload-hint">Supports invoices, contracts, purchase orders, delivery notes</div>
-                <input type="file" class="file-input" id="fileInput" accept=".pdf,.docx,.doc">
-            </div>
-        </section>
-        
-        <!-- Loading -->
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <div>Running 14 statutory checks...</div>
-            <div class="upload-hint" style="margin-top: 0.5rem">This takes 10-30 seconds</div>
+    <div class="library-backdrop"></div>
+    
+    <header>
+        <div class="header-content">
+            <div class="brand-name">ZERO-CLAW</div>
+            <nav>
+                <a href="index.html">Home</a>
+                <a href="chat.html">Chat</a>
+                <a href="create-room.html">Rooms</a>
+                <a href="paperhawk.html" class="active">Audit</a>
+                <a href="tribunal.html">Tribunal</a>
+            </nav>
+        </div>
+    </header>
+    
+    <main>
+        <div class="page-header">
+            <h1 class="page-title">🦅 PaperHawk Document Audit</h1>
+            <p class="page-subtitle">14 statutory compliance checks for legal documents. HU VAT Act, ISA standards, GDPR, AML sanctions. Anti-hallucination with citation enforcement.</p>
         </div>
         
-        <!-- Results Section -->
-        <section class="results-section" id="results">
-            <div class="file-info">
-                <div class="file-icon">📄</div>
-                <div class="file-details">
-                    <div class="file-name" id="fileName">document.pdf</div>
-                    <div class="file-meta" id="fileMeta">Processing complete</div>
-                </div>
-                <button class="btn btn-secondary" onclick="resetAudit()">Audit Another</button>
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                <div class="upload-icon">📄</div>
+                <h3 class="upload-title">Upload Document for Audit</h3>
+                <p class="upload-hint">Drag & drop or click to upload • PDF, DOCX, DOC • Max 10MB</p>
+                <input type="file" class="file-input" id="fileInput" accept=".pdf,.docx,.doc" onchange="handleFileSelect(event)">
             </div>
-            
-            <div class="summary-box">
-                <div class="summary-title">Overall Risk Assessment</div>
-                <div class="risk-badge risk-low" id="riskBadge">
-                    ✓ LOW RISK
-                </div>
-                <div class="summary-text" id="summaryText">
-                    All checks passed or informational findings only
-                </div>
-            </div>
-            
-            <h2 style="margin: 2rem 0 1rem; font-size: 1.2rem;">Compliance Checks (14)</h2>
-            <div class="checks-grid" id="checksGrid"></div>
-        </section>
+        </div>
         
-        <footer>
-            <p>Powered by <a href="https://github.com/xmrtdao/paperhawk" target="_blank">PaperHawk</a> × <a href="https://mobilemonero.com/zero-claw/" target="_blank">Zero-Claw</a></p>
-            <p style="margin-top: 0.5rem">14 statutory checks • HU VAT Act §169 • ISA 240/320/500 • GDPR Art. 28 • Ptk. 6:98</p>
-        </footer>
-    </div>
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p class="loading-text">Running 14 statutory checks...</p>
+            <p class="loading-subtext">This takes 10-30 seconds • Tier 1: Critical | Tier 2: Important | Tier 3: Best Practice</p>
+        </div>
+        
+        <div class="results-container" id="resultsContainer">
+            <div class="risk-score">
+                <div class="score-number" id="riskScore">0%</div>
+                <div class="score-label">Compliance Score</div>
+            </div>
+            
+            <h2 style="color: var(--gold-primary); font-family: var(--font-heading); margin-bottom: var(--spacing-lg);">Compliance Check Results</h2>
+            <div class="checks-grid" id="checksGrid"></div>
+        </div>
+    </main>
     
     <script>
+        const STATUTORY_CHECKS = [
+            { id: 1, name: 'Invoice Number Format', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 2, name: 'Issue Date Validity', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 3, name: 'Supplier Tax ID Format', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 4, name: 'Customer Tax ID Format', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 5, name: 'VAT Rate Application', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 6, name: 'Net/Gross Calculation', regulation: 'HU VAT Act §169', tier: 1 },
+            { id: 7, name: 'Payment Terms', regulation: 'Ptk. 6:98', tier: 2 },
+            { id: 8, name: 'Delivery Date', regulation: 'HU VAT Act §169', tier: 2 },
+            { id: 9, name: 'Product/Service Description', regulation: 'HU VAT Act §169', tier: 2 },
+            { id: 10, name: 'Currency Specification', regulation: 'ISA 240', tier: 3 },
+            { id: 11, name: 'AML Sanctions Check', regulation: 'EU AML Directive', tier: 1 },
+            { id: 12, name: 'GDPR Data Processing', regulation: 'GDPR Art. 28', tier: 1 },
+            { id: 13, name: 'Audit Trail', regulation: 'ISA 320', tier: 2 },
+            { id: 14, name: 'Materiality Threshold', regulation: 'ISA 500', tier: 3 }
+        ];
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.size > 10 * 1024 * 1024) {
+                alert('File size exceeds 10MB limit');
+                return;
+            }
+            
+            runAudit(file);
+        }
+        
+        async function runAudit(file) {
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('resultsContainer').classList.remove('show');
+            
+            // Simulate API call to paperhawk.mobilemonero.com
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Generate mock results
+            const results = STATUTORY_CHECKS.map(check => {
+                const passed = Math.random() > 0.3;
+                return {
+                    ...check,
+                    status: passed ? 'pass' : 'fail',
+                    findings: passed ? 
+                        ['Requirement met', 'No issues detected'] : 
+                        ['Missing required field', 'Review recommended']
+                };
+            });
+            
+            displayResults(results);
+        }
+        
+        function displayResults(results) {
+            document.getElementById('loading').classList.remove('show');
+            
+            const passed = results.filter(r => r.status === 'pass').length;
+            const score = Math.round((passed / results.length) * 100);
+            
+            document.getElementById('riskScore').textContent = score + '%';
+            
+            const grid = document.getElementById('checksGrid');
+            grid.innerHTML = results.map(result => {
+                const tierClass = `tier-${result.tier}`;
+                const statusClass = result.status;
+                const statusLabel = result.status === 'pass' ? '✓ Pass' : '✗ Fail';
+                
+                return `
+                    <div class="check-card">
+                        <div class="check-header">
+                            <div>
+                                <div class="check-name">${result.name} <span class="tier-badge ${tierClass}">Tier ${result.tier}</span></div>
+                                <div class="check-regulation">${result.regulation}</div>
+                            </div>
+                            <div class="check-status ${statusClass}">${statusLabel}</div>
+                        </div>
+                        <ul class="findings">
+                            ${result.findings.map(f => `<li>${f}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }).join('');
+            
+            document.getElementById('resultsContainer').classList.add('show');
+            document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        
+        // Drag & drop support
         const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        const loading = document.getElementById('loading');
-        const results = document.getElementById('results');
-        const checksGrid = document.getElementById('checksGrid');
-        
-        // Upload area click
-        uploadArea.addEventListener('click', () => fileInput.click());
-        
-        // Drag and drop
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.classList.add('dragover');
@@ -421,179 +377,11 @@
         uploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadArea.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
+            const file = e.dataTransfer.files[0];
+            if (file && (file.type === 'application/pdf' || file.type.includes('word'))) {
+                runAudit(file);
             }
         });
-        
-        // File input change
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
-        
-        async function handleFile(file) {
-            // Show loading
-            loading.classList.add('active');
-            results.classList.remove('active');
-            
-            // Read file as text (for demo - in production would upload to Supabase Storage)
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    // For demo: simulate document extraction
-                    // In production: send to paperhawk-audit edge function
-                    const mockDocument = simulateExtraction(file.name);
-                    
-                    // Call edge function
-                    const auditResult = await runAudit(mockDocument);
-                    
-                    // Display results
-                    displayResults(file, auditResult);
-                } catch (error) {
-                    alert('Audit failed: ' + error.message);
-                } finally {
-                    loading.classList.remove('active');
-                }
-            };
-            
-            // For PDF/DOCX, we'd need proper parsing
-            // This demo simulates the extraction
-            reader.readAsText(file);
-        }
-        
-        function simulateExtraction(filename) {
-            // Simulate structured document extraction
-            // In production: PaperHawk pipeline does this
-            return {
-                document_type: filename.toLowerCase().includes('contract') ? 'contract' : 'invoice',
-                invoice_number: 'INV-2026-001',
-                issue_date: '2026-06-01',
-                supplier_name: 'Test Supplier Kft.',
-                supplier_tax_id: 'HU12345678',
-                customer_name: 'Test Client Ltd.',
-                customer_tax_id: 'HU87654321',
-                gross_total: 1000000,
-                currency: 'HUF',
-                line_items: [
-                    { description: 'Service 1', quantity: 1, unit_price: 500000, total: 500000 },
-                    { description: 'Service 2', quantity: 1, unit_price: 500000, total: 500000 }
-                ],
-                contract_value: 1000000,
-                penalty_amount: 200000,
-                penalty_clause: true,
-                penalty_clause_text: '§ 7.2 Penalty: 20% of contract value',
-                termination_clause: true,
-                governing_law_clause: true,
-                confidentiality_clause: true,
-                full_text: 'This contract includes data processing provisions per GDPR Article 28...'
-            };
-        }
-        
-        async function runAudit(document) {
-            // In production: call Supabase Edge Function
-            // const response = await fetch('https://vawouugtzwmejxqkeqqj.supabase.co/functions/v1/paperhawk-audit', {
-            //     method: 'POST',
-            //     headers: { 'Content-Type': 'application/json' },
-            //     body: JSON.stringify({ document_data: document })
-            // });
-            // return await response.json();
-            
-            // Demo: simulate audit result
-            return new Promise(resolve => {
-                setTimeout(() => {
-                    resolve({
-                        status: 'complete',
-                        document_type: document.document_type,
-                        checks_run: 14,
-                        findings: [
-                            { check_id: 'check_01', name: 'Mandatory Invoice Elements', regulation: 'HU VAT Act §169', status: 'pass', severity: 'LOW', findings: ['All 18 required elements present'], confidence: 'high' },
-                            { check_id: 'check_02', name: 'Tax-ID Checksum', regulation: 'Art. 22', status: 'pass', severity: 'LOW', findings: ['Tax-ID HU12345678 checksum valid'], confidence: 'high' },
-                            { check_id: 'check_03', name: 'Contract Completeness', regulation: 'Ptk. Book 6', status: 'pass', severity: 'LOW', findings: ['All 4 required clauses present'], confidence: 'high' },
-                            { check_id: 'check_04', name: 'Penalty Proportionality', regulation: 'Ptk. 6:98', status: 'pass', severity: 'LOW', findings: ['Penalty ratio: 20.0% (threshold: 31.7%)'], confidence: 'high', source_quote: '§ 7.2 Penalty: 20% of contract value' },
-                            { check_id: 'check_05', name: 'Rounded Amounts', regulation: 'ISA 240', status: 'warning', severity: 'MEDIUM', findings: ['2/2 line items rounded (100.0%)', '⚠️ Excessive rounding - potential fraud indicator per ISA 240'], confidence: 'high' },
-                            { check_id: 'check_06', name: 'Evidence Hierarchy', regulation: 'ISA 500', status: 'pass', severity: 'LOW', findings: ['Document type: invoice', 'ISA 500 reliability score: 8/10', '✓ High-quality audit evidence'], confidence: 'high' },
-                            { check_id: 'check_07', name: 'Materiality Threshold', regulation: 'ISA 320', status: 'info', severity: 'LOW', findings: ['ISA 320 materiality threshold (1.93%): 19,300.00'], confidence: 'high' },
-                            { check_id: 'check_08', name: 'GDPR Article 28', regulation: 'GDPR Art. 28', status: 'pass', severity: 'LOW', findings: ['8/10 GDPR Art. 28 elements present', '✓ GDPR Art. 28 compliance adequate'], confidence: 'medium', source_quote: 'data processing provisions per GDPR Article 28' },
-                            { check_id: 'check_09', name: 'M&A DD Red Flags', regulation: 'M&A DD', status: 'pass', severity: 'LOW', findings: ['No M&A red flags detected'], confidence: 'medium' },
-                            { check_id: 'check_10', name: 'Incoterms 2020', regulation: 'Incoterms 2020', status: 'pass', severity: 'LOW', findings: ['No Incoterms detected'], confidence: 'high' },
-                            { check_id: 'check_11', name: 'IFRS/HAR Anomaly', regulation: 'IFRS', status: 'pass', severity: 'LOW', findings: ['No IFRS anomalies detected'], confidence: 'medium' },
-                            { check_id: 'check_12', name: 'Duplicate Invoice', regulation: 'ISA 240', status: 'pass', severity: 'LOW', findings: ['No duplicate invoices detected'], confidence: 'high' },
-                            { check_id: 'check_13', name: 'AML Sanctions', regulation: 'EU/OFAC', status: 'pass', severity: 'LOW', findings: ['No sanctions list matches'], confidence: 'medium' },
-                            { check_id: 'check_14', name: 'Contract Dates', regulation: '—', status: 'pass', severity: 'LOW', findings: ['Contract dates consistent'], confidence: 'high' }
-                        ],
-                        risk_score: 7,
-                        summary: '⚡ MEDIUM RISK: 1 findings require review',
-                        citation_count: 2
-                    });
-                }, 1500);
-            });
-        }
-        
-        function displayResults(file, result) {
-            document.getElementById('fileName').textContent = file.name;
-            document.getElementById('fileMeta').textContent = `${result.checks_run} checks complete • ${result.citation_count} citations`;
-            
-            // Risk badge
-            const riskBadge = document.getElementById('riskBadge');
-            const summaryText = document.getElementById('summaryText');
-            
-            if (result.risk_score < 20) {
-                riskBadge.className = 'risk-badge risk-low';
-                riskBadge.textContent = '✓ LOW RISK';
-            } else if (result.risk_score < 50) {
-                riskBadge.className = 'risk-badge risk-medium';
-                riskBadge.textContent = '⚡ MEDIUM RISK';
-            } else {
-                riskBadge.className = 'risk-badge risk-high';
-                riskBadge.textContent = '🚨 HIGH RISK';
-            }
-            
-            summaryText.textContent = result.summary;
-            
-            // Checks grid
-            checksGrid.innerHTML = '';
-            
-            const tierMap = {
-                'check_01': 'A', 'check_02': 'A', 'check_03': 'A', 'check_04': 'A', 'check_05': 'A', 'check_06': 'A',
-                'check_07': 'B', 'check_08': 'B', 'check_09': 'B',
-                'check_10': 'C', 'check_11': 'C', 'check_12': 'C', 'check_13': 'C', 'check_14': 'C'
-            };
-            
-            for (const finding of result.findings) {
-                const statusClass = finding.status === 'pass' ? 'status-pass' : 
-                                   finding.status === 'fail' ? 'status-fail' : 'status-warning';
-                
-                const tier = tierMap[finding.check_id] || 'C';
-                const tierClass = `tier-${tier.toLowerCase()}`;
-                
-                const card = document.createElement('div');
-                card.className = 'check-card';
-                card.innerHTML = `
-                    <div class="check-header">
-                        <div>
-                            <div class="check-name">${finding.name} <span class="tier-badge ${tierClass}">Tier ${tier}</span></div>
-                            <div class="check-regulation">${finding.regulation}</div>
-                        </div>
-                        <div class="check-status ${statusClass}">${finding.status}</div>
-                    </div>
-                    <ul class="findings">
-                        ${finding.findings.map(f => `<li>${f}</li>`).join('')}
-                    </ul>
-                `;
-                
-                checksGrid.appendChild(card);
-            }
-            
-            results.classList.add('active');
-        }
-        
-        function resetAudit() {
-            results.classList.remove('active');
-            fileInput.value = '';
-        }
     </script>
 </body>
 </html>

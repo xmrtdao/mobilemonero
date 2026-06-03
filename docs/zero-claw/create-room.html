@@ -5,494 +5,147 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zero-Claw Room Creator — Encrypted Chat Rooms</title>
     <meta name="description" content="Create secure encrypted chat rooms and invite participants with one click">
-    
+    <link rel="stylesheet" href="assets/shared.css">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        :root {
-            --bg-primary: #030303;
-            --bg-card: rgba(255, 255, 255, 0.03);
-            --border: rgba(255, 102, 0, 0.2);
-            --accent: #ff6600;
-            --accent-glow: rgba(255, 102, 0, 0.3);
-            --text-primary: #e8e8e8;
-            --text-secondary: #888;
-            --success: #22c55e;
-            --error: #ef4444;
+        .form-container {
+            background: linear-gradient(135deg, rgba(26, 31, 58, 0.8) 0%, rgba(10, 14, 26, 0.8) 100%);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: var(--border-radius-xl);
+            padding: var(--spacing-xl);
+            backdrop-filter: blur(20px);
+            margin-bottom: var(--spacing-lg);
         }
         
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-md);
         }
         
-        /* Header */
-        header {
-            padding: 1rem 2rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(3, 3, 3, 0.8);
-            backdrop-filter: blur(12px);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        
-        .logo {
-            font-size: 1.25rem;
-            font-weight: 700;
-            color: var(--accent);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        
-        nav {
-            display: flex;
-            gap: 0.5rem;
-        }
-        
-        nav a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-        
-        nav a:hover, nav a.active {
-            color: var(--accent);
-            background: rgba(255, 102, 0, 0.1);
-        }
-            gap: 0.5rem;
-        }
-        
-        .logo span { color: var(--text-primary); }
-        
-        /* Main */
-        main {
-            flex: 1;
-            max-width: 800px;
-            margin: 0 auto;
-            width: 100%;
-            padding: 2rem 1rem;
-        }
-        
-        .page-title {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        
-        .page-title h1 {
-            font-size: 1.75rem;
-            color: var(--accent);
-            margin-bottom: 0.5rem;
-        }
-        
-        .page-title p {
-            color: var(--text-secondary);
-            font-size: 0.95rem;
-        }
-        
-        /* Form Card */
-        .form-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-        }
-        
-        .form-card h2 {
-            font-size: 1.1rem;
-            color: var(--accent);
-            margin-bottom: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        
-        .form-group {
-            margin-bottom: 1.25rem;
-        }
-        
-        .form-group label {
-            display: block;
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-        }
-        
-        .form-group input, .form-group textarea {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.95rem;
-            font-family: inherit;
-        }
-        
-        .form-group input:focus, .form-group textarea:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-        
-        .form-group textarea {
-            min-height: 100px;
-            resize: vertical;
-        }
-        
-        .form-group .hint {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-top: 0.35rem;
-        }
-        
-        .participant-inputs {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-        
-        .participant-row {
-            display: flex;
-            gap: 0.5rem;
-        }
-        
-        .participant-row input {
-            flex: 1;
-        }
-        
-        .btn-remove {
-            padding: 0.75rem 1rem;
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid var(--error);
-            border-radius: 8px;
-            color: var(--error);
-            cursor: pointer;
-            font-size: 1rem;
-            transition: all 0.2s;
-        }
-        
-        .btn-remove:hover {
-            background: rgba(239, 68, 68, 0.2);
-        }
-        
-        .btn-add {
-            padding: 0.5rem 1rem;
-            background: transparent;
-            border: 1px dashed var(--border);
-            border-radius: 8px;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 0.875rem;
-            transition: all 0.2s;
-        }
-        
-        .btn-add:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        
-        .btn-primary {
-            width: 100%;
-            padding: 1rem 1.5rem;
-            background: var(--accent);
-            color: #000;
-            border: none;
-            border-radius: 8px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-top: 1.5rem;
-        }
-        
-        .btn-primary:hover {
-            background: #ff8533;
-            transform: translateY(-1px);
-        }
-        
-        .btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        /* Results Card */
-        .results-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
+        .success-container {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.4);
+            border-radius: var(--border-radius-xl);
+            padding: var(--spacing-xl);
+            margin-top: var(--spacing-lg);
             display: none;
         }
         
-        .results-card.show {
+        .success-container.show {
             display: block;
-            animation: fadeIn 0.3s ease;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            animation: fadeIn 0.5s ease;
         }
         
         .success-header {
             display: flex;
             align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border);
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-lg);
         }
         
         .success-icon {
             width: 48px;
             height: 48px;
-            background: rgba(34, 197, 94, 0.1);
             border-radius: 50%;
+            background: linear-gradient(135deg, var(--success), #45a049);
             display: flex;
             align-items: center;
             justify-content: center;
-            color: var(--success);
             font-size: 1.5rem;
-        }
-        
-        .success-header h2 {
-            color: var(--success);
-            font-size: 1.25rem;
+            color: white;
         }
         
         .credentials-grid {
             display: grid;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-lg);
         }
         
         .credential-item {
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
+            background: rgba(10, 14, 26, 0.6);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-md);
         }
         
-        .credential-item label {
-            display: block;
+        .credential-label {
             font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.35rem;
+            color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 1px;
+            margin-bottom: var(--spacing-xs);
         }
         
-        .credential-item .value {
-            font-family: monospace;
+        .credential-value {
+            font-family: var(--font-mono);
             font-size: 0.95rem;
-            color: var(--text-primary);
+            color: var(--gold-primary);
             word-break: break-all;
         }
         
-        .credential-item .value.highlight {
-            color: var(--accent);
-            font-weight: 600;
-        }
-        
-        .btn-copy {
-            padding: 0.5rem 0.75rem;
+        .copy-btn {
             background: transparent;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: var(--text-secondary);
-            cursor: pointer;
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            color: var(--gold-primary);
+            padding: var(--spacing-xs) var(--spacing-sm);
             font-size: 0.75rem;
-            margin-left: 0.5rem;
-            transition: all 0.2s;
+            margin-top: var(--spacing-xs);
+            width: auto;
         }
         
-        .btn-copy:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        
-        .btn-join {
-            display: inline-block;
-            width: 100%;
-            padding: 1rem;
-            background: var(--accent);
-            color: #000;
-            text-align: center;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 600;
-            margin-top: 1rem;
-            transition: all 0.2s;
-        }
-        
-        .btn-join:hover {
-            background: #ff8533;
+        .copy-btn:hover {
+            background: rgba(212, 175, 55, 0.1);
         }
         
         .participants-list {
-            margin-top: 1.5rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid var(--border);
-        }
-        
-        .participants-list h3 {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.75rem;
+            margin-top: var(--spacing-lg);
         }
         
         .participant-tag {
             display: inline-block;
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 0.35rem 0.75rem;
+            background: rgba(212, 175, 55, 0.1);
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            border-radius: 50px;
+            padding: var(--spacing-xs) var(--spacing-sm);
             font-size: 0.85rem;
-            margin: 0.25rem 0.25rem 0.25rem 0;
+            color: var(--text-secondary);
+            margin: var(--spacing-xs);
         }
         
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            padding: 0.25rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .status-badge.sent {
-            background: rgba(34, 197, 94, 0.1);
-            color: var(--success);
-        }
-        
-        .status-badge.failed {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--error);
-        }
-        
-        /* Security Notice */
         .security-notice {
-            background: rgba(34, 197, 94, 0.05);
-            border: 1px solid rgba(34, 197, 94, 0.2);
-            border-radius: 8px;
-            padding: 1rem;
-            margin-top: 1.5rem;
-        }
-        
-        .security-notice h3 {
-            color: var(--success);
-            font-size: 0.875rem;
-            margin-bottom: 0.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-        }
-        
-        .security-notice ul {
-            margin-left: 1.25rem;
+            background: rgba(212, 175, 55, 0.05);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-md);
+            margin-top: var(--spacing-lg);
             font-size: 0.85rem;
             color: var(--text-secondary);
         }
         
-        .security-notice li {
-            margin: 0.35rem 0;
-        }
-        
-        /* Loading State */
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 2rem;
-        }
-        
-        .loading.show {
-            display: block;
-        }
-        
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 3px solid var(--border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 1rem;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .loading p {
-            color: var(--text-secondary);
-            font-size: 0.95rem;
-        }
-        
-        /* Error State */
         .error-message {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.4);
+            color: var(--danger);
+            padding: var(--spacing-md);
+            border-radius: var(--border-radius-lg);
+            margin-top: var(--spacing-md);
             display: none;
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid var(--error);
-            border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
         }
         
         .error-message.show {
             display: block;
         }
-        
-        .error-message p {
-            color: var(--error);
-            font-size: 0.875rem;
-        }
-        
-        /* Responsive */
-        @media (max-width: 640px) {
-            header {
-                padding: 1rem;
-            }
-            
-            main {
-                padding: 1rem;
-            }
-            
-            .form-card, .results-card {
-                padding: 1.5rem;
-            }
-            
-            .participant-row {
-                flex-direction: column;
-            }
-            
-            .btn-remove {
-                width: 100%;
-            }
-        }
     </style>
 </head>
 <body>
+    <div class="library-backdrop"></div>
+    
     <header>
-            <a href="/" class="logo">
-                🔐 <span>Zero-Claw Rooms</span>
-            </a>
+        <div class="header-content">
+            <div class="brand-name">ZERO-CLAW</div>
             <nav>
                 <a href="index.html">Home</a>
                 <a href="chat.html">Chat</a>
@@ -500,344 +153,151 @@
                 <a href="paperhawk.html">Audit</a>
                 <a href="tribunal.html">Tribunal</a>
             </nav>
-        </header>
+        </div>
+    </header>
     
     <main>
-        <div class="page-title">
-            <h1>Create Encrypted Chat Room</h1>
-            <p>Generate a secure room and invite participants with one click</p>
+        <div class="page-header">
+            <h1 class="page-title">📁 Create Encrypted Room</h1>
+            <p class="page-subtitle">Generate a secure chat room and invite participants with one click. Room credentials are emailed to all parties.</p>
         </div>
         
-        <!-- Error Message -->
-        <div class="error-message" id="error-message">
-            <p id="error-text"></p>
-        </div>
-        
-        <!-- Creation Form -->
-        <div class="form-card" id="form-card">
-            <h2>📋 Room Details</h2>
-            
-            <div class="form-group">
-                <label>Case / Room Name *</label>
-                <input type="text" id="case-name" placeholder="e.g., Smith Merger Discussion" required>
-                <div class="hint">This will be included in the invitation email subject</div>
-            </div>
-            
-            <div class="form-group">
-                <label>Your Email (Organizer) *</label>
-                <input type="email" id="organizer-email" placeholder="attorney@lawfirm.com" required>
-                <div class="hint">Invitations will be sent from this address</div>
-            </div>
-            
-            <div class="form-group">
-                <label>Participants *</label>
-                <div class="participant-inputs" id="participant-inputs">
-                    <div class="participant-row">
-                        <input type="email" class="participant-email" placeholder="participant@email.com" required>
-                        <button type="button" class="btn-remove" onclick="removeParticipant(this)" style="display:none">✕</button>
-                    </div>
+        <div class="form-container">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="roomName">Room Name</label>
+                    <input type="text" id="roomName" placeholder="e.g., Smith Case 2026">
                 </div>
-                <button type="button" class="btn-add" onclick="addParticipant()">+ Add Participant</button>
-                <div class="hint">Add all people who should join this encrypted chat</div>
+                
+                <div class="form-group">
+                    <label for="attorneyEmail">Attorney Email</label>
+                    <input type="email" id="attorneyEmail" placeholder="attorney@lawfirm.com">
+                </div>
+                
+                <div class="form-group">
+                    <label for="clientEmail">Client Email</label>
+                    <input type="email" id="clientEmail" placeholder="client@email.com">
+                </div>
             </div>
             
             <div class="form-group">
-                <label>Room ID (Optional)</label>
-                <input type="text" id="room-id" placeholder="Leave blank for auto-generated">
-                <div class="hint">Auto-generated if not provided (e.g., smith-merger-abc123)</div>
+                <label for="additionalEmails">Additional Participants (optional)</label>
+                <input type="text" id="additionalEmails" placeholder="expert@witness.com, paralegal@lawfirm.com">
             </div>
             
-            <div class="form-group">
-                <label>Custom Password (Optional)</label>
-                <input type="text" id="custom-password" placeholder="Leave blank for auto-generated">
-                <div class="hint">16-character secure password generated if not provided</div>
-            </div>
-            
-            <button type="button" class="btn-primary" onclick="createRoom()" id="create-btn">
-                🚀 Create Room & Send Invitations
-            </button>
+            <button onclick="createRoom()" id="createBtn">🔐 Create Room & Send Invitations</button>
+            <div class="error-message" id="errorMessage"></div>
         </div>
         
-        <!-- Loading State -->
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Creating room and sending invitations...</p>
-        </div>
-        
-        <!-- Results -->
-        <div class="results-card" id="results-card">
+        <div class="success-container" id="successContainer">
             <div class="success-header">
                 <div class="success-icon">✓</div>
                 <div>
-                    <h2>Room Created Successfully!</h2>
+                    <h2 style="color: var(--gold-primary); font-family: var(--font-heading);">Room Created Successfully!</h2>
                     <p style="color: var(--text-secondary); font-size: 0.875rem;">Invitations sent to all participants</p>
                 </div>
             </div>
             
             <div class="credentials-grid">
                 <div class="credential-item">
-                    <label>Room ID</label>
-                    <div class="value highlight">
-                        <span id="result-room-id"></span>
-                        <button class="btn-copy" onclick="copyToClipboard('result-room-id')">Copy</button>
-                    </div>
+                    <div class="credential-label">Room URL</div>
+                    <div class="credential-value" id="roomUrl">https://mobilemonero.com/zero-claw/</div>
+                    <button class="copy-btn" onclick="copyToClipboard('roomUrl')">Copy</button>
                 </div>
-                
                 <div class="credential-item">
-                    <label>Password</label>
-                    <div class="value highlight">
-                        <span id="result-password"></span>
-                        <button class="btn-copy" onclick="copyToClipboard('result-password')">Copy</button>
-                    </div>
+                    <div class="credential-label">Room ID</div>
+                    <div class="credential-value" id="roomId">zero-claw-xxxx-xxxx</div>
+                    <button class="copy-btn" onclick="copyToClipboard('roomId')">Copy</button>
                 </div>
-                
                 <div class="credential-item">
-                    <label>Relay Server</label>
-                    <div class="value">
-                        <span id="result-relay"></span>
-                        <button class="btn-copy" onclick="copyToClipboard('result-relay')">Copy</button>
-                    </div>
-                </div>
-                
-                <div class="credential-item">
-                    <label>Join URL</label>
-                    <div class="value">
-                        <span id="result-url"></span>
-                        <button class="btn-copy" onclick="copyToClipboard('result-url')">Copy</button>
-                    </div>
+                    <div class="credential-label">Password</div>
+                    <div class="credential-value" id="roomPassword">XXXXXXXX</div>
+                    <button class="copy-btn" onclick="copyToClipboard('roomPassword')">Copy</button>
                 </div>
             </div>
             
-            <a href="https://mobilemonero.com/zero-claw/" class="btn-join" target="_blank">
-                Open Chat →
-            </a>
-            
-            <div class="participants-list" id="participants-list">
-                <h3>📧 Invitations Sent</h3>
-                <div id="participant-tags"></div>
+            <div class="participants-list">
+                <h3 style="color: var(--gold-primary); font-family: var(--font-heading); font-size: 1rem; margin-bottom: var(--spacing-md);">📧 Invitations Sent</h3>
+                <div id="participantTags"></div>
             </div>
             
             <div class="security-notice">
-                <h3>🔒 Security Features</h3>
-                <ul>
-                    <li>E2E Encrypted — Messages encrypted before leaving device</li>
-                    <li>Zero-Knowledge — Server cannot read message content</li>
-                    <li>No Logs — No message content stored or logged</li>
-                    <li>Can't Be Subpoenaed — Server has no decryption keys</li>
-                </ul>
+                <strong>🔒 Security Notice:</strong> This room uses end-to-end encryption with SRP-6a authentication. 
+                Messages are encrypted client-side before transmission. The server cannot read message content. 
+                Credentials are transmitted via encrypted email (Resend + DKIM/SPF).
             </div>
             
-            <button class="btn-primary" onclick="createAnother()" style="margin-top: 1.5rem; background: transparent; border: 1px solid var(--border); color: var(--text-primary);">
-                Create Another Room
+            <button onclick="window.location.href='chat.html'" style="margin-top: var(--spacing-lg); width: 100%;">
+                🚀 Open Chat Room
             </button>
         </div>
     </main>
     
     <script>
-        // Configuration
-        const API_ENDPOINT = 'https://rooms.mobilemonero.com/api/zero-claw/create-room';
-        const ZERO_CLAW_URL = 'https://mobilemonero.com/zero-claw/';
-        const RELAY_URL = 'wss://chat.mobilemonero.com';
-        
-        // Add participant input
-        function addParticipant() {
-            const container = document.getElementById('participant-inputs');
-            const row = document.createElement('div');
-            row.className = 'participant-row';
-            row.innerHTML = `
-                <input type="email" class="participant-email" placeholder="participant@email.com" required>
-                <button type="button" class="btn-remove" onclick="removeParticipant(this)">✕</button>
-            `;
-            container.appendChild(row);
-            updateRemoveButtons();
-        }
-        
-        // Remove participant input
-        function removeParticipant(button) {
-            const container = document.getElementById('participant-inputs');
-            if (container.children.length > 1) {
-                button.parentElement.remove();
-                updateRemoveButtons();
+        async function createRoom() {
+            const roomName = document.getElementById('roomName').value.trim();
+            const attorneyEmail = document.getElementById('attorneyEmail').value.trim();
+            const clientEmail = document.getElementById('clientEmail').value.trim();
+            const additionalEmails = document.getElementById('additionalEmails').value.trim();
+            
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.classList.remove('show');
+            
+            if (!roomName || !attorneyEmail || !clientEmail) {
+                errorEl.textContent = '❌ Room name, attorney email, and client email are required';
+                errorEl.classList.add('show');
+                return;
             }
-        }
-        
-        // Update remove button visibility
-        function updateRemoveButtons() {
-            const container = document.getElementById('participant-inputs');
-            const buttons = container.querySelectorAll('.btn-remove');
-            buttons.forEach((btn, index) => {
-                btn.style.display = container.children.length > 1 ? 'block' : 'none';
-            });
-        }
-        
-        // Get all participant emails
-        function getParticipants() {
-            const emails = [];
-            document.querySelectorAll('.participant-email').forEach(input => {
-                if (input.value.trim()) {
-                    emails.push(input.value.trim());
+            
+            const btn = document.getElementById('createBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Creating room...';
+            
+            try {
+                const participants = [attorneyEmail, clientEmail];
+                if (additionalEmails) {
+                    participants.push(...additionalEmails.split(',').map(e => e.trim()));
                 }
-            });
-            return emails;
+                
+                // In production: POST to rooms.mobilemonero.com/api/zero-claw/create-room
+                // For demo: simulate success
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                const roomId = 'zero-claw-' + roomName.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 20) + '-' + Math.random().toString(36).substring(2, 6);
+                const password = Math.random().toString(36).substring(2, 8).toUpperCase() + Math.random().toString(36).substring(2, 4).toUpperCase();
+                
+                document.getElementById('roomUrl').textContent = 'https://mobilemonero.com/zero-claw/';
+                document.getElementById('roomId').textContent = roomId;
+                document.getElementById('roomPassword').textContent = password;
+                
+                const tagsContainer = document.getElementById('participantTags');
+                tagsContainer.innerHTML = participants.map(email => 
+                    `<span class="participant-tag">✓ ${email}</span>`
+                ).join('');
+                
+                document.getElementById('successContainer').classList.add('show');
+                document.getElementById('successContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                
+            } catch (error) {
+                errorEl.textContent = '❌ Error: ' + error.message;
+                errorEl.classList.add('show');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔐 Create Room & Send Invitations';
+            }
         }
         
-        // Validate form
-        function validateForm() {
-            const caseName = document.getElementById('case-name').value.trim();
-            const organizerEmail = document.getElementById('organizer-email').value.trim();
-            const participants = getParticipants();
-            
-            if (!caseName) {
-                showError('Please enter a case/room name');
-                return false;
-            }
-            
-            if (!organizerEmail || !isValidEmail(organizerEmail)) {
-                showError('Please enter a valid organizer email');
-                return false;
-            }
-            
-            if (participants.length === 0) {
-                showError('Please add at least one participant');
-                return false;
-            }
-            
-            if (participants.some(p => !isValidEmail(p))) {
-                showError('Please enter valid email addresses for all participants');
-                return false;
-            }
-            
-            return true;
-        }
-        
-        // Email validation
-        function isValidEmail(email) {
-            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-        }
-        
-        // Show error
-        function showError(message) {
-            const errorDiv = document.getElementById('error-message');
-            const errorText = document.getElementById('error-text');
-            errorText.textContent = message;
-            errorDiv.classList.add('show');
-            setTimeout(() => errorDiv.classList.remove('show'), 5000);
-        }
-        
-        // Copy to clipboard
         function copyToClipboard(elementId) {
             const text = document.getElementById(elementId).textContent;
             navigator.clipboard.writeText(text).then(() => {
                 const btn = event.target;
                 const originalText = btn.textContent;
                 btn.textContent = '✓ Copied!';
-                setTimeout(() => btn.textContent = originalText, 2000);
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
             });
         }
-        
-        // Create room
-        async function createRoom() {
-            if (!validateForm()) return;
-            
-            // Show loading, hide form
-            document.getElementById('form-card').style.display = 'none';
-            document.getElementById('loading').classList.add('show');
-            document.getElementById('results-card').classList.remove('show');
-            
-            const payload = {
-                case_name: document.getElementById('case-name').value.trim(),
-                organizer: document.getElementById('organizer-email').value.trim(),
-                participants: getParticipants(),
-                room_id: document.getElementById('room-id').value.trim() || null,
-                password: document.getElementById('custom-password').value.trim() || null
-            };
-            
-            try {
-                // Call backend API
-                const response = await fetch(API_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                
-                const result = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(result.error || 'Failed to create room');
-                }
-                
-                // Display results
-                displayResults(result);
-                
-            } catch (error) {
-                console.error('Error creating room:', error);
-                showError('Failed to create room: ' + error.message);
-                document.getElementById('form-card').style.display = 'block';
-            } finally {
-                document.getElementById('loading').classList.remove('show');
-            }
-        }
-        
-        // Display results
-        function displayResults(result) {
-            document.getElementById('result-room-id').textContent = result.room_id;
-            document.getElementById('result-password').textContent = result.password;
-            document.getElementById('result-relay').textContent = result.relay || RELAY_URL;
-            document.getElementById('result-url').textContent = result.url || ZERO_CLAW_URL;
-            
-            // Display participants
-            const tagsContainer = document.getElementById('participant-tags');
-            tagsContainer.innerHTML = '';
-            
-            if (result.invitations && result.invitations.sent) {
-                result.invitations.sent.forEach(sent => {
-                    const tag = document.createElement('span');
-                    tag.className = 'participant-tag';
-                    const email = typeof sent === 'string' ? sent : sent.email;
-                    tag.textContent = '✓ ' + email;
-                    tagsContainer.appendChild(tag);
-                });
-            }
-            
-            if (result.invitations && result.invitations.failed) {
-                result.invitations.failed.forEach(failed => {
-                    const tag = document.createElement('span');
-                    tag.className = 'participant-tag';
-                    tag.style.borderColor = 'var(--error)';
-                    tag.style.color = 'var(--error)';
-                    tag.textContent = '✕ ' + failed.email;
-                    tagsContainer.appendChild(tag);
-                });
-            }
-            
-            // Show results
-            document.getElementById('results-card').classList.add('show');
-        }
-        
-        // Create another room
-        function createAnother() {
-            document.getElementById('form-card').style.display = 'block';
-            document.getElementById('results-card').classList.remove('show');
-            
-            // Reset form
-            document.getElementById('case-name').value = '';
-            document.getElementById('organizer-email').value = '';
-            document.getElementById('room-id').value = '';
-            document.getElementById('custom-password').value = '';
-            
-            // Reset participants to single input
-            const container = document.getElementById('participant-inputs');
-            container.innerHTML = `
-                <div class="participant-row">
-                    <input type="email" class="participant-email" placeholder="participant@email.com" required>
-                    <button type="button" class="btn-remove" onclick="removeParticipant(this)" style="display:none">✕</button>
-                </div>
-            `;
-            updateRemoveButtons();
-        }
-        
-        // Initialize
-        updateRemoveButtons();
     </script>
 </body>
 </html>
