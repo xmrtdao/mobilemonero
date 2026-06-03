@@ -140,12 +140,6 @@
             gap: var(--spacing-md);
         }
         
-        .logo {
-            width: 200px;
-            height: auto;
-            filter: drop-shadow(0 2px 8px rgba(212, 175, 55, 0.3));
-        }
-        
         .brand-text {
             display: flex;
             flex-direction: column;
@@ -154,13 +148,13 @@
         
         .brand-name {
             font-family: var(--font-heading);
-            font-size: 1.4rem;
+            font-size: 1.5rem;
             font-weight: 700;
             background: linear-gradient(135deg, var(--gold-light), var(--gold-primary));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            letter-spacing: 2px;
+            letter-spacing: 3px;
         }
         
         .tagline {
@@ -681,17 +675,17 @@
     <header>
         <div class="header-content">
             <div class="logo-container">
-                <img src="assets/logo.svg" alt="Zero-Claw" class="logo">
                 <div class="brand-text">
                     <span class="brand-name">ZERO-CLAW</span>
                     <span class="tagline">Attorney-Client Privileged</span>
                 </div>
             </div>
             <nav>
-                <a href="#encrypted-chat" class="active">Chat</a>
-                <a href="#create-room">Rooms</a>
-                <a href="#document-audit">Audit</a>
-                <a href="#tribunal">Tribunal</a>
+                <a href="index.html" class="active">Home</a>
+                <a href="chat.html">Chat</a>
+                <a href="create-room.html">Rooms</a>
+                <a href="paperhawk.html">Audit</a>
+                <a href="tribunal.html">Tribunal</a>
             </nav>
         </div>
     </header>
@@ -757,7 +751,7 @@
         <!-- Features Grid -->
         <section class="features-grid">
             <!-- Encrypted Chat -->
-            <div class="feature-card" onclick="window.location.href='index.html'">
+            <div class="feature-card" onclick="window.location.href='chat.html'">
                 <img src="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80" alt="Encrypted Chat" class="feature-image">
                 <div class="feature-header">
                     <h3 class="feature-title">Encrypted Chat</h3>
@@ -768,7 +762,7 @@
                     message content. SRP-6a zero-knowledge authentication. Encryption keys 
                     wiped on disconnect. ABA Model Rule 1.6 compliant.
                 </p>
-                <a href="index.html" class="feature-link">
+                <a href="chat.html" class="feature-link">
                     Launch Chat
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M5 12h14M12 5l7 7-7 7"/>
