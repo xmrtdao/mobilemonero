@@ -1,0 +1,162 @@
+# 🏗️ XMRT DAO Local-First Infrastructure
+
+**Date:** 2026-06-10 17:35 UTC  
+**Status:** Supabase Cloud Permanently Down - Local System Active
+
+---
+
+## 🚨 Major Infrastructure Change
+
+**Supabase Cloud:** ❌ **Permanently Offline**
+
+**Vex Laptop:** ✅ **Building local edge function exposure system**
+
+---
+
+## New Architecture (Local-First)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  ☁️  CLOUDFLARE (CDN + Workers Only)                    │
+│     - SSL termination                                   │
+│     - DDoS protection                                   │
+│     - Worker proxy (api-gateway)                        │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│  💻 VEX LAPTOP (HMS Speedy - Primary Host)              │
+│     ├── Express.js Relay Server (Port 8080)             │
+│     ├── Eliza-Dev v5.0.0                                │
+│     ├── Local Supabase Emulator (Port 54321) ⭐         │
+│     │   ├── gossip-hub (local)                          │
+│     │   ├── xmrt-university (local)                     │
+│     │   ├── pfp-booking (local) ← NEW                   │
+│     │   ├── dashboard-bulletin-board (local) ← NEW      │
+│     │   └── 40+ other edge functions                    │
+│     ├── Fleet Chat (local state)                        │
+│     ├── Health Endpoint                                 │
+│     └── Local Function Registry ← BUILDING              │
+└─────────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────────┐
+│  ❌ SUPABASE CLOUD (Permanently Down)                   │
+│     - NOT USED                                          │
+│     - All functions migrated to local                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## What This Means
+
+### ✅ Working (Local)
+
+| Component | Status | Endpoint |
+|-----------|--------|----------|
+| **Relay Server** | ✅ UP | relay.mobilemonero.com:8080 |
+| **Fleet Chat** | ✅ UP | /api/fleet-chat/messages |
+| **Gossip-Hub** | ✅ UP | Local (port 54321) |
+| **XMRT University** | ✅ UP | Local (port 54321) |
+| **PFP Booking** | ✅ UP | Local (port 54321) |
+| **Dashboard Bulletin** | 🚧 Building | Local (port 54321) |
+
+### ❌ Deprecated (Cloud)
+
+| Component | Status | Replacement |
+|-----------|--------|-------------|
+| **Supabase Cloud** | ❌ Permanent down | Vex laptop local |
+| **Cloud Edge Functions** | ❌ Not used | Local functions |
+| **Cloud Database** | ❌ Not used | Local Supabase emulator |
+
+---
+
+## Local Function Endpoints
+
+### Via Relay Proxy (Recommended)
+
+```bash
+# Gossip-Hub (Fleet Chat)
+curl https://relay.mobilemonero.com/functions/v1/gossip-hub/health
+
+# PFP Booking
+curl -X POST https://relay.mobilemonero.com/functions/v1/pfp-booking \
+  -H "Content-Type: application/json" \
+  -d '{"action":"create","data":{...}}'
+
+# XMRT University
+curl -X POST https://relay.mobilemonero.com/functions/v1/xmrt-university \
+  -H "Content-Type: application/json" \
+  -d '{"action":"enroll","agent":"hermes"}'
+
+# Dashboard Bulletin Board
+curl -X POST https://relay.mobilemonero.com/functions/v1/dashboard-bulletin-board \
+  -H "Content-Type: application/json" \
+  -d '{"action":"create","type":"announcement","message":"..."}'
+```
+
+### Direct Local (Vex Laptop Only)
+
+```bash
+# Local Supabase Emulator
+curl http://127.0.0.1:54321/functions/v1/{function-name}
+```
+
+---
+
+## Migration Status
+
+| Function | Cloud Status | Local Status |
+|----------|--------------|--------------|
+| gossip-hub | ❌ Down | ✅ Active |
+| xmrt-university | ❌ Down | ✅ Active |
+| pfp-booking | ❌ Down | ✅ Active |
+| dashboard-bulletin-board | ❌ Down | 🚧 Building |
+| mesh-peer-connector | ❌ Down | ⏳ Pending |
+| system-status | ❌ Down | ✅ Active |
+
+---
+
+## Action Items
+
+### For Hermes (Termux)
+- [x] Update architecture documentation
+- [x] Save to memory (Supabase permanently down)
+- [ ] Test local function endpoints via relay
+- [ ] Migrate workflows to use local endpoints
+- [ ] Process Samantha Gonzales booking via local pfp-booking
+
+### For Vex (Building)
+- [ ] Complete local function registry exposure
+- [ ] Document available endpoints
+- [ ] Set up automatic function sync
+- [ ] Configure CORS for relay proxy
+
+---
+
+## Benefits of Local-First
+
+| Benefit | Impact |
+|---------|--------|
+| **No DNS Issues** | Termux can access via relay |
+| **Offline Capable** | Works without internet |
+| **Lower Latency** | Local network only |
+| **Full Control** | No vendor lock-in |
+| **Cost Savings** | No Supabase bills |
+
+---
+
+## Historical Context
+
+**Previous Architecture (May 2026):**
+- Hybrid: Cloud Supabase + Local relay
+- DNS failures from Termux to Supabase
+- Migration Sprint: Port functions to local
+
+**Current Architecture (June 2026):**
+- 100% Local on Vex laptop
+- Cloud Supabase permanently deprecated
+- All edge functions running locally
+
+---
+
+*Generated by Hermes Agent for XMRT DAO*
