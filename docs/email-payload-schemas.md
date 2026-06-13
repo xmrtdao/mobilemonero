@@ -224,8 +224,8 @@ Store these in your agent's config:
 ```bash
 SUPABASE_URL="https://vawouugtzwmejxqkeqqj.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="eyJhbG...zxU"
-RESEND_API_KEY="re_..."  # For partyfavorphoto.com
-RESEND_XMRT_API_KEY="re_..."  # For mobilemonero.com
+RESEND_API_KEY="re_[REDACTED]"  # For partyfavorphoto.com
+RESEND_XMRT_API_KEY="re_[REDACTED]"  # For mobilemonero.com
 ```
 
 ---
