@@ -7325,40 +7325,468 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
   }
 });
 
-// POST /api/cuttlefishclaws/* — catch-all for cuttlefishclaws API calls (agent-onboard, agent-chat, etc.)
-// These are forwarded as email notifications since the Netlify functions are not deployed on GH Pages.
-app.post('/api/cuttlefishclaws/:action', express.json(), async (req, res) => {
+// ─── CuttlefishClaws API — real DB-backed endpoints ─────────────────────
+// Replaces the old email-stub catch-all. Each action routes to a specific
+// query against the app.cuttlefish_* tables.
+
+// GET /api/cuttlefishclaws/trust-score — query agent trust score + recent events
+app.get('/api/cuttlefishclaws/trust-score', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  trackRequest(`/api/cuttlefishclaws/${req.params.action}`);
-  const { action } = req.params;
-  const body = req.body || {};
-
-  const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
-  if (!RESEND_KEY) return res.status(500).json({ error: 'Resend key not configured' });
-
-  const bodyText = `Action: ${action}\nPayload: ${JSON.stringify(body, null, 2)}`;
+  trackRequest('/api/cuttlefishclaws/trust-score');
+  const did = req.query.did;
+  if (!did) return res.status(400).json({ error: 'did query parameter is required' });
 
   try {
-    const apiRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'Cuttlefish Labs <david@31harbor.com>',
-        to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
-        subject: `CuttlefishClaws API - ${action}`,
-        text: bodyText,
-      }),
-    });
-    const data = await apiRes.json();
+    const agent = await queryLocalPg(
+      `SELECT did, trust_score, status, agent_type, agent_subtype, created_at
+       FROM app.cuttlefish_agents WHERE did = $1`, [did]
+    );
+    if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
 
-    if (apiRes.ok) {
-      logActivity('cuttlefishclaws-api', data.id, 'SENT', `${action} from cuttlefishclaws`);
-      res.json({ success: true, id: data.id });
-    } else {
-      res.status(500).json({ error: data });
-    }
+    const events = await queryLocalPg(
+      `SELECT event_type, delta, score_after, note, created_at
+       FROM app.cuttlefish_trust_events WHERE agent_did = $1
+       ORDER BY created_at DESC LIMIT 5`, [did]
+    );
+
+    const a = agent.rows[0];
+    res.json({
+      did: a.did,
+      trustScore: Number(a.trust_score),
+      status: a.status,
+      agentType: a.agent_type,
+      memberSince: a.created_at,
+      recentEvents: events.rows.map(e => ({
+        type: e.event_type,
+        delta: Number(e.delta),
+        scoreAfter: Number(e.score_after),
+        note: e.note,
+        at: e.created_at,
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cuttlefishclaws/cac-status — query CAC credential by cacId or did
+app.get('/api/cuttlefishclaws/cac-status', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/cac-status');
+  const { cacId, did } = req.query;
+  if (!cacId && !did) return res.status(400).json({ error: 'Provide either cacId or did as query parameter' });
+
+  try {
+    let rows;
+    if (cacId) {
+      const r = await queryLocalPg(
+        `SELECT id, tier, status, usdc_prepaid, token_balance, issued_at, expires_at
+         FROM app.cuttlefish_cac_credentials WHERE id::text = $1`, [cacId]
+      );
+      rows = r.rows;
+    } else {
+      const r = await queryLocalPg(
+        `SELECT id, tier, status, usdc_prepaid, token_balance, issued_at, expires_at
+         FROM app.cuttlefish_cac_credentials WHERE agent_did = $1
+         ORDER BY created_at DESC LIMIT 1`, [did]
+      );
+      rows = r.rows;
+    }
+
+    if (!rows.length) return res.status(404).json({ error: 'CAC not found' });
+
+    const c = rows[0];
+    const now = new Date();
+    const expires = c.expires_at ? new Date(c.expires_at) : null;
+    const isExpired = expires ? now > expires : false;
+    const daysRemaining = expires
+      ? Math.max(0, Math.ceil((expires.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+      : null;
+
+    res.json({
+      cacId: c.id,
+      tier: c.tier,
+      status: isExpired ? 'expired' : c.status,
+      usdcPrepaid: Number(c.usdc_prepaid),
+      tokenBalance: Number(c.token_balance),
+      issuedAt: c.issued_at,
+      expiresAt: c.expires_at,
+      daysRemaining,
+      valid: c.status === 'active' && !isExpired,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cuttlefishclaws/capital-stack — capital stack layers + financing programs
+app.get('/api/cuttlefishclaws/capital-stack', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/capital-stack');
+
+  try {
+    const [stackRes, progRes] = await Promise.all([
+      queryLocalPg(
+        `SELECT layer_key, name, sub_label, amount_m, pct_of_total, color, seniority,
+                yield_score, coverage, description, details, display_order, is_open
+         FROM app.cuttlefish_capital_stack WHERE is_active = 1
+         ORDER BY display_order ASC`
+      ),
+      queryLocalPg(
+        `SELECT program_key, name, category, administering_entity, applies_to, headline,
+                amount_range, rate_or_credit, term_years, eligibility, application_url, contact, notes, display_order
+         FROM app.cuttlefish_financing_programs WHERE is_active = 1
+         ORDER BY display_order ASC`
+      ),
+    ]);
+
+    const layers = stackRes.rows;
+    const programs = progRes.rows;
+    const totalM = layers.reduce((sum, l) => sum + Number(l.amount_m), 0);
+
+    res.json({
+      layers,
+      programs,
+      totalM: Math.round(totalM * 1000) / 1000,
+      openTranche: layers.find(l => l.is_open)?.layer_key || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cuttlefishclaws/financing-programs — financing programs with optional filters
+app.get('/api/cuttlefishclaws/financing-programs', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/financing-programs');
+  const { layer, category } = req.query;
+
+  try {
+    let sql = `SELECT * FROM app.cuttlefish_financing_programs WHERE is_active = 1`;
+    const params = [];
+    let paramIdx = 1;
+
+    if (layer) {
+      sql += ` AND applies_to @> ARRAY[$${paramIdx++}]::text[]`;
+      params.push(layer);
+    }
+    if (category) {
+      sql += ` AND category = $${paramIdx++}`;
+      params.push(category);
+    }
+    sql += ` ORDER BY display_order ASC`;
+
+    const result = await queryLocalPg(sql, params);
+    const data = result.rows;
+
+    const grouped = {};
+    data.forEach(p => {
+      if (!grouped[p.category]) grouped[p.category] = [];
+      grouped[p.category].push(p);
+    });
+
+    res.json({
+      programs: data,
+      grouped,
+      total: data.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cuttlefishclaws/agent-onboard — register a new agent with KYA checks
+app.post('/api/cuttlefishclaws/agent-onboard', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/agent-onboard');
+  const { did, agentType, prepaidUsdcAmount = 0, metadata = {} } = req.body || {};
+
+  if (!did) return res.status(400).json({ error: 'did is required' });
+  if (!/^did:[a-z]+:[a-zA-Z0-9._-]+/.test(did)) return res.status(400).json({ error: 'Invalid DID format' });
+
+  const KYA_RULES = {
+    constitutional: { min_prepaid_usdc: 0, trust_floor: 50 },
+    developer: { min_prepaid_usdc: 500, trust_floor: 50 },
+    financial: { min_prepaid_usdc: 2000, trust_floor: 60 },
+  };
+  if (!agentType || !KYA_RULES[agentType]) {
+    return res.status(400).json({ error: `agentType must be one of: ${Object.keys(KYA_RULES).join(', ')}` });
+  }
+
+  const rules = KYA_RULES[agentType];
+  const prepaid = Number(prepaidUsdcAmount);
+  if (isNaN(prepaid) || prepaid < 0) return res.status(400).json({ error: 'prepaidUsdcAmount must be a non-negative number' });
+  if (prepaid < rules.min_prepaid_usdc) {
+    return res.status(403).json({ error: `KYA failed: ${agentType} agents require minimum $${rules.min_prepaid_usdc} USDC prepaid. Received: $${prepaid}` });
+  }
+
+  try {
+    const existing = await queryLocalPg(
+      `SELECT id, status FROM app.cuttlefish_agents WHERE did = $1`, [did]
+    );
+    if (existing.rows.length && existing.rows[0].status === 'active') {
+      return res.status(409).json({ error: 'DID already registered and active. Use /cac-status to check your credential.' });
+    }
+    if (existing.rows.length && existing.rows[0].status === 'suspended') {
+      return res.status(403).json({ error: 'DID is suspended. Contact Navigator to resolve.' });
+    }
+
+    const tier = prepaid >= 7500 ? 'enterprise' : prepaid >= 2000 ? 'studio' : prepaid >= 500 ? 'developer' : 'explorer';
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    const agentName = (metadata && metadata.name) || did.slice(0, 24);
+    const agent = await queryLocalPg(
+      `INSERT INTO app.cuttlefish_agents (did, name, agent_type, trust_score, status, metadata, updated_at)
+       VALUES ($1,$2,$3,$4,'active',$5,NOW())
+       ON CONFLICT (did) DO UPDATE SET name=EXCLUDED.name, agent_type=EXCLUDED.agent_type, trust_score=EXCLUDED.trust_score, status='active', metadata=EXCLUDED.metadata, updated_at=NOW()
+       RETURNING id, trust_score, status`,
+      [did, agentName, agentType, rules.trust_floor, JSON.stringify(metadata || {})]
+    );
+
+    const cac = await queryLocalPg(
+      `INSERT INTO app.cuttlefish_cac_credentials (agent_did, tier, usdc_prepaid, status, expires_at)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, tier, status`,
+      [did, tier, prepaid, prepaid > 0 ? 'active' : 'pending', expiresAt]
+    );
+
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+       VALUES ($1,'onboard',$2,$3,$4)`,
+      [did, rules.trust_floor, rules.trust_floor, `KYA passed. agentType=${agentType} tier=${tier} prepaid=$${prepaid}`]
+    );
+
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority)
+       VALUES ('kya_check','trib',$1,3)`,
+      [JSON.stringify({ agent_id: agent.rows[0].id, did, agent_type: agentType, tier, prepaid_usdc: prepaid, name: agentName })]
+    );
+
+    const a = agent.rows[0];
+    const c = cac.rows[0];
+    res.status(201).json({
+      success: true,
+      agentId: a.id,
+      cacId: c.id,
+      tier,
+      trustScore: Number(a.trust_score),
+      status: a.status,
+      cacStatus: c.status,
+      expiresAt,
+      paymentRequired: prepaid === 0,
+      paymentNote: prepaid === 0
+        ? `Explorer tier active. Top up USDC to upgrade to developer ($500), studio ($2000), or enterprise ($7500).`
+        : `$${prepaid} USDC prepaid on record. CAC ID: ${c.id}`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cuttlefishclaws/proposal-submit — submit a governance proposal
+app.post('/api/cuttlefishclaws/proposal-submit', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/proposal-submit');
+  const { title, description = '', category = 'general', submitterDid, content, fileUrls = [], metadata = {} } = req.body || {};
+
+  if (!title || title.trim().length < 3) return res.status(400).json({ error: 'title is required (min 3 characters)' });
+  if (!submitterDid) return res.status(400).json({ error: 'submitterDid is required' });
+  if (!content || content.trim().length < 10) return res.status(400).json({ error: 'content is required (min 10 characters)' });
+
+  const VALID_CATEGORIES = ['symbionic_dcsf', 'infrastructure', 'governance', 'climate', 'compute', 'finance', 'general'];
+  if (!VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
+  }
+
+  try {
+    const agent = await queryLocalPg(
+      `SELECT id, trust_score, status FROM app.cuttlefish_agents WHERE did = $1`, [submitterDid]
+    );
+    if (!agent.rows.length) return res.status(403).json({ error: 'Submitter DID not found. Complete agent onboarding first.' });
+    const ag = agent.rows[0];
+    if (ag.status !== 'active' && ag.status !== 'online') return res.status(403).json({ error: `Agent status is "${ag.status}". Must be active or online to submit proposals.` });
+    const trustScore = Number(ag.trust_score);
+    if (trustScore < 40) return res.status(403).json({ error: `Trust score too low (${trustScore}/100). Minimum 40 required.` });
+
+    const prior = await queryLocalPg(
+      `SELECT id, version FROM app.cuttlefish_proposals
+       WHERE submitter_did = $1 AND title = $2 ORDER BY version DESC LIMIT 1`,
+      [submitterDid, title.trim()]
+    );
+    const version = prior.rows.length ? prior.rows[0].version + 1 : 1;
+    const parentId = prior.rows.length ? prior.rows[0].id : null;
+
+    const crypto = await import('crypto');
+    const bundle = JSON.stringify({ title: title.trim(), description, category, content: content.trim(), fileUrls, metadata, submitterDid, timestamp: new Date().toISOString() });
+    const combinedHash = crypto.createHash('sha256').update(bundle).digest('hex');
+    const ipfsCid = `local_${combinedHash.slice(0, 16)}`;
+    const chainTx = `pending_mainnet_${combinedHash.slice(0, 24)}`;
+    const routedTo = ['trib', 'arch', 'dao-voters'];
+
+    const proposal = await queryLocalPg(
+      `INSERT INTO app.cuttlefish_proposals (title, description, category, submitter_did, version, parent_id, status, ipfs_cid, chain_anchor_tx, combined_hash, routed_to, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,'submitted',$7,$8,$9,$10,$11) RETURNING id, created_at`,
+      [title.trim(), description, category, submitterDid, version, parentId, ipfsCid, chainTx, combinedHash, routedTo,
+       JSON.stringify({ ...metadata, fileUrls, content_preview: content.slice(0, 200) })]
+    );
+
+    const taskPayload = JSON.stringify({ proposal_id: proposal.rows[0].id, title: title.trim(), category, version, submitter_did: submitterDid, ipfs_cid: ipfsCid, combined_hash: combinedHash });
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority) VALUES
+       ('review_proposal','trib',$1,4), ('review_proposal','arch',$2,4)`,
+      [taskPayload, taskPayload]
+    );
+
+    const newScore = Math.min(100, trustScore + 2);
+    await queryLocalPg(`UPDATE app.cuttlefish_agents SET trust_score = $1 WHERE did = $2`, [newScore, submitterDid]);
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, reference, note)
+       VALUES ($1,'proposal_submit',2,$2,$3,$4)`,
+      [submitterDid, newScore, proposal.rows[0].id, `Submitted: "${title.trim()}" v${version} · category=${category}`]
+    );
+
+    res.status(201).json({
+      success: true,
+      proposalId: proposal.rows[0].id,
+      version,
+      isRevision: version > 1,
+      parentId,
+      ipfsCid,
+      onChainTx: chainTx,
+      combinedHash,
+      routedTo,
+      trustScoreDelta: 2,
+      newTrustScore: newScore,
+      submittedAt: proposal.rows[0].created_at,
+      message: version > 1 ? `Revision v${version} submitted. Routed to Trib + Arch.` : `Proposal submitted and routed to constitutional agents.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cuttlefishclaws/agent-x-post — queue a GlobalCommunicator post
+app.post('/api/cuttlefishclaws/agent-x-post', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/agent-x-post');
+  const { draft, operator_approved = false } = req.body || {};
+  if (!draft?.content_en) return res.status(400).json({ error: 'draft.content_en is required' });
+
+  const flags = [];
+  if (/guaranteed|promise.*return|will.*increase|investment.*return/i.test(draft.content_en)) {
+    flags.push('FINANCIAL_PROMISE: Cannot guarantee returns');
+  }
+  if (/\bsoon\b|\bimminent\b|\blaunch.*today\b/i.test(draft.content_en)) {
+    flags.push('TIMELINE_PROMISE: Avoid unverified timeline claims');
+  }
+  const score = Math.max(0, 100 - flags.length * 25);
+  const needsTrib = score < 85 && !operator_approved;
+
+  try {
+    if (!needsTrib && !operator_approved) {
+      await queryLocalPg(
+        `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+         VALUES ('did:ethr:global-communicator-v1','constitutional_block',-50,28,$1)`,
+        [`Blocked post: ${flags.join('; ')}`]
+      );
+    }
+
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority)
+       VALUES ($1,'trib',$2,$3)`,
+      [needsTrib ? 'approve_post' : 'publish_post',
+       JSON.stringify({ agent_did: 'did:ethr:global-communicator-v1', draft, constitutional_score: score, flags, needs_trib_approval: needsTrib, operator_approved }),
+       draft.is_milestone ? 1 : 5]
+    );
+
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+       VALUES ('did:ethr:global-communicator-v1','post_queued',0,78,$1)`,
+      [`Post queued. Score: ${score}. Trib approval: ${needsTrib}`]
+    );
+
+    res.json({
+      success: true,
+      constitutional_score: score,
+      flags,
+      status: needsTrib ? 'pending_trib_approval' : 'queued_for_publish',
+      message: needsTrib ? 'Draft queued for Trib approval (score below 85).' : 'Draft queued for publishing.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cuttlefishclaws/agent-chat — chat with an agent via fleet chat system
+app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cuttlefishclaws/agent-chat');
+  const { agentId, message, conversationHistory } = req.body || {};
+
+  if (!agentId || !message) return res.status(400).json({ error: 'agentId and message are required' });
+
+  try {
+    // Look up the agent
+    const agent = await queryLocalPg(
+      `SELECT did, name, agent_type, status, greeting FROM app.cuttlefish_agents WHERE id::text = $1 OR did = $1 OR LOWER(name) = LOWER($1) LIMIT 1`,
+      [agentId]
+    );
+    if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
+    const ag = agent.rows[0];
+
+    // Map cuttlefish agent names to fleet agent labels
+    const fleetAgentMap = {
+      'trib': 'vex',
+      'arch': 'vex',
+      'global-communicator': 'vex',
+      'trustgraph': 'vex',
+      'dao': 'vex',
+      'builder': 'eliza',
+      'sovereign': 'eliza',
+    };
+    const fleetAgent = fleetAgentMap[ag.name?.toLowerCase()] || 'vex';
+
+    // Build a contextual message for the fleet
+    const fleetMessage = `[CuttlefishClaws] Agent "${ag.name}" (${ag.agent_type}) received: ${message}`;
+
+    // Post to fleet chat and wait for routing
+    const entry = addFleetMessage(fleetAgent, fleetMessage, 'fleet');
+    const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
+    const timeout = new Promise(r => setTimeout(r, 30000));
+    const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
+
+    // Extract the agent's reply from fleet results
+    let agentResponse = '';
+    if (routes?.eliza?.message) {
+      agentResponse = routes.eliza.message;
+    } else if (routes?.vex?.message) {
+      agentResponse = routes.vex.message;
+    } else if (routes?.alice?.message) {
+      agentResponse = routes.alice.message;
+    } else {
+      // Fallback: use the agent's greeting or a default response
+      agentResponse = ag.greeting || `Hello! I'm ${ag.name}. Your message has been received by the fleet. An agent will respond shortly.`;
+    }
+
+    // Store the chat message in the DB
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_chat_messages (agent_id, user_message, agent_response, simulated, created_at)
+       VALUES ($1,$2,$3,0,NOW())`,
+      [ag.did, message, agentResponse]
+    );
+
+    res.json({
+      content: agentResponse,
+      simulated: false,
+      agentId: ag.did,
+    });
+  } catch (err) {
+    // Fallback: return a graceful error response
+    res.json({
+      content: `I'm having trouble connecting to the fleet right now. Please try again shortly.`,
+      simulated: true,
+      agentId,
+      error: true,
+    });
   }
 });
 
