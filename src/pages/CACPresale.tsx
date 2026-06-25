@@ -23,9 +23,23 @@ export default function CACPresale() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitted(true)
+    try {
+      const res = await fetch('https://relay.mobilemonero.com/api/contact/cuttlefishclaws', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (res.ok) {
+        setSubmitted(true)
+      } else {
+        const err = await res.json()
+        alert(err.error || 'Submission failed. Please email dvdelze@gmail.com directly.')
+      }
+    } catch {
+      alert('Network error. Please email dvdelze@gmail.com directly.')
+    }
   }
 
   const noop = () => {}
@@ -196,16 +210,9 @@ export default function CACPresale() {
             </div>
           ) : (
             <form
-              name="cac-reservation"
-              netlify-honeypot="bot-field"
-              data-netlify="true"
               onSubmit={handleSubmit}
               className="space-y-4"
             >
-              <input type="hidden" name="form-name" value="cac-reservation" />
-              <p className="hidden">
-                <label>Don't fill this out: <input name="bot-field" /></label>
-              </p>
 
               <div>
                 <label className="text-[8px] tracking-[0.18em] text-[rgba(255,160,0,0.5)] uppercase block mb-1.5">
