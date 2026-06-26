@@ -60,7 +60,7 @@ export default function Nav({ scrollTo }: NavProps) {
         </button>
 
         <a
-          href="/presale"
+          href="/cuttlefishclaws/presale"
           className="text-[9px] md:text-[10px] tracking-[0.14em] uppercase py-1.5 px-3 md:px-4 border border-[var(--green)] text-[var(--green)] bg-[rgba(0,255,204,0.08)] hover:bg-[rgba(0,255,204,0.18)] transition-all font-mono no-underline whitespace-nowrap"
         >
           Reserve &rarr;
