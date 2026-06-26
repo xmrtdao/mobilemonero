@@ -381,7 +381,7 @@ function initTrustGraph(
   function start() {
     resize()
     initNodes()
-    rafId = requestAnimationFrame(draw)
+    // draw() self-schedules — no external start needed
   }
 
   // Click detection

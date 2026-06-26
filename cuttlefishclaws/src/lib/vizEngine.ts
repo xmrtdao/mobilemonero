@@ -1708,9 +1708,7 @@ export function initVizEngine(canvas: HTMLCanvasElement, wrapEl?: HTMLElement): 
     // v4 managed by React
     // sbar: managed by React}/${nodes.length.toLocaleString()} · FLOWS:${streams.length} · ${fps}fps · PAL:${palKey.toUpperCase()} · DRAG:ROTATE · SCROLL:ZOOM · RIGHT-CLICK:OPTIONS`;
   }
-  requestAnimationFrame(draw);
-
-  // Initial start
+  // Initial start — draw() self-schedules subsequent frames
   rafId = requestAnimationFrame(draw)
 
   // Restore getElementById after init (engine patches it temporarily)

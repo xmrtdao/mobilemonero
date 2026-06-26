@@ -299,7 +299,7 @@ function initCapitalGraph(
   const resizeObserver = new ResizeObserver(() => { resize(); initNodes() })
   resizeObserver.observe(canvas)
   resize(); initNodes()
-  rafId = requestAnimationFrame(draw)
+  // draw() self-schedules — no external start needed
 
   return {
     destroy: () => { cancelAnimationFrame(rafId); resizeObserver.disconnect() },
