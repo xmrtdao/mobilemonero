@@ -36,6 +36,17 @@ function App() {
       setShowReturns(true)
       setReturnsUnlocked(true)
     }
+    // Handle ?scrollTo= query param from presale page navigation
+    const params = new URLSearchParams(location.search)
+    const scrollTarget = params.get('scrollTo')
+    if (scrollTarget) {
+      // Small delay to let sections render
+      setTimeout(() => {
+        document.getElementById(scrollTarget)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 200)
+      // Clean the query param from URL without reload
+      window.history.replaceState({}, '', location.pathname)
+    }
   }, [location])
 
   const handleVCAccess = (code: string) => {

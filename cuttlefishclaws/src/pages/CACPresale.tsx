@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Nav from '../components/Nav'
 import Footer from '../components/Footer'
 import { usePalette } from '../hooks/usePalette'
@@ -7,6 +8,7 @@ const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/28EdRaehWcfigxReaxfAc00"
 const BASE_WALLET = "0xb748798D0a8dA0527c30e6CA81425A8fD150f04c"
 
 export default function CACPresale() {
+  const navigate = useNavigate()
   const { palette, togglePalette } = usePalette()
   const [copied, setCopied] = useState(false)
   const [submitted, setSubmitted] = useState(false)
@@ -42,13 +44,15 @@ export default function CACPresale() {
     }
   }
 
-  const noop = () => {}
+  const scrollTo = (id: string) => {
+    navigate(`/?scrollTo=${id}`)
+  }
 
   return (
     <div className="min-h-screen bg-[var(--bg0)]">
       <div className="scanline" />
 
-      <Nav scrollTo={noop} palette={palette} togglePalette={togglePalette} />
+      <Nav scrollTo={scrollTo} palette={palette} togglePalette={togglePalette} />
 
       {/* Hero */}
       <section className="pt-40 pb-20 px-8 text-center">
