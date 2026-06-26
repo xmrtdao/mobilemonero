@@ -1,35 +1,69 @@
-# https-github.com-HansElze-cuttlefishclaws
+# Cuttlefishclaws — Tributary AI Campus
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [v0](https://v0.app).
+Constitutional AI infrastructure for the agent economy. A Vite + React SPA deployed to GitHub Pages.
 
-## Built with v0
+**Live site:** https://xmrtdao.github.io/cuttlefishclaws/
 
-This repository is linked to a [v0](https://v0.app) project. You can continue developing by visiting the link below -- start new chats to make changes, and v0 will push commits directly to this repo. Every merge to `main` will automatically deploy.
+## Overview
 
-[Continue working on v0 →](https://v0.app/chat/projects/prj_X5RXGolu2KC4OpfoSSGLZxkGWtXm)
+The Tributary AI Campus is a 420,460 SF former AT&T operations center in Birmingham, AL, governed by a constitutional DAO-REIT. This SPA serves as the public-facing site with:
 
-## Getting Started
+- **CAC Protocol** — Compute Access Certificate system for agent identity
+- **TrustGraph** — Real-time agent trust scoring visualization
+- **Capital Stack** — DAO-REIT capital structure explorer
+- **Agent Bank** — Agent provisioning and tier system
+- **KYA Protocol** — Know Your Agent credential framework
+- **Presale** — Founding member CAC card reservation (Stripe + USDC)
 
-First, run the development server:
+## Tech Stack
+
+- **Framework:** React 19 + TypeScript
+- **Build:** Vite 6
+- **Routing:** React Router v7 (BrowserRouter with basename `/cuttlefishclaws`)
+- **Styling:** Custom CSS with CSS variables (amber/cyan palettes)
+- **Animation:** Canvas-based orbital viz engine (vizEngine.ts)
+- **Hosting:** GitHub Pages via GH Actions deploy workflow
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
+npm install
+npm run dev     # Vite dev server on port 5173
+npm run build   # TypeScript check + production build to dist/
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Deployment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Pushes to the `master` branch trigger the GH Actions workflow (`.github/workflows/deploy.yml`):
 
-## Learn More
+1. Checkout → `npm ci` → `npm run build`
+2. Upload `dist/` as pages artifact
+3. Deploy to GitHub Pages
 
-To learn more, take a look at the following resources:
+The site is served at `https://xmrtdao.github.io/cuttlefishclaws/`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [v0 Documentation](https://v0.app/docs) - learn about v0 and how to use it.
+## Architecture
 
-<a href="https://v0.app/chat/api/kiro/clone/HansElze/https-github.com-HansElze-cuttlefishclaws" alt="Open in Kiro"><img src="https://pdgvvgmkdvyeydso.public.blob.vercel-storage.com/open%20in%20kiro.svg?sanitize=true" /></a>
+- **Static SPA** — no backend required. All data comes from `src/lib/mockData.ts`
+- **Forms** — POST to `relay.mobilemonero.com/api/contact/cuttlefishclaws` with try/catch fallbacks
+- **Canvas engines** — Three independent canvas renderers (vizEngine, CapitalStack, TrustGraphSection) each with their own `requestAnimationFrame` loop
+- **Routes:** `/` (main), `/presale` (CAC reservation), `/vc` (VC access), `/investors` (investor portal)
+
+## Project Structure
+
+```
+src/
+├── components/
+│   ├── sections/     # Page sections (CAC, Capital, TrustGraph, etc.)
+│   ├── agents/       # Agent chat modal
+│   ├── Nav.tsx       # Top navigation
+│   ├── Hero.tsx      # Hero with canvas viz
+│   └── Footer.tsx
+├── hooks/            # usePalette, useScrollReveal
+├── lib/
+│   ├── vizEngine.ts  # Canvas orbital animation engine (1745 lines)
+│   ├── mockData.ts   # All static data for the SPA
+│   └── types.ts      # TypeScript interfaces
+├── pages/            # Route pages (CACPresale, VCPage)
+└── App.tsx           # Root component with routing
+```
