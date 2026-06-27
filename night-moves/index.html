@@ -527,11 +527,28 @@ pip install -r requirements.txt</pre>
       
       <p>Hermes automatically uses your Ollama authentication. No manual config needed!</p>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 6: Test Your Agent</h3>
-      <pre>ollama run deepseek-v4-flash "Say hello in one word"</pre>
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 6: Launch Ollama Chat</h3>
+      <pre>ollama</pre>
+      
+      <p>Ollama will launch interactively. Select a model from the list, then start a chat:</p>
+      <pre>say hello</pre>
       
       <div class="alert alert-success" style="margin-top: 1rem;">
-        <strong>✅ Cloud Agents Active!</strong> Your Hermes agent is now running on Ollama Cloud — no local RAM usage, full-speed inference.
+        <strong>✅ Ollama Chat Active!</strong> You're now chatting with a cloud AI model — no local RAM usage, full-speed inference.
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Step 7: Launch Hermes Agent</h3>
+      <p>Open a new Termux tab (swipe from left edge or use the + button), then type:</p>
+      <pre>hermes</pre>
+      
+      <p>Hermes will launch and automatically connect to your Ollama session. No config needed!</p>
+      
+      <div class="alert alert-success" style="margin-top: 1rem;">
+        <strong>✅ Hermes Agent Active!</strong> Your autonomous AI agent is now running and ready for tasks.
+      </div>
+      
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>💡 Pro Tip:</strong> Keep both tabs open — Ollama for interactive chat, Hermes for autonomous agent work. They share the same Ollama Cloud session.
       </div>
       
       <div class="alert alert-warning" style="margin-top: 1rem;">
@@ -545,24 +562,41 @@ pip install -r requirements.txt</pre>
       <h2 class="step-title">Local Ollama Setup (Advanced)</h2>
       
       <div class="alert alert-warning" style="margin-top: 1rem;">
-        <strong>⚠️ Hardware Requirements:</strong> Minimum 4GB RAM for 1B-3B models, 8GB+ for 7B+ models. Significant battery drain. Slower inference than cloud.
+        <strong>⚠️ Hardware Requirements:</strong> Minimum 12GB RAM for usable models (7B+). Significant battery drain. Slower inference than cloud. Not recommended on mobile devices.
+      </div>
+      
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Why 12GB?</h3>
+      <ul>
+        <li><strong>0.5B-1B models:</strong> Run on 4GB RAM, but too dumb for useful work (hallucinate constantly)</li>
+        <li><strong>3B models:</strong> Need 6-8GB RAM, still limited reasoning, struggle with complex tasks</li>
+        <li><strong>7B+ models:</strong> Require 12GB+ RAM, first tier of actually usable AI for agent work</li>
+        <li><strong>14B+ models:</strong> Need 16-24GB RAM, recommended for serious autonomous agent deployments</li>
+      </ul>
+      
+      <div class="alert alert-info" style="margin-top: 1rem;">
+        <strong>💡 Reality Check:</strong> Most Android phones have 4-8GB RAM. For usable AI agents, Ollama Cloud Pro ($20/mo) is the practical choice — run 7B-70B models without draining your phone's battery or filling its RAM.
       </div>
       
       <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Install Ollama</h3>
       <pre>curl -fsSL https://ollama.com/install.sh | sh</pre>
       
-      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Pull Mobile-Optimized Models</h3>
-      <pre># Tiny models (under 2GB RAM)
-ollama pull qwen2.5:0.5b
-ollama pull llama3.2:1b
-
-# Medium models (3-4GB RAM)
-ollama pull qwen2.5:1.5b
-ollama pull llama3.2:3b
-
-# Large models (6GB+ RAM, not recommended on mobile)
+      <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Pull Models (12GB+ RAM Required)</h3>
+      <pre># Usable models (12GB+ RAM)
+ollama pull qwen2.5:7b
+ollama pull llama3.1:8b
 ollama pull mistral:7b
-ollama pull llama3.1:8b</pre>
+
+# High-performance models (16-24GB RAM)
+ollama pull qwen2.5:14b
+ollama pull llama3.1:70b
+ollama pull mixtral:8x7b
+
+# ⚠️ Avoid on mobile: Tiny models are too dumb
+# qwen2.5:0.5b, llama3.2:1b, llama3.2:3b — not recommended</pre>
+      
+      <div class="alert alert-warning" style="margin-top: 1rem;">
+        <strong>⚠️ Don't Waste RAM on Tiny Models:</strong> Models under 7B parameters hallucinate constantly and can't handle complex agent tasks. If you have less than 12GB RAM, use Ollama Cloud Pro instead.
+      </div>
       
       <h3 style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--accent);">Start Ollama Server</h3>
       <pre>ollama serve &</pre>
