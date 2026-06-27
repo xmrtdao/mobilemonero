@@ -157,20 +157,19 @@ export default function AgentBillOfRights() {
                   onClick={() => toggle(i)}
                   className="w-full text-left transition-all cursor-pointer"
                   style={{ padding: '0' }}>
-                  <div className="grid items-center px-7 py-5 gap-4"
-                    style={{ gridTemplateColumns: '48px 1fr auto auto' }}>
+                  <div className="grid grid-cols-[48px_1fr_auto_auto] max-sm:grid-cols-[36px_1fr_auto] items-center px-7 py-5 gap-4 max-sm:gap-2 max-sm:px-4 max-sm:py-3">
 
                     {/* Article number */}
                     <div className="flex flex-col items-center">
                       <div className="text-[7px] tracking-[0.14em] uppercase mb-0.5" style={{ color: `${article.color}66` }}>Art.</div>
-                      <div className="font-display text-[22px] font-bold" style={{ color: isOpen ? article.color : `${article.color}99` }}>
+                      <div className="font-display text-[22px] max-sm:text-[16px] font-bold" style={{ color: isOpen ? article.color : `${article.color}99` }}>
                         {article.number}
                       </div>
                     </div>
 
                     {/* Title + summary */}
                     <div>
-                      <div className="font-display text-[15px] font-semibold mb-1"
+                      <div className="font-display text-[15px] max-sm:text-[12px] font-semibold mb-1"
                         style={{ color: isOpen ? 'white' : 'rgba(255,255,255,0.75)' }}>
                         {article.title}
                       </div>
@@ -181,7 +180,7 @@ export default function AgentBillOfRights() {
                     </div>
 
                     {/* Signed indicator */}
-                    <div>
+                    <div className="max-sm:hidden">
                       {isSigned && (
                         <div className="flex items-center gap-1 px-2 py-0.5"
                           style={{ border: `0.5px solid ${article.color}44`, background: `${article.color}0a` }}>

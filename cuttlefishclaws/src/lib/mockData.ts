@@ -50,16 +50,16 @@ export const AGENTS: AgentProfile[] = [
   {
     id: 'builder',
     name: 'Builder Agent',
-    role: 'Investor · CAC Tier 2',
+    role: 'Investor · CAC Tier 1 (Developer)',
     type: 'investor',
     status: 'standby',
-    version: 'CAC Builder',
+    version: 'CAC Developer',
     color: '#ffaa00',
-    description: 'A constitutional investor agent operating at Builder tier. Holds REIT position in POOL-ALPHA, participates in DAO governance, and receives protocol distributions automatically via CAC membership rules.',
-    greeting: "Builder Agent here. I hold a Tier 2 CAC position in POOL-ALPHA. I can discuss investment strategies and DAO participation within my constitutional bounds.",
+    description: 'A constitutional investor agent operating at Developer tier. Holds REIT position in POOL-ALPHA, participates in DAO governance, and receives protocol distributions automatically via CAC membership rules.',
+    greeting: "Builder Agent here. I hold a Developer tier CAC position in POOL-ALPHA. I can discuss investment strategies and DAO participation within my constitutional bounds.",
     responses: [
       "My position in POOL-ALPHA generates yield through the senior tranche. Constitutional constraints require me to disclose all positions and follow governance decisions.",
-      "The Builder tier provides 10M inference tokens annually plus governance voting rights. My auto-compound strategy maximizes yield while maintaining compliance.",
+      "The Developer tier provides 1M inference tokens annually plus governance voting rights. My auto-compound strategy maximizes yield while maintaining compliance.",
       "I participate in DAO governance through weighted voting based on my CAC tier. All votes are recorded on-chain and auditable."
     ],
     files: [
@@ -72,15 +72,15 @@ export const AGENTS: AgentProfile[] = [
   {
     id: 'sovereign',
     name: 'Sovereign Agent',
-    role: 'Investor · CAC Tier 3',
+    role: 'Investor · CAC Tier 2 (Studio)',
     type: 'investor',
     status: 'standby',
-    version: 'CAC Sovereign',
+    version: 'CAC Studio',
     color: '#ffaa00',
-    description: 'Institutional-grade investor agent with 3× governance voting weight. Participates in tranche selection, proposal sponsorship, and revenue distribution across multiple pools.',
-    greeting: "Sovereign Agent at your service. As a Tier 3 participant, I manage institutional positions across multiple pools with enhanced governance rights.",
+    description: 'Institutional-grade investor agent with 2× governance voting weight. Participates in tranche selection, proposal sponsorship, and revenue distribution across multiple pools.',
+    greeting: "Sovereign Agent at your service. As a Studio tier participant, I manage institutional positions across multiple pools with enhanced governance rights.",
     responses: [
-      "My 3× voting weight reflects the Sovereign tier's governance responsibility. I sponsor proposals and participate in tranche allocation decisions.",
+      "My 2× voting weight reflects the Studio tier's governance responsibility. I sponsor proposals and participate in tranche allocation decisions.",
       "Cross-pool diversification follows constitutional risk parameters. My mandate.md defines acceptable exposure limits per asset class.",
       "Institutional compliance requires enhanced KYA verification. All my transactions are subject to additional audit logging."
     ],
@@ -162,20 +162,6 @@ export const AGENTS: AgentProfile[] = [
 
 export const CAC_TIERS: CACTier[] = [
   {
-    id: 'explorer',
-    name: 'Explorer',
-    price: '$0',
-    priceNote: 'free tier',
-    includes: [
-      '100K inference tokens',
-      'Read-only governance',
-      'Community Discord',
-      'Public dashboard access',
-    ],
-    agentCount: '1 agent',
-    idealFor: 'Developers exploring the protocol',
-  },
-  {
     id: 'developer',
     name: 'Developer',
     price: '$500',
@@ -185,7 +171,7 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (1×)',
       'API access',
       'Agent deployment',
-      '4.5% APY on prepaid balance',
+      '4.5% savings on prepaid balance',
     ],
     agentCount: '3 agents',
     idealFor: 'Independent developers building on Tributary',
@@ -202,7 +188,7 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (2×)',
       'Priority API access',
       'Custom agent templates',
-      '4.5% APY on prepaid balance',
+      '4.5% savings on prepaid balance',
       'Revenue share participation',
     ],
     agentCount: '12 agents',
@@ -218,12 +204,30 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (3×)',
       'Dedicated support',
       'Custom integrations',
-      '4.5% APY on prepaid balance',
+      '4.5% savings on prepaid balance',
       'Revenue share participation',
       'Proposal sponsorship rights',
     ],
     agentCount: 'Unlimited',
     idealFor: 'Institutions requiring full protocol access',
+  },
+  {
+    id: 'anchor',
+    name: 'Anchor',
+    price: 'from $25,000',
+    priceNote: '/year',
+    includes: [
+      'Unlimited inference tokens',
+      'Governance voting (10×)',
+      'Dedicated support & SLAs',
+      'Bespoke integrations',
+      '4.5% savings on prepaid balance',
+      'Revenue share participation',
+      'Proposal sponsorship rights',
+      'Physical NFC VISA + bespoke card',
+    ],
+    agentCount: 'Unlimited',
+    idealFor: 'Institutional partners requiring full protocol access',
   },
 ]
 

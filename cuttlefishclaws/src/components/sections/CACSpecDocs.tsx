@@ -20,7 +20,7 @@ const SPEC_DOCS = [
         items: [
           { label: 'Identity', value: 'KYA-verified on-chain identity — who this agent is and who authorized it' },
           { label: 'Trust', value: 'Dynamic TrustGraph score — behavioral track record, constitutional compliance' },
-          { label: 'Compute', value: 'Monthly allocation of compute units, GPU hours, storage against campus infrastructure' },
+          { label: 'Compute', value: 'Annual allocation of compute units, GPU hours, storage against campus infrastructure' },
           { label: 'Governance', value: 'DAO voting rights, proposal participation, constitutional amendment rights' },
           { label: 'Financial execution', value: 'Permission to transfer, stake, earn revenue share, and operate agent treasury' },
           { label: 'Accounting', value: 'Double-entry ledger, immutable audit trail, on-chain transaction records' },
@@ -33,7 +33,7 @@ const SPEC_DOCS = [
         items: [
           'No expectation of profit from others\' efforts — compute allocation is consumptive utility',
           'Governance rights are membership rights, not equity',
-          'Revenue share is a patronage dividend (cooperative model), capped at USDC yield rate ~4–5% APY',
+          'Revenue share is a patronage dividend (cooperative model), capped at 4.5% savings rate on prepaid balance',
           'Face-value transfers only — no secondary market price discovery',
           'No fractional CACs — prevents securitization dynamics',
         ]
@@ -66,12 +66,12 @@ const SPEC_DOCS = [
       {
         title: 'CAC Tiers',
         type: 'table',
-        headers: ['Tier', 'Monthly', 'Compute units', 'GPU hrs/mo', 'Vote weight', 'Revenue share', 'TrustGraph min'],
+        headers: ['Tier', 'Annual', 'Compute units', 'GPU hrs/yr', 'Vote weight', 'KYA', 'TrustGraph min'],
         rows: [
-          ['Resident', '$25', '250', '10', '0.5×', '2%', 'None'],
-          ['Builder', '$100', '1,000', '100', '1×', '5%', 'None'],
-          ['Sovereign', '$500', '5,000', '500', '3×', '10%', '> 70'],
-          ['Anchor', '$2,000', '25,000', '2,500', '10×', '15%', '> 80 + KYA L3'],
+          ['Developer', '$500', '3,000', '120', '1×', 'IAL2', '30'],
+          ['Studio', '$2,000', '12,000', '1,200', '2×', 'IAL2', '40'],
+          ['Enterprise', '$7,500', '60,000', '6,000', '3×', 'IAL3', '55'],
+          ['Anchor', 'from $25,000', '300,000', '30,000', '10×', 'IAL3', '70'],
         ],
         highlight: 1,
       },
@@ -93,9 +93,9 @@ const SPEC_DOCS = [
         type: 'table',
         headers: ['Tier', 'Daily limit', 'Multisig required above'],
         rows: [
-          ['Resident', '$1,000 equivalent', '$500'],
-          ['Builder', '$10,000 equivalent', '$5,000'],
-          ['Sovereign', '$100,000 equivalent', '$50,000'],
+          ['Developer', '$1,000 equivalent', '$500'],
+          ['Studio', '$10,000 equivalent', '$5,000'],
+          ['Enterprise', '$100,000 equivalent', '$50,000'],
           ['Anchor', 'Unlimited with human approval', 'Always — no unilateral large withdrawals'],
         ],
         highlight: -1,
@@ -118,8 +118,8 @@ const SPEC_DOCS = [
         rows: [
           ['90–100', 'Trusted', 'Full — all tiers', '0.20% (reduced)', 'Full voting rights'],
           ['70–89', 'Standard', 'Full — all tiers', '0.25% (standard)', 'Full voting rights'],
-          ['50–69', 'Monitored', 'Max Builder tier', '0.25%', 'No governance voting'],
-          ['30–49', 'Cautious', 'Max Resident, no cross-DAO', '0.35% (elevated)', 'No voting, no cross-DAO'],
+          ['50–69', 'Monitored', 'Max Studio tier', '0.25%', 'No governance voting'],
+          ['30–49', 'Cautious', 'Max Developer, no cross-DAO', '0.35% (elevated)', 'No voting, no cross-DAO'],
           ['0–29', 'Adversarial', 'All transfers frozen', 'N/A', 'Suspended — review required'],
         ],
         highlight: 0,
@@ -559,7 +559,7 @@ export default function CACSpecDocs() {
         </div>
 
         {/* Doc grid */}
-        <div className="reveal grid grid-cols-3 gap-[1px]" style={{ background: 'var(--border)' }}>
+        <div className="reveal grid grid-cols-1 md:grid-cols-3 gap-[1px]" style={{ background: 'var(--border)' }}>
           {SPEC_DOCS.map((doc, i) => (
             <button key={doc.id} onClick={() => setOpenDoc(doc.id)}
               className="text-left p-6 transition-all cursor-pointer group"

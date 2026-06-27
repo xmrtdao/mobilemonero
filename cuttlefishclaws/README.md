@@ -44,7 +44,9 @@ The site is served at `https://xmrtdao.github.io/cuttlefishclaws/`.
 
 ## Architecture
 
-- **Static SPA** — no backend required. All data comes from `src/lib/mockData.ts`
+- **Static SPA** — no backend required. Data sources:
+  - `src/lib/trustGraphData.json` — 25 nodes, 144 edges parsed from Obsidian vault (powers TrustGraph canvas)
+  - `src/lib/mockData.ts` — agent profiles, CAC tiers, contracts, stack layers, scenarios
 - **Forms** — POST to `relay.mobilemonero.com/api/contact/cuttlefishclaws` with try/catch fallbacks
 - **Canvas engines** — Three independent canvas renderers (vizEngine, CapitalStack, TrustGraphSection) each with their own `requestAnimationFrame` loop
 - **Routes:** `/` (main), `/presale` (CAC reservation), `/vc` (VC access), `/investors` (investor portal)
@@ -62,7 +64,8 @@ src/
 ├── hooks/            # usePalette, useScrollReveal
 ├── lib/
 │   ├── vizEngine.ts  # Canvas orbital animation engine (1745 lines)
-│   ├── mockData.ts   # All static data for the SPA
+│   ├── trustGraphData.json  # 25 nodes, 144 edges from Obsidian vault
+│   ├── mockData.ts   # Agent profiles, CAC tiers, contracts, scenarios
 │   └── types.ts      # TypeScript interfaces
 ├── pages/            # Route pages (CACPresale, VCPage)
 └── App.tsx           # Root component with routing

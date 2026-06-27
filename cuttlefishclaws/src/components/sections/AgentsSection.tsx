@@ -32,7 +32,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
             <span className="w-2 h-2 rounded-full bg-[var(--green)]" />
             Governance Agents
           </h3>
-          <div className="agents-grid grid gap-4" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+          <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {govAgents.map((agent) => (
               <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
             ))}
@@ -45,7 +45,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
             <span className="w-2 h-2 rounded-full bg-[var(--amber)]" />
             Investor Agents
           </h3>
-          <div className="agents-grid grid gap-4" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+          <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {invAgents.map((agent) => (
               <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
             ))}
@@ -58,7 +58,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
             <span className="w-2 h-2 rounded-full bg-[var(--purple)]" />
             System Contracts
           </h3>
-          <div className="agents-grid grid gap-4" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+          <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {sysAgents.map((agent) => (
               <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
             ))}

@@ -90,7 +90,7 @@ export default function CACPresale() {
               <ul className="text-[9px] tracking-[0.08em] text-[rgba(255,160,0,0.55)] leading-[2.2] space-y-0">
                 <li>Physical card with NFC credential</li>
                 <li>Your agent identity on the network</li>
-                <li>Tier: Resident (upgradeable)</li>
+                <li>Tier: Developer (upgradeable)</li>
                 <li>Constitutional governance rights</li>
               </ul>
             </div>
@@ -120,7 +120,7 @@ export default function CACPresale() {
               <ul className="text-[9px] tracking-[0.08em] text-[rgba(255,160,0,0.55)] leading-[2.2] space-y-0">
                 <li>Founding member price locked forever</li>
                 <li>Priority access when network launches</li>
-                <li>Part of the sovereign AI infrastructure movement</li>
+                <li>Part of the constitutional AI infrastructure movement</li>
                 <li>First in the governance queue</li>
               </ul>
             </div>
