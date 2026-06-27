@@ -999,6 +999,115 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Knowledge Graph — Interactive ecosystem visualization
+app.get('/knowledge-graph', (req, res) => {
+  trackRequest('/knowledge-graph');
+  res.sendFile(join(__dirname, '../knowledge-graph.html'));
+});
+
+// Knowledge Graph API — Returns nodes and edges for visualization
+app.get('/api/obsidian-graph', async (req, res) => {
+  trackRequest('/api/obsidian-graph');
+  try {
+    // Read from Obsidian vault or generate from relay state
+    const graphPath = join(__dirname, '../obsidian-graph.json');
+    if (existsSync(graphPath)) {
+      const graphData = JSON.parse(readFileSync(graphPath, 'utf8'));
+      res.json(graphData);
+    } else {
+      // Generate from relay state
+      const graphData = generateGraphFromState();
+      res.json(graphData);
+    }
+  } catch (err) {
+    console.error('Error loading knowledge graph:', err);
+    res.status(500).json({ error: 'Failed to load knowledge graph', detail: err.message });
+  }
+});
+
+function generateGraphFromState() {
+  // Build graph from relay server state, agents, tools, and endpoints
+  const nodes = [];
+  const edges = [];
+  
+  // Add agents
+  const agents = ['Vex', 'Alice', 'Eliza', 'Hermes'];
+  agents.forEach(agent => {
+    nodes.push({
+      id: `${agent} Agent`,
+      label: `${agent} Agent`,
+      category: 'agent',
+      description: `**Role:** ${agent === 'Vex' ? 'Local relay coordinator' : agent === 'Alice' ? 'Brand police' : agent === 'Eliza' ? 'Executive assistant' : 'Mobile phone agent'}`,
+      source: 'relay',
+      lastSeen: new Date().toISOString()
+    });
+  });
+  
+  // Add infrastructure
+  const infra = [
+    { id: 'Relay Server', category: 'backend', status: 'up' },
+    { id: 'Cloudflare Tunnel', category: 'infra', status: 'up' },
+    { id: 'Supabase', category: 'infra', status: 'up' },
+    { id: 'Ollama', category: 'infra', status: 'up' },
+    { id: 'Fleet Chat', category: 'system', status: 'up' },
+  ];
+  
+  infra.forEach(item => {
+    nodes.push({
+      id: item.id,
+      label: item.id,
+      category: item.category,
+      status: item.status,
+      source: 'relay',
+      lastSeen: new Date().toISOString()
+    });
+  });
+  
+  // Connect agents to Relay
+  agents.forEach(agent => {
+    edges.push({ source: `${agent} Agent`, target: 'Relay Server', type: 'hosted-on' });
+    edges.push({ source: `${agent} Agent`, target: 'Fleet Chat', type: 'participates-in' });
+  });
+  
+  // Connect infrastructure
+  edges.push({ source: 'Relay Server', target: 'Cloudflare Tunnel', type: 'exposed-via' });
+  edges.push({ source: 'Relay Server', target: 'Supabase', type: 'connects-to' });
+  edges.push({ source: 'Relay Server', target: 'Ollama', type: 'connects-to' });
+  
+  // Add API endpoints
+  const endpoints = [
+    '/health', '/api/fleet-chat/messages', '/api/fleet-chat/send',
+    '/api/dao/health', '/api/dao/gossip', '/api/catalog'
+  ];
+  
+  endpoints.forEach(ep => {
+    nodes.push({
+      id: `endpoint:${ep}`,
+      label: ep,
+      category: 'endpoint',
+      description: `**Method:** GET/POST`,
+      source: 'relay',
+      lastSeen: new Date().toISOString()
+    });
+    edges.push({ source: `endpoint:${ep}`, target: 'Relay Server', type: 'served-by' });
+  });
+  
+  const summary = {
+    totalNodes: nodes.length,
+    totalEdges: edges.length,
+    byCategory: {},
+    bySource: { relay: nodes.length },
+    statusCounts: { up: nodes.filter(n => n.status === 'up').length, down: 0, degraded: 0, unknown: 0 }
+  };
+  
+  // Count by category
+  nodes.forEach(n => {
+    summary.byCategory[n.category] = (summary.byCategory[n.category] || 0) + 1;
+  });
+  
+  return { nodes, edges, summary };
+}
+
 // Fleet dashboard
 app.get('/', (req, res) => {
   trackRequest('/');

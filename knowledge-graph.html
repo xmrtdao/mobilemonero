@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Graph — XMRT DAO</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg-secondary: #12121a;
+      --accent: #ff6b35;
+      --accent-purple: #a78bfa;
+      --text: #e0e0f0;
+      --text-dim: #6b6b80;
+      --border: rgba(255,255,255,0.1);
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+    }
+    
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(10,10,15,0.95);
+    }
+    
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .logo {
+      width: 28px;
+      height: 28px;
+    }
+    
+    .stats {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+    
+    .stats span strong {
+      color: var(--text);
+    }
+    
+    .controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    
+    button {
+      background: rgba(107,107,128,0.04);
+      border: 0.5px solid rgba(107,107,128,0.12);
+      padding: 0.375rem 0.75rem;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(107,107,128,0.4);
+      cursor: pointer;
+      font-family: monospace;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    
+    button:hover {
+      background: rgba(107,107,128,0.08);
+      color: rgba(107,107,128,0.65);
+    }
+    
+    button.on {
+      background: rgba(167,139,250,0.08);
+      border-color: rgba(167,139,250,0.22);
+      color: rgba(167,139,250,0.65);
+    }
+    
+    #graph-container {
+      width: 100%;
+      height: calc(100vh - 60px);
+      position: relative;
+    }
+    
+    #graph-canvas {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+      touch-action: none;
+    }
+    
+    #graph-canvas:active {
+      cursor: grabbing;
+    }
+    
+    #tooltip {
+      display: none;
+      position: absolute;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.75rem;
+      max-width: 300px;
+      z-index: 100;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    
+    #tooltip h3 {
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+      font-size: 0.8rem;
+    }
+    
+    #tooltip p {
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+    
+    #tooltip .meta {
+      margin-top: 0.5rem;
+      font-size: 0.65rem;
+      color: var(--text-dim);
+    }
+    
+    #tooltip .status {
+      display: inline-block;
+      padding: 0.125rem 0.375rem;
+      border-radius: 3px;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-top: 0.375rem;
+    }
+    
+    .status.up { background: rgba(74,222,128,0.15); color: #4ade80; }
+    .status.down { background: rgba(239,68,68,0.15); color: #ef4444; }
+    .status.degraded { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    
+    #legend {
+      position: absolute;
+      bottom: 1rem;
+      left: 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      font-size: 0.65rem;
+    }
+    
+    #legend h4 {
+      margin-bottom: 0.5rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.25rem 0;
+    }
+    
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    
+    #search-box {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      width: 250px;
+    }
+    
+    #search-box input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 0.8rem;
+      outline: none;
+    }
+    
+    #search-box input::placeholder {
+      color: var(--text-dim);
+    }
+    
+    #search-results {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+      width: 100%;
+      z-index: 50;
+    }
+    
+    .search-result {
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    
+    .search-result:hover {
+      background: rgba(255,255,255,0.05);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <img src="/images/xmrtdao.png" alt="XMRT DAO" class="logo">
+      Knowledge Graph
+    </h1>
+    <div class="stats" id="stats">
+      <span><strong id="node-count">-</strong> nodes</span>
+      <span><strong id="edge-count">-</strong> edges</span>
+    </div>
+    <div class="controls">
+      <button class="on" onclick="toggleEffect('orbit')">Orbit</button>
+      <button onclick="toggleEffect('explode')">Explode</button>
+      <button onclick="toggleEffect('labels')">Labels</button>
+      <button onclick="toggleEffect('stream')">Stream</button>
+      <button onclick="resetView()">Reset</button>
+    </div>
+  </header>
+  
+  <div id="graph-container">
+    <canvas id="graph-canvas"></canvas>
+    <div id="tooltip"></div>
+    <div id="search-box">
+      <input type="text" placeholder="Search nodes..." id="search-input">
+      <div id="search-results"></div>
+    </div>
+    <div id="legend"></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('graph-canvas');
+    const ctx = canvas.getContext('2d');
+    const tooltip = document.getElementById('tooltip');
+    
+    let nodes = [];
+    let edges = [];
+    let categoryColors = {};
+    
+    // Camera state
+    let camX = 0, camY = 0, camZ = 1, camRot = 0;
+    let isDragging = false, lastX = 0, lastY = 0;
+    let hoverNode = null;
+    
+    // Effects
+    let effects = { orbit: true, explode: false, labels: false, stream: false };
+    
+    // Resize canvas
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    
+    // Load graph data
+    async function loadGraph() {
+      try {
+        const res = await fetch('/api/obsidian-graph');
+        const data = await res.json();
+        
+        nodes = data.nodes;
+        edges = data.edges;
+        
+        // Generate colors for categories
+        const categories = [...new Set(nodes.map(n => n.category))];
+        const colorPalette = ['#ff6b35', '#4ade80', '#4a9eff', '#a78bfa', '#fbbf24', '#f472b6', '#22d3ee', '#c084fc'];
+        categories.forEach((cat, i) => {
+          categoryColors[cat] = colorPalette[i % colorPalette.length];
+        });
+        
+        // Initialize node positions
+        nodes.forEach(n => {
+          n.x = (Math.random() - 0.5) * 500;
+          n.y = (Math.random() - 0.5) * 500;
+          n.vx = 0;
+          n.vy = 0;
+        });
+        
+        // Update stats
+        document.getElementById('node-count').textContent = data.summary.totalNodes;
+        document.getElementById('edge-count').textContent = data.summary.totalEdges;
+        
+        // Build legend
+        buildLegend(categories);
+        
+        // Start animation
+        animate();
+      } catch (err) {
+        console.error('Failed to load graph:', err);
+      }
+    }
+    
+    function buildLegend(categories) {
+      const legend = document.getElementById('legend');
+      legend.innerHTML = '<h4>Categories</h4>' + categories.map(cat => 
+        `<div class="legend-item">
+          <div class="legend-dot" style="background:${categoryColors[cat]}"></div>
+          <span>${cat}</span>
+        </div>`
+      ).join('');
+    }
+    
+    // Force-directed layout
+    function updatePhysics() {
+      const width = canvas.getBoundingClientRect().width;
+      const height = canvas.getBoundingClientRect().height;
+      const center = { x: 0, y: 0 };
+      
+      // Repulsion
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const dx = nodes[j].x - nodes[i].x;
+          const dy = nodes[j].y - nodes[i].y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const force = 5000 / (dist * dist);
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          nodes[i].vx -= fx;
+          nodes[i].vy -= fy;
+          nodes[j].vx += fx;
+          nodes[j].vy += fy;
+        }
+      }
+      
+      // Attraction along edges
+      edges.forEach(e => {
+        const source = nodes.find(n => n.id === e.source);
+        const target = nodes.find(n => n.id === e.target);
+        if (source && target) {
+          const dx = target.x - source.x;
+          const dy = target.y - source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const force = dist * 0.001;
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          source.vx += fx;
+          source.vy += fy;
+          target.vx -= fx;
+          target.vy -= fy;
+        }
+      });
+      
+      // Center gravity
+      nodes.forEach(n => {
+        n.vx -= n.x * 0.0005;
+        n.vy -= n.y * 0.0005;
+      });
+      
+      // Apply velocity
+      nodes.forEach(n => {
+        n.vx *= 0.9;
+        n.vy *= 0.9;
+        n.x += n.vx;
+        n.y += n.vy;
+      });
+    }
+    
+    // Render
+    function render() {
+      const width = canvas.getBoundingClientRect().width;
+      const height = canvas.getBoundingClientRect().height;
+      
+      ctx.fillStyle = '#0a0a0f';
+      ctx.fillRect(0, 0, width, height);
+      
+      ctx.save();
+      ctx.translate(width / 2, height / 2);
+      ctx.scale(camZ, camZ);
+      ctx.rotate(camRot);
+      ctx.translate(-camX, -camY);
+      
+      // Draw edges
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      edges.forEach(e => {
+        const source = nodes.find(n => n.id === e.source);
+        const target = nodes.find(n => n.id === e.target);
+        if (source && target) {
+          ctx.beginPath();
+          ctx.moveTo(source.x, source.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+        }
+      });
+      
+      // Draw nodes
+      nodes.forEach(n => {
+        const isHovered = hoverNode === n;
+        const size = isHovered ? 8 : 5;
+        
+        ctx.fillStyle = categoryColors[n.category] || '#888';
+        if (n.status === 'down') ctx.fillStyle = '#ef4444';
+        if (n.status === 'up') ctx.fillStyle = '#4ade80';
+        
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, size, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Glow for hovered
+        if (isHovered) {
+          ctx.shadowColor = ctx.fillStyle;
+          ctx.shadowBlur = 15;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, size + 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+        
+        // Labels
+        if (effects.labels || isHovered) {
+          ctx.fillStyle = '#e0e0f0';
+          ctx.font = '10px Inter';
+          ctx.textAlign = 'center';
+          ctx.fillText(n.label, n.x, n.y - 10);
+        }
+      });
+      
+      ctx.restore();
+    }
+    
+    // Animation loop
+    function animate() {
+      updatePhysics();
+      render();
+      
+      // Orbit effect
+      if (effects.orbit) {
+        camRot += 0.001;
+      }
+      
+      requestAnimationFrame(animate);
+    }
+    
+    // Mouse/touch interaction
+    canvas.addEventListener('mousedown', e => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left - canvas.width / 2;
+      const mouseY = e.clientY - rect.top - canvas.height / 2;
+      
+      // Check hover
+      hoverNode = null;
+      nodes.forEach(n => {
+        const dx = (n.x - camX) * camZ - mouseX;
+        const dy = (n.y - camY) * camZ - mouseY;
+        if (Math.sqrt(dx * dx + dy * dy) < 10) {
+          hoverNode = n;
+          showTooltip(e.clientX, e.clientY, n);
+        }
+      });
+      
+      if (!hoverNode) tooltip.style.display = 'none';
+      
+      if (isDragging) {
+        camX -= (e.clientX - lastX) / camZ;
+        camY -= (e.clientY - lastY) / camZ;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      }
+    });
+    
+    canvas.addEventListener('mouseup', () => isDragging = false);
+    canvas.addEventListener('wheel', e => {
+      camZ *= e.deltaY > 0 ? 0.95 : 1.05;
+      camZ = Math.max(0.1, Math.min(5, camZ));
+    });
+    
+    function showTooltip(x, y, node) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = (x + 15) + 'px';
+      tooltip.style.top = (y + 15) + 'px';
+      
+      let statusHtml = '';
+      if (node.status) {
+        statusHtml = `<div class="status ${node.status}">${node.status}</div>`;
+      }
+      
+      tooltip.innerHTML = `
+        <h3>${node.label}</h3>
+        <p>${node.description || ''}</p>
+        <div class="meta">
+          <div>Category: ${node.category}</div>
+          <div>Source: ${node.source}</div>
+          ${statusHtml}
+        </div>
+      `;
+    }
+    
+    // Controls
+    window.toggleEffect = function(name) {
+      effects[name] = !effects[name];
+      document.querySelector(`button[onclick="toggleEffect('${name}')"]`).classList.toggle('on');
+    };
+    
+    window.resetView = function() {
+      camX = 0; camY = 0; camZ = 1; camRot = 0;
+    };
+    
+    // Search
+    document.getElementById('search-input').addEventListener('input', e => {
+      const query = e.target.value.toLowerCase();
+      const results = document.getElementById('search-results');
+      
+      if (query.length < 2) {
+        results.style.display = 'none';
+        return;
+      }
+      
+      const matches = nodes.filter(n => 
+        n.label.toLowerCase().includes(query) || 
+        n.category.toLowerCase().includes(query)
+      ).slice(0, 10);
+      
+      results.innerHTML = matches.map(n => 
+        `<div class="search-result" onclick="focusNode('${n.id}')">${n.label}</div>`
+      ).join('');
+      
+      results.style.display = matches.length ? 'block' : 'none';
+    });
+    
+    window.focusNode = function(id) {
+      const node = nodes.find(n => n.id === id);
+      if (node) {
+        camX = node.x;
+        camY = node.y;
+        camZ = 2;
+        hoverNode = node;
+      }
+      document.getElementById('search-results').style.display = 'none';
+      document.getElementById('search-input').value = '';
+    };
+    
+    // Load on start
+    loadGraph();
+  </script>
+</body>
+</html>
