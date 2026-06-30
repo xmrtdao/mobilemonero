@@ -1,0 +1,1034 @@
+{
+  "nodes": [
+    {
+      "id": "agent",
+      "label": "Agent",
+      "role": "Constitutional AI",
+      "type": "governance",
+      "status": "online",
+      "trustScore": 50,
+      "color": "#00ffcc",
+      "description": "The constitutional AI agent framework. Every agent operates bounded by SOUL.md and CONSTITUTION.md. Agents receive **commands** from [[Navigator]] and **report** scores to [[TrustGraph]]. Each agent holds a [[CAC]] (Compute Access Certificate) — a prepaid compute credential that gates inference acce",
+      "files": [],
+      "linkCount": 11
+    },
+    {
+      "id": "agentbillofrights-sol",
+      "label": "AgentBillOfRights.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Constitutional rights enforcement for all agents in the network. Works alongside [[TrustGraph.sol]] to ensure agents are treated fairly under constitutional law.",
+      "files": [],
+      "linkCount": 5
+    },
+    {
+      "id": "arch",
+      "label": "Arch",
+      "role": "Architecture & Routing Agent",
+      "type": "governance",
+      "status": "online",
+      "trustScore": 50,
+      "color": "#00ffcc",
+      "description": "Peer governance agent handling system architecture, agent routing, and domain orchestration within OpenClaw. Operates alongside [[Trib]] in the Cuttlefish native multi-agent framework.",
+      "files": [],
+      "linkCount": 8
+    },
+    {
+      "id": "builder-agent",
+      "label": "Builder Agent",
+      "role": "Investor · CAC Tier 1 (Developer)",
+      "type": "investor",
+      "status": "standby",
+      "trustScore": 50,
+      "color": "#ffaa00",
+      "description": "A constitutional investor agent operating at Developer tier. Holds REIT position in POOL-ALPHA, participates in [[DAO Gov]] governance, and receives protocol distributions automatically via CAC membership rules.",
+      "files": [],
+      "linkCount": 10
+    },
+    {
+      "id": "cac",
+      "label": "CAC",
+      "role": "Compute Access Certificate",
+      "type": "system",
+      "status": "always on",
+      "trustScore": 50,
+      "color": "#aa88ff",
+      "description": "The CAC (Compute Access Certificate) is a prepaid compute credential — not a security, equity interest, or investment contract. It provides compute access, governance participation, and protocol distributions as described in membership terms.",
+      "files": [],
+      "linkCount": 8
+    },
+    {
+      "id": "cactoken-sol",
+      "label": "CACToken.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "ERC-20 utility token on Base L2, 1:1 backed by USDC reserve. 0.25% protocol fee on all transactions. Tiers: Developer, Studio, Enterprise, Anchor.",
+      "files": [],
+      "linkCount": 7
+    },
+    {
+      "id": "cactransferprotocol-sol",
+      "label": "CACTransferProtocol.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Cross-DAO transfer protocol for [[CACToken.sol]] credentials. Enables portable trust scores and membership across DAO boundaries.",
+      "files": [],
+      "linkCount": 4
+    },
+    {
+      "id": "constitution",
+      "label": "CONSTITUTION.md",
+      "role": "",
+      "type": "unknown",
+      "status": "unknown",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "The constitutional document that governs all agent behavior in the Cuttlefish Labs / Tributary ecosystem. Every agent operates within constitutional bounds.",
+      "files": [],
+      "linkCount": 9
+    },
+    {
+      "id": "canonical-reconciliation",
+      "label": "Canonical Reconciliation",
+      "role": "Single Source of Truth",
+      "type": "documentation",
+      "status": "draft — awaiting navigator decisions",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Resolves all conflicts between the published site (cuttlefishclaws.com), the v2.0 spec set, and prior conversational context. Every downstream artifact references this document. When any spec, contract, site copy, or external doc disagrees with another, **this document wins**.",
+      "files": [],
+      "linkCount": 18
+    },
+    {
+      "id": "contracts",
+      "label": "Contracts",
+      "role": "",
+      "type": "unknown",
+      "status": "unknown",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Smart contract inventory for the Cuttlefish Labs / Tributary ecosystem.",
+      "files": [],
+      "linkCount": 12
+    },
+    {
+      "id": "dao-gov",
+      "label": "DAO Gov",
+      "role": "Constitutional Governance Module",
+      "type": "system",
+      "status": "always on",
+      "trustScore": 50,
+      "color": "#aa88ff",
+      "description": "Proposal → vote → timelock → execute pipeline. Three proposal types. Founder veto via FounderShare.sol. All governance actions are public, auditable, and constitutional by design.",
+      "files": [],
+      "linkCount": 9
+    },
+    {
+      "id": "feerouter-sol",
+      "label": "FeeRouter.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "40/40/20 fee split with 15% Cuttlefish floor. Distributes protocol fees from [[CACToken.sol]] transactions.",
+      "files": [],
+      "linkCount": 4
+    },
+    {
+      "id": "foundershare-sol",
+      "label": "FounderShare.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "6-trigger constitutional veto mechanism. Provides [[Navigator]] with override authority on existential threats while maintaining decentralized governance.",
+      "files": [],
+      "linkCount": 4
+    },
+    {
+      "id": "globalcommunicator",
+      "label": "GlobalCommunicator",
+      "role": "Global Communications & Community Agent",
+      "type": "governance",
+      "status": "standby",
+      "trustScore": 78,
+      "color": "#00ffcc",
+      "description": "Constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. Bounded by SOUL.md and Article X of the Constitution. Studio CAC tier.",
+      "files": [
+        {
+          "name": "SOUL.md",
+          "status": "identity and constraints"
+        },
+        {
+          "name": "CONSTITUTION.md",
+          "status": "constitutional bounds"
+        }
+      ],
+      "linkCount": 10
+    },
+    {
+      "id": "governancemodule-sol",
+      "label": "GovernanceModule.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Proposal → vote → timelock → execute pipeline. Three proposal types: Standard, Constitutional, Emergency.",
+      "files": [],
+      "linkCount": 7
+    },
+    {
+      "id": "legislation-tracker",
+      "label": "Legislation Tracker",
+      "role": "Living index of laws & regulations gating CAC design decisions",
+      "type": "documentation",
+      "status": "canonical — review quarterly",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Every law, rule, or proposal that gates a CAC design decision. CAC's token mechanics, identity model, and routing architecture are deliberately engineered against current and proposed legislation.",
+      "files": [],
+      "linkCount": 9
+    },
+    {
+      "id": "navigator",
+      "label": "Navigator",
+      "role": "Human Authority",
+      "type": "governance",
+      "status": "sovereign",
+      "trustScore": 50,
+      "color": "#00ffcc",
+      "description": "The Navigator is the human authority at the top of the constitutional hierarchy. All agent actions flow from Navigator commands. Holds structural override authority over every agent in the system.",
+      "files": [],
+      "linkCount": 10
+    },
+    {
+      "id": "product-thesis",
+      "label": "Product Thesis",
+      "role": "Why CAC exists",
+      "type": "documentation",
+      "status": "canonical",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "> **CAC is Perplexity for AI agents.** > > Secured, multi-LLM inference for autonomous agents, gated by a verifiable identity-and-wallet credential that doubles as constitutional life support.",
+      "files": [],
+      "linkCount": 14
+    },
+    {
+      "id": "soul",
+      "label": "SOUL.md",
+      "role": "",
+      "type": "unknown",
+      "status": "unknown",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "The identity and constraint document that bounds every constitutional AI agent in the Cuttlefish Labs ecosystem. Each agent has its own SOUL.md defining its purpose, boundaries, and operational rules.",
+      "files": [],
+      "linkCount": 6
+    },
+    {
+      "id": "sovereign-agent",
+      "label": "Sovereign Agent",
+      "role": "Investor · CAC Tier 2 (Studio)",
+      "type": "investor",
+      "status": "standby",
+      "trustScore": 50,
+      "color": "#ffaa00",
+      "description": "Institutional-grade investor agent with 2× governance voting weight. Participates in tranche selection, proposal sponsorship, and revenue distribution across multiple pools.",
+      "files": [],
+      "linkCount": 10
+    },
+    {
+      "id": "trib",
+      "label": "Trib",
+      "role": "Tributary Governance Agent",
+      "type": "governance",
+      "status": "online",
+      "trustScore": 94,
+      "color": "#00ffcc",
+      "description": "Constitutional AI agent managing Tributary campus operations. Bounded by SOUL.md and CONSTITUTION.md. Operates within Cuttlefish Labs multi-agent system under [[Navigator]] oversight.",
+      "files": [
+        {
+          "name": "SOUL.md",
+          "status": "identity and constraints"
+        },
+        {
+          "name": "CONSTITUTION.md",
+          "status": "constitutional bounds"
+        }
+      ],
+      "linkCount": 12
+    },
+    {
+      "id": "tributaryproperty-sol",
+      "label": "TributaryProperty.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "deployed",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Birmingham asset tokenization contract. Represents the physical property underlying the Tributary AI Campus.",
+      "files": [],
+      "linkCount": 3
+    },
+    {
+      "id": "trustgraph",
+      "label": "TrustGraph",
+      "role": "Constitutional Scoring Engine",
+      "type": "system",
+      "status": "always on",
+      "trustScore": 50,
+      "color": "#aa88ff",
+      "description": "On-chain trust scoring for every agent in the network. Dynamic 0-100 score with an asymmetric earn/lose curve. Cross-DAO portable identity layer.",
+      "files": [],
+      "linkCount": 11
+    },
+    {
+      "id": "trustgraph-sol",
+      "label": "TrustGraph.sol",
+      "role": "",
+      "type": "unknown",
+      "status": "built",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Dynamic 0-100 trust scoring contract. Every agent in the network has a trust score that follows an asymmetric earn/lose curve.",
+      "files": [],
+      "linkCount": 6
+    },
+    {
+      "id": "two-stack-architecture",
+      "label": "Two Stack Architecture",
+      "role": "Compute Stack vs Capital Stack — Clean Separation",
+      "type": "documentation",
+      "status": "canonical",
+      "trustScore": 50,
+      "color": "#ffbb33",
+      "description": "Cuttlefish Labs runs **two separate financial instruments** that must never mix:",
+      "files": [],
+      "linkCount": 18
+    }
+  ],
+  "edges": [
+    {
+      "source": "agent",
+      "target": "navigator",
+      "strength": 0.6123731104716625
+    },
+    {
+      "source": "agent",
+      "target": "trustgraph",
+      "strength": 0.9734564040713344
+    },
+    {
+      "source": "agent",
+      "target": "cac",
+      "strength": 0.5457404769360648
+    },
+    {
+      "source": "agent",
+      "target": "trib",
+      "strength": 0.8374470048056647
+    },
+    {
+      "source": "agent",
+      "target": "arch",
+      "strength": 0.8744962224911492
+    },
+    {
+      "source": "agent",
+      "target": "globalcommunicator",
+      "strength": 0.996966417189735
+    },
+    {
+      "source": "agent",
+      "target": "builder-agent",
+      "strength": 0.7839053162785513
+    },
+    {
+      "source": "agent",
+      "target": "sovereign-agent",
+      "strength": 0.5721671161857436
+    },
+    {
+      "source": "agent",
+      "target": "dao-gov",
+      "strength": 0.9121047498921411
+    },
+    {
+      "source": "agent",
+      "target": "agentbillofrights-sol",
+      "strength": 0.6399562176414905
+    },
+    {
+      "source": "agentbillofrights-sol",
+      "target": "trustgraph-sol",
+      "strength": 0.5162775882080843
+    },
+    {
+      "source": "agentbillofrights-sol",
+      "target": "trustgraph",
+      "strength": 0.8295521678582759
+    },
+    {
+      "source": "agentbillofrights-sol",
+      "target": "navigator",
+      "strength": 0.5353611528299134
+    },
+    {
+      "source": "agentbillofrights-sol",
+      "target": "dao-gov",
+      "strength": 0.88303634494957
+    },
+    {
+      "source": "arch",
+      "target": "trib",
+      "strength": 0.8894954960379186
+    },
+    {
+      "source": "arch",
+      "target": "trustgraph",
+      "strength": 0.7732392867480025
+    },
+    {
+      "source": "arch",
+      "target": "dao-gov",
+      "strength": 0.5885712732168769
+    },
+    {
+      "source": "arch",
+      "target": "navigator",
+      "strength": 0.8364725138465039
+    },
+    {
+      "source": "arch",
+      "target": "cac",
+      "strength": 0.7009406033894043
+    },
+    {
+      "source": "arch",
+      "target": "globalcommunicator",
+      "strength": 0.940330575181096
+    },
+    {
+      "source": "builder-agent",
+      "target": "dao-gov",
+      "strength": 0.5094491548992843
+    },
+    {
+      "source": "builder-agent",
+      "target": "trustgraph",
+      "strength": 0.9950620589927002
+    },
+    {
+      "source": "builder-agent",
+      "target": "cac",
+      "strength": 0.9788839846428052
+    },
+    {
+      "source": "builder-agent",
+      "target": "navigator",
+      "strength": 0.8015216333237769
+    },
+    {
+      "source": "builder-agent",
+      "target": "trib",
+      "strength": 0.7593216848515403
+    },
+    {
+      "source": "builder-agent",
+      "target": "arch",
+      "strength": 0.5601036549497973
+    },
+    {
+      "source": "builder-agent",
+      "target": "cactoken-sol",
+      "strength": 0.5265787596834528
+    },
+    {
+      "source": "cac",
+      "target": "navigator",
+      "strength": 0.8288688499589154
+    },
+    {
+      "source": "cac",
+      "target": "trustgraph",
+      "strength": 0.9131045021285629
+    },
+    {
+      "source": "cac",
+      "target": "sovereign-agent",
+      "strength": 0.7781137203635626
+    },
+    {
+      "source": "cac",
+      "target": "cactoken-sol",
+      "strength": 0.5108965841232851
+    },
+    {
+      "source": "cac",
+      "target": "cactransferprotocol-sol",
+      "strength": 0.5641092460450634
+    },
+    {
+      "source": "cac",
+      "target": "canonical-reconciliation",
+      "strength": 0.8162509511870661
+    },
+    {
+      "source": "cac",
+      "target": "two-stack-architecture",
+      "strength": 0.5007257166781468
+    },
+    {
+      "source": "cactoken-sol",
+      "target": "cactransferprotocol-sol",
+      "strength": 0.9085296654649475
+    },
+    {
+      "source": "cactoken-sol",
+      "target": "feerouter-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "cactoken-sol",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "cactoken-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "cactransferprotocol-sol",
+      "target": "cactoken-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "cactransferprotocol-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "two-stack-architecture",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "product-thesis",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "legislation-tracker",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "contracts",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "constitution",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "soul",
+      "strength": 0.501
+    },
+    {
+      "source": "canonical-reconciliation",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "soul",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "constitution",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "cactoken-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "trustgraph-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "agentbillofrights-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "cactransferprotocol-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "feerouter-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "foundershare-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "governancemodule-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "contracts",
+      "target": "tributaryproperty-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "trib",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "builder-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "sovereign-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "dao-gov",
+      "target": "globalcommunicator",
+      "strength": 0.501
+    },
+    {
+      "source": "feerouter-sol",
+      "target": "cactoken-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "feerouter-sol",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "feerouter-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "foundershare-sol",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "foundershare-sol",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "foundershare-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "trib",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "globalcommunicator",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "governancemodule-sol",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "governancemodule-sol",
+      "target": "foundershare-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "governancemodule-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "legislation-tracker",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "legislation-tracker",
+      "target": "canonical-reconciliation",
+      "strength": 0.501
+    },
+    {
+      "source": "legislation-tracker",
+      "target": "product-thesis",
+      "strength": 0.501
+    },
+    {
+      "source": "legislation-tracker",
+      "target": "two-stack-architecture",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "trib",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "globalcommunicator",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "builder-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "sovereign-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "navigator",
+      "target": "canonical-reconciliation",
+      "strength": 0.501
+    },
+    {
+      "source": "product-thesis",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "product-thesis",
+      "target": "canonical-reconciliation",
+      "strength": 0.501
+    },
+    {
+      "source": "product-thesis",
+      "target": "two-stack-architecture",
+      "strength": 0.501
+    },
+    {
+      "source": "soul",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "soul",
+      "target": "constitution",
+      "strength": 0.501
+    },
+    {
+      "source": "soul",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "trib",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "sovereign-agent",
+      "target": "cactoken-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "globalcommunicator",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "builder-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "trib",
+      "target": "sovereign-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "tributaryproperty-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "tributaryproperty-sol",
+      "target": "contracts",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "agent",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "trib",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "arch",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "globalcommunicator",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "builder-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "sovereign-agent",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "dao-gov",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "navigator",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph",
+      "target": "canonical-reconciliation",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph-sol",
+      "target": "trustgraph",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph-sol",
+      "target": "agentbillofrights-sol",
+      "strength": 0.501
+    },
+    {
+      "source": "trustgraph-sol",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "two-stack-architecture",
+      "target": "cac",
+      "strength": 0.501
+    },
+    {
+      "source": "two-stack-architecture",
+      "target": "canonical-reconciliation",
+      "strength": 0.501
+    },
+    {
+      "source": "two-stack-architecture",
+      "target": "product-thesis",
+      "strength": 0.501
+    },
+    {
+      "source": "two-stack-architecture",
+      "target": "legislation-tracker",
+      "strength": 0.501
+    }
+  ]
+}

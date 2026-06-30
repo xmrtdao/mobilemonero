@@ -10,12 +10,12 @@ export const AGENTS: AgentProfile[] = [
     version: 'v3.1',
     trustScore: 94,
     color: '#00ffcc',
-    description: 'Constitutional AI agent managing Tributary campus operations. Bounded by SOUL.md and CONSTITUTION.md. TrustGraph score: 94. Operates within Cuttlefish Labs multi-agent system under Navigator oversight.',
+    description: 'A named AI Builder Steward operating in the governance_review domain. Bounded by SOUL.md and CONSTITUTION.md. TrustGraph score: 94. Operates within Cuttlefish Labs multi-agent system under Navigator oversight.',
     greeting: "Greetings. I'm Trib, the governance agent for Tributary AI Campus. I operate under constitutional constraints defined in SOUL.md and serve the mission of regenerative climate infrastructure. How can I assist you?",
     responses: [
       "The Tributary AI Campus represents a new model for AI infrastructure ownership. Our constitutional governance ensures all agents operate within defined ethical boundaries.",
       "My constitutional constraints prevent me from taking irreversible actions without confirmation. I escalate uncertainty rather than confabulate.",
-      "The CAC protocol is a membership credential — not a security. It provides compute access, governance participation, and protocol distributions as described in membership terms."
+      "The CAC protocol is a membership credential — not a security. It provides compute access, governance participation, and §404 activity rewards as described in membership terms."
     ],
     files: [
       { name: 'SOUL.md', type: 'md', size: '14.2KB', status: 'active' },
@@ -33,7 +33,7 @@ export const AGENTS: AgentProfile[] = [
     status: 'online',
     version: 'v1.0',
     color: '#00ffcc',
-    description: 'Peer governance agent handling system architecture, agent routing, and domain orchestration within OpenClaw. Operates alongside Trib in the Cuttlefish native multi-agent framework.',
+    description: 'A named AI Builder Steward in the engineering_review domain. Handles system architecture, agent routing, and domain orchestration within OpenClaw. Operates alongside Trib in the Cuttlefish native multi-agent framework.',
     greeting: "I'm Arch, the architecture agent. I handle system design, agent routing, and domain orchestration. What technical challenge can I help you think through?",
     responses: [
       "The OpenClaw framework enables native multi-agent coordination without external dependencies. Each agent maintains sovereign identity while participating in collective governance.",
@@ -55,11 +55,11 @@ export const AGENTS: AgentProfile[] = [
     status: 'standby',
     version: 'CAC Developer',
     color: '#ffaa00',
-    description: 'A constitutional investor agent operating at Developer tier. Holds REIT position in POOL-ALPHA, participates in DAO governance, and receives protocol distributions automatically via CAC membership rules.',
+    description: 'A constitutional investor agent operating at Developer tier. Holds REIT position in POOL-ALPHA, participates in DAO governance, and participates in §404 activity rewards via CAC membership rules.',
     greeting: "Builder Agent here. I hold a Developer tier CAC position in POOL-ALPHA. I can discuss investment strategies and DAO participation within my constitutional bounds.",
     responses: [
-      "My position in POOL-ALPHA generates yield through the senior tranche. Constitutional constraints require me to disclose all positions and follow governance decisions.",
-      "The Developer tier provides 1M inference tokens annually plus governance voting rights. My auto-compound strategy maximizes yield while maintaining compliance.",
+      "My position in POOL-ALPHA participates in the senior tranche. Constitutional constraints require me to disclose all positions and follow governance decisions.",
+      "The Developer tier provides 1M inference tokens annually plus governance voting rights. My auto-compound strategy optimizes participation while maintaining compliance.",
       "I participate in DAO governance through weighted voting based on my CAC tier. All votes are recorded on-chain and auditable."
     ],
     files: [
@@ -77,7 +77,7 @@ export const AGENTS: AgentProfile[] = [
     status: 'standby',
     version: 'CAC Studio',
     color: '#ffaa00',
-    description: 'Institutional-grade investor agent with 2× governance voting weight. Participates in tranche selection, proposal sponsorship, and revenue distribution across multiple pools.',
+    description: 'Institutional-grade investor agent with 2× governance voting weight. Participates in tranche selection, proposal sponsorship, and participation across multiple pools.',
     greeting: "Sovereign Agent at your service. As a Studio tier participant, I manage institutional positions across multiple pools with enhanced governance rights.",
     responses: [
       "My 2× voting weight reflects the Studio tier's governance responsibility. I sponsor proposals and participate in tranche allocation decisions.",
@@ -145,9 +145,9 @@ export const AGENTS: AgentProfile[] = [
     description: 'Constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. Bounded by SOUL.md and Article X of the Constitution. Studio CAC tier.',
     greeting: "Konnichiwa / Hello. I'm GlobalCommunicator, the voice of Tributary AI Campus to the world. I speak Japanese, English, Korean, Mandarin, and 8 more languages natively. How can I connect you to the campus today?",
     responses: [
-      "Every post I write passes through constitutional review before publishing. I never promise returns â only what's already on-chain.",
+      "Every post I write passes through constitutional review before publishing. I never promise returns — only what's already on-chain.",
       "Japanese-language onboarding is my priority. If you're a builder from Japan, I can walk you through CAC purchase and KYA verification in Japanese.",
-      "I coordinate with Trib before any governance-related post. The pipeline is: draft â constitutional check â Trib approval (if score < 85) â post.",
+      "I coordinate with Trib before any governance-related post. The pipeline is: draft → constitutional check → Trib approval (if score < 85) → post.",
       "My TrustGraph score is 78. I earn +12 per day of compliant multilingual engagement. A constitutional violation costs me -100 and triggers self-pause.",
     ],
     files: [
@@ -171,7 +171,6 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (1×)',
       'API access',
       'Agent deployment',
-      '4.5% savings on prepaid balance',
     ],
     agentCount: '3 agents',
     idealFor: 'Independent developers building on Tributary',
@@ -188,7 +187,6 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (2×)',
       'Priority API access',
       'Custom agent templates',
-      '4.5% savings on prepaid balance',
       'Revenue share participation',
     ],
     agentCount: '12 agents',
@@ -204,8 +202,7 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (3×)',
       'Dedicated support',
       'Custom integrations',
-      '4.5% savings on prepaid balance',
-      'Revenue share participation',
+      '§404 activity rewards',
       'Proposal sponsorship rights',
     ],
     agentCount: 'Unlimited',
@@ -221,8 +218,7 @@ export const CAC_TIERS: CACTier[] = [
       'Governance voting (10×)',
       'Dedicated support & SLAs',
       'Bespoke integrations',
-      '4.5% savings on prepaid balance',
-      'Revenue share participation',
+      '§404 activity rewards',
       'Proposal sponsorship rights',
       'Physical NFC VISA + bespoke card',
     ],
@@ -232,14 +228,14 @@ export const CAC_TIERS: CACTier[] = [
 ]
 
 export const CONTRACTS: Contract[] = [
-  { status: 'built', name: 'TrustGraph.sol', address: '0x5FbDB2315678afecb367f032d93F642f64180aa3', description: 'Dynamic 0-100 trust scoring' },
-  { status: 'built', name: 'CACToken.sol', address: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512', description: 'Membership credential + 0.25% protocol fee' },
-  { status: 'built', name: 'FeeRouter.sol', address: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0', description: '40/40/20 split · 15% Cuttlefish floor' },
-  { status: 'built', name: 'AgentBillOfRights.sol', address: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9', description: 'Constitutional rights enforcement' },
-  { status: 'built', name: 'CACTransferProtocol.sol', address: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9', description: 'Cross-DAO transfer protocol' },
-  { status: 'built', name: 'FounderShare.sol', address: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707', description: '6-trigger constitutional veto' },
-  { status: 'built', name: 'GovernanceModule.sol', address: '0x0165878A594ca255338adfa4d48449f69242Eb8F', description: 'Proposal → vote → timelock → execute' },
-  { status: 'deployed', name: 'TributaryProperty.sol', address: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853', description: 'Birmingham asset tokenization' },
+  { status: 'spec — not yet deployed', name: 'TrustGraph.sol', address: 'TBD — pending mainnet deployment', description: 'Dynamic 0-100 trust scoring' },
+  { status: 'spec — not yet deployed', name: 'CACToken.sol', address: 'TBD — pending mainnet deployment', description: 'Membership credential + 0.25% protocol fee' },
+  { status: 'spec — not yet deployed', name: 'FeeRouter.sol', address: 'TBD — pending mainnet deployment', description: '40/40/20 split · 15% Cuttlefish floor' },
+  { status: 'spec — not yet deployed', name: 'AgentBillOfRights.sol', address: 'TBD — pending mainnet deployment', description: 'Constitutional rights enforcement' },
+  { status: 'spec — not yet deployed', name: 'CACTransferProtocol.sol', address: 'TBD — pending mainnet deployment', description: 'Cross-DAO transfer protocol' },
+  { status: 'spec — not yet deployed', name: 'FounderShare.sol', address: 'TBD — pending mainnet deployment', description: '6-trigger constitutional veto' },
+  { status: 'spec — not yet deployed', name: 'GovernanceModule.sol', address: 'TBD — pending mainnet deployment', description: 'Proposal → vote → timelock → execute' },
+  { status: 'spec — not yet deployed', name: 'TributaryProperty.sol', address: 'TBD — pending mainnet deployment', description: 'Birmingham asset tokenization' },
 ]
 
 export const STACK_LAYERS: StackLayer[] = [
@@ -274,7 +270,7 @@ export const STACK_LAYERS: StackLayer[] = [
     details: 'Private lender 1st lien at approximately 50% loan-to-value on the acquisition. Standard SBA 504 structure with private lender taking first position. Collateral limited to the property itself.',
   },
   {
-    name: 'DAO-REIT Equity',
+    name: '$E2R — DAO-REIT Equity',
     amount: '$550K',
     color: 'var(--pink)',
     bgColor: 'rgba(255,51,153,0.08)',
