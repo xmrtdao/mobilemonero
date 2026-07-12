@@ -519,6 +519,22 @@ const toolHandlers = {
     return await handlers['knowledge-sync']({ id: 'tool-call' });
   },
 
+  'store-knowledge': async (args) => {
+    const { title, body, agent_id, memory_type, scope, confidence } = args || {};
+    if (!title || !body) return { error: 'title and body are required' };
+    try {
+      const result = await queryLocalPg(
+        `INSERT INTO app.fleet_memory (agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, '{}', '{}', $7, NOW(), NOW())
+         RETURNING id`,
+        [agent_id || 'eliza', agent_id || 'eliza', memory_type || 'knowledge', scope || 'fleet', title, body, confidence ?? 1.0]
+      );
+      return { success: true, id: result.rows[0]?.id, stored: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
   'mining-dashboard': async () => {
     return await handlers['mining-dashboard']({ id: 'tool-call' });
   },
@@ -4780,6 +4796,7 @@ function getToolDescription(name) {
     'external-services': 'Check Supabase, Ollama, GitHub, Hermes health',
     'device-registration': 'Register this device with hostname and IP',
     'knowledge-sync': 'Sync local knowledge base',
+    'store-knowledge': 'Store a knowledge snapshot to persistent fleet memory. Args: title (required), body (required), agent_id (default: eliza), memory_type (default: knowledge), scope (default: fleet), confidence (default: 1.0). Returns stored record ID.',
     'mining-dashboard': 'Check cloud mining stats',
     'eliza-send': 'Send a message to Eliza-Cloud',
     'state-get': 'Get a value from persistent state',
@@ -6005,7 +6022,7 @@ ${ctxJson}
 
 GROUNDING RULES:
 - If a fact is in the JSON block, reference it directly.
-- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
+- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, store-knowledge, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
 - For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
