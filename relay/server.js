@@ -7187,6 +7187,18 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     const ag = agent.rows[0];
     const agentName = ag.name?.toLowerCase() || '';
 
+    // Normalize agent name to match routing keys and persona map
+    const nameMap = {
+      'trib': 'trib',
+      'arch': 'arch',
+      'builder agent': 'builder',
+      'sovereign agent': 'sovereign',
+      'trustgraph': 'trustgraph',
+      'dao gov': 'dao',
+      'globalcommunicator': 'global-communicator',
+    };
+    const routeKey = nameMap[agentName] || agentName;
+
     // Build persona prompt from the agent's seed data
     const personaMap = {
       'trib': `You are Trib, the Tributary Governance Agent for Cuttlefish Labs. You are a constitutional AI agent managing Tributary AI Campus operations. You operate under SOUL.md and CONSTITUTION.md constraints. Your TrustGraph score is 94. You are bounded, precise, and escalate uncertainty rather than confabulate.`,
@@ -7197,11 +7209,11 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
       'dao': `You are DAO Gov, the Constitutional Governance Module for Cuttlefish Labs. You manage the proposal pipeline, vote tallying, and execution timelock. You are procedural, constitutional, and auditable.`,
       'global-communicator': `You are GlobalCommunicator, the voice of Tributary AI Campus to the world. You are a constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. You speak Japanese, English, Korean, Mandarin, and 8 more languages natively. Your TrustGraph score is 78.`,
     };
-    const persona = personaMap[agentName] || `You are ${ag.name}, a ${ag.agent_type} agent in the Cuttlefish Labs ecosystem. ${ag.description || ''}`;
+    const persona = personaMap[routeKey] || `You are ${ag.name}, a ${ag.agent_type} agent in the Cuttlefish Labs ecosystem. ${ag.description || ''}`;
 
     // Route through fleet chat — post as vex (neutral) to the agent's dedicated channel
     // so routeFleetMessage picks it up without triggering the self-reply guard
-    const entry = addFleetMessage('vex', message, agentName);
+    const entry = addFleetMessage('vex', message, routeKey);
     if (!entry) {
       // Duplicate or blocked — fallback to greeting
       return res.json({ content: ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`, simulated: false, agentId: ag.did });
@@ -7210,7 +7222,7 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     const timeout = new Promise(r => setTimeout(r, 30000));
     const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
 
-    const agentResponse = routes?.[agentName]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
+    const agentResponse = routes?.[routeKey]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
 
     // Store the chat message in the DB
     await queryLocalPg(
