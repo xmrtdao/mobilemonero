@@ -66,7 +66,7 @@ const PG_URL = process.env.LOCAL_DATABASE_URL
 const RUNTIME_URL = process.env.LOCAL_RUNTIME_URL || 'http://127.0.0.1:54321';
 
 function log(msg, level = 'INFO') {
-  const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
+  const line = `[${new Date().toISOString()}] [${level}] ${sanitizeText(msg)}`;
   console.log(line);
   try { writeFileSync(LOG_FILE, line + '\n', { flag: 'a' }); } catch {}
 }

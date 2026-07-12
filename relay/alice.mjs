@@ -20,8 +20,6 @@
  *   node alice.mjs --status     # Print Alice's status
  */
 
-import https from 'https';
-import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -96,24 +94,19 @@ function log(msg) {
 
 // ── HTTP helpers ──────────────────────────────────────────
 function fetchJSON(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request(url, {
-      method: options.method || 'GET',
-      headers: { 'Content-Type': 'application/json', ...options.headers },
-      timeout: options.timeout || 30000,
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch { resolve({ raw: data, status: res.statusCode }); }
-      });
-    });
-    req.on('error', reject);
-    if (options.body) req.write(JSON.stringify(options.body));
-    req.end();
-  });
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  const fetchOpts = {
+    method: options.method || 'GET',
+    headers,
+    signal: AbortSignal.timeout(options.timeout || 30000),
+  };
+  if (options.body) fetchOpts.body = JSON.stringify(options.body);
+  return fetch(url, fetchOpts)
+    .then(async r => {
+      const text = await r.text();
+      try { return JSON.parse(text); } catch { return { raw: text, status: r.status }; }
+    })
+    .catch(e => { throw e; });
 }
 
 function sendEmail(to, subject, body) {

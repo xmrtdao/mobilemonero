@@ -20,7 +20,7 @@
  *   node relay/supervisor.mjs --daemon      # background, no console output
  */
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, execFileSync } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -263,11 +263,11 @@ function checkHttp(url, timeoutMs, skipAuth = false) {
 
 function checkProcessByScript(scriptName) {
   try {
-    const out = execSync(
-      `wmic process where "name='node.exe'" get processid,commandline /format:csv 2>NUL | findstr ${scriptName}`,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true, shell: 'cmd.exe' }
-    ).trim();
-    return out.length > 0 && out.includes(',');
+    const out = execFileSync('wmic',
+      ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'],
+      { encoding: 'utf8', timeout: 5000, windowsHide: true }
+    );
+    return out.includes(scriptName) && out.includes(',');
   } catch {
     return false;
   }
@@ -275,11 +275,11 @@ function checkProcessByScript(scriptName) {
 
 function checkProcessByName(exeName) {
   try {
-    const out = execSync(
-      `wmic process where "name='${exeName}'" get processid /format:csv 2>NUL`,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true, shell: 'cmd.exe' }
-    ).trim();
-    return out.length > 0 && out.includes(',');
+    const out = execFileSync('wmic',
+      ['process', 'where', `name='${exeName}'`, 'get', 'processid', '/format:csv'],
+      { encoding: 'utf8', timeout: 5000, windowsHide: true }
+    );
+    return out.includes(',');
   } catch {
     return false;
   }
@@ -288,10 +288,10 @@ function checkProcessByName(exeName) {
 function pidAlive(pid) {
   if (!pid || !Number.isFinite(pid)) return false;
   try {
-    const out = execSync(
-      `wmic process where "processid='${pid}'" get processid /format:csv 2>NUL`,
-      { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: 'cmd.exe' }
-    ).trim();
+    const out = execFileSync('wmic',
+      ['process', 'where', `processid='${pid}'`, 'get', 'processid', '/format:csv'],
+      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+    );
     return out.includes(String(pid));
   } catch {
     return false;
