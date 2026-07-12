@@ -3230,7 +3230,7 @@ app.get('/', (req, res) => {
 <div class="card" style="grid-column:1/-1;">
   <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📡 Ship's Intelligence
-    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · GitHub Activity · Incoming Mail</span>
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
   </h3>
   <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
@@ -3257,19 +3257,19 @@ app.get('/', (req, res) => {
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
-            <div id="pfp-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+            <div id="pfp-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">MobileMonero</div>
-            <div id="mm-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+            <div id="mm-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">31 Harbor</div>
-            <div id="hb-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+            <div id="hb-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
@@ -3277,9 +3277,29 @@ app.get('/', (req, res) => {
       </div>
       <div style="background:#0d0d15;border-radius:6px;padding:8px;">
         <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
-        <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
-        <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
-        <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Commits</div>
+            <div id="gh-recent-commits" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Pull Requests</div>
+            <div id="gh-recent-prs" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Issues</div>
+            <div id="gh-recent-issues" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">
+          <span id="gh-repo-count">-</span> repos · <span id="gh-last-commit">-</span>
+        </div>
       </div>
     </div>
   </div>
@@ -5189,11 +5209,55 @@ app.get('/api/dao/github', async (req, res) => {
     });
     allCommits.sort((a, b) => new Date(b.commit?.author?.date || 0) - new Date(a.commit?.author?.date || 0));
 
+    // Fetch recent PRs across key repos
+    const prResults = await Promise.allSettled(
+      keyRepos.map(repo =>
+        fetch(`https://api.github.com/repos/${repo}/pulls?state=all&per_page=3&sort=updated&direction=desc`, {
+          headers: GH_HEADERS,
+          signal: AbortSignal.timeout(10000),
+        }).then(r => r.ok ? r.json() : [])
+      )
+    );
+    const allPRs = [];
+    prResults.forEach((result, i) => {
+      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+        result.value.forEach(pr => {
+          pr._repo = keyRepos[i].replace('xmrtdao/', '');
+          allPRs.push(pr);
+        });
+      }
+    });
+    allPRs.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
+    // Fetch recent issues across key repos
+    const issueResults = await Promise.allSettled(
+      keyRepos.map(repo =>
+        fetch(`https://api.github.com/repos/${repo}/issues?state=all&per_page=3&sort=updated&direction=desc&labels=bug,enhancement`, {
+          headers: GH_HEADERS,
+          signal: AbortSignal.timeout(10000),
+        }).then(r => r.ok ? r.json() : [])
+      )
+    );
+    const allIssues = [];
+    issueResults.forEach((result, i) => {
+      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+        result.value.forEach(issue => {
+          if (!issue.pull_request) { // exclude PRs from issues
+            issue._repo = keyRepos[i].replace('xmrtdao/', '');
+            allIssues.push(issue);
+          }
+        });
+      }
+    });
+    allIssues.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
     res.json({
       success: true,
       repos: repos.items?.slice(0, 10) || [],
       total_repos: repos.total_count || 0,
       recent_commits: allCommits.slice(0, 6) || [],
+      recent_prs: allPRs.slice(0, 6) || [],
+      recent_issues: allIssues.slice(0, 6) || [],
       has_token: !!GH_TOKEN,
       timestamp: new Date().toISOString(),
     });
@@ -8433,7 +8497,32 @@ app.get('/resend/inbox/brief', (req, res) => {
   res.json({
     total: inbox.pfp.length,
     unread: inbox.pfp.filter(e => !e.read).length,
-    recent: inbox.pfp.slice(0, 5).map(e => ({
+    recent: inbox.pfp.slice(0, 10).map(e => ({
+      id: e.id, from: e.from, to: e.to, subject: e.subject,
+      receivedAt: e.receivedAt, read: e.read,
+    })),
+  });
+});
+
+// Per-domain inbox brief endpoints (called by dashboard.js)
+app.get('/resend/mobilemonero/inbox/brief', (req, res) => {
+  const inbox = getInbox();
+  res.json({
+    total: inbox.mobilemonero.length,
+    unread: inbox.mobilemonero.filter(e => !e.read).length,
+    recent: inbox.mobilemonero.slice(0, 10).map(e => ({
+      id: e.id, from: e.from, to: e.to, subject: e.subject,
+      receivedAt: e.receivedAt, read: e.read,
+    })),
+  });
+});
+
+app.get('/resend/31harbor/inbox/brief', (req, res) => {
+  const inbox = getInbox();
+  res.json({
+    total: inbox['31harbor'].length,
+    unread: inbox['31harbor'].filter(e => !e.read).length,
+    recent: inbox['31harbor'].slice(0, 10).map(e => ({
       id: e.id, from: e.from, to: e.to, subject: e.subject,
       receivedAt: e.receivedAt, read: e.read,
     })),

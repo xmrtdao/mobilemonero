@@ -582,22 +582,16 @@ loadAgentExperienceCard();
         if (!groups[addr]) groups[addr] = [];
         groups[addr].push(e);
       });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        var msgs = groups[addr];
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
-        html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + msgs.length + '</span>';
-        html += '</div>';
-        msgs.forEach(function(m){
-          count++;
-          if (count > 10) return;
-          html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,28) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,22) + '</span>';
-          html += '</div>';
-        });
-      });
+      // Show last 10 emails per account
+      if (recentEl) {
+        recentEl.innerHTML = emails.slice(0,10).map(function(m){
+          var from = (m.from||'').substring(0,22);
+          var subj = (m.subject||'').substring(0,20);
+          return '<div style="padding:0.15rem 0;font-size:0.7rem;border-bottom:1px solid #1e1e2e;">' +
+            '<span style="color:#a0a0b0;">' + from + '</span> ' +
+            '<span style="color:#6b6b80;">' + subj + '</span></div>';
+        }).join('');
+      }
       if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
       card.innerHTML = html;
     }).catch(function(){
@@ -810,28 +804,55 @@ loadAgentExperienceCard();
         var repoEl = document.getElementById('gh-repo-count');
         var commitEl = document.getElementById('gh-last-commit');
         var recentEl = document.getElementById('gh-recent-commits');
+        var prEl = document.getElementById('gh-recent-prs');
+        var issueEl = document.getElementById('gh-recent-issues');
 
         if (d.total_repos) {
           if (repoEl) repoEl.textContent = d.total_repos + ' repos';
         }
 
+        var NL = String.fromCharCode(10);
+
+        // Commits
         if (d.recent_commits && d.recent_commits.length > 0) {
           var last = d.recent_commits[0];
-          var NL = String.fromCharCode(10);
           var lastMsg = (last.commit && last.commit.message) ? last.commit.message.split(NL)[0].slice(0, 35) : 'recent commit';
           var lastWhen = new Date(last.commit.author.date).toLocaleDateString();
           var lastRepo = last._repo ? ' [' + last._repo + ']' : '';
           if (commitEl) commitEl.textContent = lastMsg + lastRepo + ' (' + lastWhen + ')';
 
-          // Show last 5 commits across all repos with repo tag
           if (recentEl) {
-            recentEl.innerHTML = d.recent_commits.slice(0,5).map(function(c){
-              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
+            recentEl.innerHTML = d.recent_commits.slice(0,6).map(function(c){
+              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 24) : '?';
               var dd = new Date(c.commit.author.date).toLocaleDateString();
               var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
               return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#6b6b80;">(' + dd + ')</span></div>';
             }).join('');
           }
+        }
+
+        // Pull Requests
+        if (d.recent_prs && d.recent_prs.length > 0 && prEl) {
+          prEl.innerHTML = d.recent_prs.slice(0,6).map(function(pr){
+            var state = pr.state === 'open' ? '<span style="color:#4ade80;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
+            var title = (pr.title || '?').substring(0, 28);
+            var repo = pr._repo ? '<span style="color:#fbbf24;">' + pr._repo + '</span> ' : '';
+            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
+          }).join('');
+        } else if (prEl) {
+          prEl.innerHTML = '<div class="stat"><span class="label">No PRs</span></div>';
+        }
+
+        // Issues
+        if (d.recent_issues && d.recent_issues.length > 0 && issueEl) {
+          issueEl.innerHTML = d.recent_issues.slice(0,6).map(function(issue){
+            var state = issue.state === 'open' ? '<span style="color:#f87171;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
+            var title = (issue.title || '?').substring(0, 28);
+            var repo = issue._repo ? '<span style="color:#60a5fa;">' + issue._repo + '</span> ' : '';
+            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
+          }).join('');
+        } else if (issueEl) {
+          issueEl.innerHTML = '<div class="stat"><span class="label">No issues</span></div>';
         }
       })
       .catch(function(){
