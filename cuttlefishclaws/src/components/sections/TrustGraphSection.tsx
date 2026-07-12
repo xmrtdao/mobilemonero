@@ -396,7 +396,7 @@ function initTrustGraph(
   function start() {
     resize()
     initNodes()
-    // draw() self-schedules — no external start needed
+    draw() // Start the animation loop
   }
 
   // Click detection
@@ -478,24 +478,72 @@ export default function TrustGraphSection() {
     }
   }, [])
 
-  // Auto-fire random events
+  // ── Fetch real trust events from the database ──
   useEffect(() => {
-    const interval = setInterval(() => {
-      const agent = namedGraphNodes[Math.floor(Math.random() * namedGraphNodes.length)]
-      const event = SCORE_EVENTS[Math.floor(Math.random() * SCORE_EVENTS.length)]
-      engineRef.current?.applyEvent(agent.id, event.delta, event.label)
-      setAgentScores(prev => ({
-        ...prev,
-        [agent.id]: Math.max(0, Math.min(100, (prev[agent.id] ?? 50) + event.delta))
-      }))
-      setEvents(prev => [{
-        nodeId: agent.id,
-        label: `${agent.label}: ${event.label}`,
-        delta: event.delta,
-        ts: Date.now(),
-      }, ...prev.slice(0, 7)])
-    }, 2200)
-    return () => clearInterval(interval)
+    const agentIds = ['trib', 'arch', 'builder', 'sovereign', 'trustgraph', 'dao', 'global-communicator']
+    const AGENT_ID_MAP: Record<string, string> = {
+      'trib': 'trib', 'arch': 'arch', 'builder': 'builder-agent',
+      'sovereign': 'sovereign-agent', 'trustgraph': 'trustgraph',
+      'dao': 'dao-gov', 'global-communicator': 'global-communicator',
+    }
+    const lastScores: Record<string, number> = {}
+
+    let cancelled = false
+    let pollTimer: ReturnType<typeof setTimeout>
+
+    async function pollEvents() {
+      if (cancelled) return
+      try {
+        const results = await Promise.all(
+          agentIds.map(id =>
+            fetch(`https://relay.mobilemonero.com/api/cuttlefishclaws/trust-score?agentId=${id}`)
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          )
+        )
+        if (cancelled) return
+
+        const newScores: Record<string, number> = {}
+        const newEvents: ScoreEvent[] = []
+
+        results.forEach((d, i) => {
+          if (!d || d.trustScore == null) return
+          const agentId = agentIds[i]
+          const graphId = AGENT_ID_MAP[agentId]
+          newScores[graphId] = d.trustScore
+
+          // Apply the real score to the canvas engine
+          if (engineRef.current && graphId) {
+            const prev = lastScores[graphId]
+            if (prev !== undefined && prev !== d.trustScore) {
+              const delta = d.trustScore - prev
+              engineRef.current.applyEvent(graphId, delta, `DB sync: ${d.trustScore}`)
+              newEvents.push({
+                nodeId: graphId,
+                label: `${graphId}: score synced to ${d.trustScore}`,
+                delta,
+                ts: Date.now(),
+              })
+            }
+            lastScores[graphId] = d.trustScore
+          }
+        })
+
+        if (Object.keys(newScores).length > 0) setAgentScores(prev => ({ ...prev, ...newScores }))
+        if (newEvents.length > 0) setEvents(prev => [...newEvents.slice(0, 8), ...prev.slice(0, 7)])
+      } catch (e) {
+        // silent
+      }
+      if (!cancelled) pollTimer = setTimeout(pollEvents, 15000)
+    }
+
+    // Initial fetch after engine is ready
+    const initTimer = setTimeout(pollEvents, 1000)
+    return () => {
+      cancelled = true
+      clearTimeout(initTimer)
+      clearTimeout(pollTimer)
+    }
   }, [namedGraphNodes])
 
   useEffect(() => {
