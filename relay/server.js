@@ -2533,6 +2533,29 @@ function checkHttp(url, timeoutMs) {
     .then(r => r.status >= 200 && r.status < 400)
     .catch(() => false);
 }
+function checkProcessRunning(name) {
+  // For .mjs scripts, check via supervisor state file first, then wmic
+  if (name.endsWith('.mjs')) {
+    try {
+      const stateFile = join(DATA_DIR, 'supervisor-state.json');
+      if (existsSync(stateFile)) {
+        const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+        const svcName = name.replace('.mjs', '');
+        if (state.services && state.services[svcName] && state.services[svcName].childPid !== null) return true;
+      }
+    } catch {}
+    // Fallback: check via wmic for node.exe processes with this script name
+    try {
+      const out = execFileSync('wmic', ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+      return out.includes(name);
+    } catch { return false; }
+  }
+  // For .exe processes, use tasklist
+  try {
+    const out = execFileSync('tasklist', ['/nh', '/fi', `imagename eq ${name}`], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+    return out.includes(name);
+  } catch { return false; }
+}
 function checkProcessByScript(scriptName) {
   // Check if the script name appears in the supervisor state file
   try {
@@ -2575,24 +2598,30 @@ app.get('/api/supervisor/status', async (req, res) => {
       supervisorPid = stateData._pid || null;
     }
 
-    // Build service status from state file
+    // Build service status from state file with live process checks
     const serviceDefs = [
-      { name: 'relay', port: 8080 }, { name: 'campaign-scheduler', port: null },
-      { name: '31harbor-scheduler', port: null }, { name: 'pg', port: 5432 },
-      { name: 'local-sb', port: 54321 }, { name: 'vite', port: 5173 },
-      { name: 'tunnel', port: null }, { name: 'zero-claw', port: 5174 },
-      { name: 'alice', port: null }, { name: 'cron-engine-v2', port: null },
+      { name: 'relay', port: 8080, check: () => checkHttp('http://localhost:8080/health', 2000) },
+      { name: 'campaign-scheduler', port: null, check: () => checkProcessRunning('campaign-scheduler.mjs') },
+      { name: '31harbor-scheduler', port: null, check: () => checkProcessRunning('31harbor-scheduler.mjs') },
+      { name: 'pg', port: 5432, check: () => checkProcessRunning('postgres.exe') },
+      { name: 'local-sb', port: 54321, check: () => checkHttp('http://127.0.0.1:54321/health', 2000) },
+      { name: 'vite', port: 5173, check: () => checkHttp('http://127.0.0.1:5173/', 2000) },
+      { name: 'tunnel', port: null, check: () => checkProcessRunning('cloudflared.exe') },
+      { name: 'zero-claw', port: 5174, check: () => checkHttp('http://127.0.0.1:5174/', 2000) },
+      { name: 'alice', port: null, check: () => checkProcessRunning('alice.mjs') },
+      { name: 'cron-engine-v2', port: null, check: () => checkProcessRunning('cron-engine-v2.mjs') },
     ];
-    const services = serviceDefs.map(def => {
+    const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
+      const healthy = await def.check();
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
       return {
-        name: def.name, healthy: svcState.childPid !== null, port: def.port,
+        name: def.name, healthy, port: def.port,
         pid: svcState.childPid || null, startedAt: svcState.startedAt || null,
         restartCount, lastHourRestarts, flapping: lastHourRestarts >= 4,
       };
-    });
+    }));
 
     // Task results
     const tasks = [];
@@ -5067,8 +5096,8 @@ app.get('/api/dao/github', async (req, res) => {
 
     const repos = reposRes.ok ? await reposRes.json() : { items: [] };
 
-    // Fetch recent commits from the 4 key repos in parallel
-    const keyRepos = ['xmrtdao/suite', 'xmrtdao/mobilemonero', 'xmrtdao/zero-claw', 'xmrtdao/xmrt-mesh', 'xmrtdao/sea-hampton-house'];
+    // Fetch recent commits from the 6 key repos in parallel
+    const keyRepos = ['xmrtdao/suite', 'xmrtdao/mobilemonero', 'xmrtdao/zero-claw', 'xmrtdao/xmrt-mesh', 'xmrtdao/sea-hampton-house', 'xmrtdao/cashdapp'];
     const commitResults = await Promise.allSettled(
       keyRepos.map(repo =>
         fetch(`https://api.github.com/repos/${repo}/commits?per_page=3`, {
