@@ -1613,8 +1613,10 @@ const SEND_EMAIL_RATE_MAX = 10;
 
 function rateLimit(ip, path) {
   const now = Date.now();
-  const key = `${ip}:${path.includes('send-email') ? 'send-email' : 'default'}`;
-  const max = path.includes('send-email') ? SEND_EMAIL_RATE_MAX : RATE_LIMIT_MAX;
+  const isChat = path.includes('cuttlefishclaws/chat');
+  const isSendEmail = path.includes('send-email');
+  const key = `${ip}:${isSendEmail ? 'send-email' : isChat ? 'chat' : 'default'}`;
+  const max = isSendEmail ? SEND_EMAIL_RATE_MAX : isChat ? 30 : RATE_LIMIT_MAX;
   let bucket = rateLimitBuckets.get(key);
   if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW) {
     bucket = { windowStart: now, count: 0 };
@@ -1633,7 +1635,7 @@ function rateLimit(ip, path) {
 
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
-  if (req.path === '/api/suite/validate-token' || req.path === '/api/login') return next();
+  if (req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/contact/cuttlefishclaws/chat') return next();
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
