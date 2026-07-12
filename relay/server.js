@@ -2647,6 +2647,8 @@ app.get('/api/supervisor/status', async (req, res) => {
       { name: 'zero-claw', port: 5174, check: () => checkHttp('http://127.0.0.1:5174/', 2000) },
       { name: 'alice', port: null, check: () => checkProcessRunning('alice.mjs') },
       { name: 'cron-engine-v2', port: null, check: () => checkProcessRunning('cron-engine-v2.mjs') },
+      { name: 'cuttlefishclaws-mcp', port: 3120, check: () => checkHttp('http://127.0.0.1:3120/health', 2000) },
+      { name: 'suite-mcp', port: 3200, check: () => checkHttp('http://127.0.0.1:3200/health', 2000) },
     ];
     const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
