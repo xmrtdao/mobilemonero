@@ -1669,15 +1669,22 @@ app.get('/ontology/:name', (req, res) => {
 
 // ── Host-based routing: tunnel ingress can't do path rewrites, so we do it here ──
 // suite.mobilemonero.com → /suite/*, cuttlefish.mobilemonero.com → /cuttlefishclaws/*
-// Only rewrites the root path — the SPA's built HTML already has correct base paths
-// (e.g. /suite/assets/..., /cuttlefishclaws/assets/...) so we must NOT double-prefix.
+// Uses a 302 redirect so the browser loads the HTML from the correct path,
+// which means relative imports (./vendor-xxx.js) in the JS resolve correctly.
 app.use((req, res, next) => {
   const host = (req.get('host') || '').toLowerCase();
   if (host === 'suite.mobilemonero.com' && req.path === '/') {
-    req.url = '/suite/';
+    return res.redirect(302, '/suite/');
   } else if (host === 'cuttlefish.mobilemonero.com' && req.path === '/') {
-    req.url = '/cuttlefishclaws/';
+    return res.redirect(302, '/cuttlefishclaws/');
   }
+  next();
+});
+
+// ── CORS for tunnel-served SPAs: Vite builds add crossorigin to script tags,
+// so the browser expects Access-Control-Allow-Origin when served through the tunnel.
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   next();
 });
 
