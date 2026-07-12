@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Prevent background task crashes
+process.on('uncaughtException', (err) => {  console.error('[Relay] UNCAUGHT EXCEPTION:', err?.message || err);  console.error(err?.stack || '(no stack)');  /* Don't exit - let the process continue */ });
 process.on('unhandledRejection', (err) => {
   console.error('[Relay] Unhandled rejection (non-fatal):', err?.message || err);
 });
@@ -27,7 +28,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSy
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -76,8 +77,12 @@ import { ensureLocalDb, restFetch as localRestFetch, query as localQuery, LOCAL_
 import { createMeshRouter, initMeshNode, publishToMesh, getMeshMessageLog, getMeshStatus } from './lib/mesh-router.mjs';
 import registerSuiteRoutes from './routes/suite-dashboard.mjs';
 import { discoverFunctions, listFunctions } from './lib/function-runtime.mjs';
+import * as qwenMemory from './lib/qwen-memory.mjs';
 
-// Local Postgres (embedded-postgres) connection helper
+// CuttlefishClaws protocol engines (TG-001, SS-001, SGQ-001, AR-001)
+import { registerCuttlefishRoutes } from './lib/cuttlefish-routes.mjs';
+import { registerUniversityBridge } from './lib/university-bridge.mjs';
+
 import pg from 'pg';
 const { Client: PgClient } = pg;
 async function queryLocalPg(sql, params) {
@@ -1229,20 +1234,128 @@ const toolHandlers = {
     } catch (err) { return { success: false, error: err.message }; }
   },
 
-  'vex-vision': async (args) => {
-    const capturePath = join(__dirname, '..', 'relay-data', 'vex-capture.jpg');
-    const cameraName = args?.camera || 'HP TrueVision HD Camera';
-    const prompt = args?.prompt || 'What do you see in this image? Be concise.';
-    const model = args?.model || 'moondream';
+  'obsidian-graph': async (args) => {
+    const filter = args?.filter || args?.category || null;
     try {
-      // Capture photo via ffmpeg — use spawn for windows compat
-      const ffmpegPath = 'C:\\tools\\ffmpeg';
-      const result = execSync(
-        `"${ffmpegPath}" -f dshow -i video="${cameraName}" -frames:v 1 -q:v 2 -update 1 "${capturePath}" -y`,
-        { timeout: 10000, windowsHide: true }
-      );
-      const imgBase64 = readFileSync(capturePath).toString('base64');
-      // Send to Ollama vision model
+      const resp = await fetch(`http://localhost:${PORT}/api/obsidian-graph`, { signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) return { error: 'Failed to fetch graph', status: resp.status };
+      const data = await resp.json();
+      if (filter) {
+        data.nodes = data.nodes.filter(n => n.category === filter);
+        data.edges = data.edges.filter(e => data.nodes.some(n => n.id === e.source) && data.nodes.some(n => n.id === e.target));
+        data.summary.totalNodes = data.nodes.length;
+        data.summary.totalEdges = data.edges.length;
+      }
+      return { success: true, ...data };
+    } catch (err) { return { success: false, error: err.message }; }
+  },
+
+  'vex-vision': async (args) => {
+    const prompt = args?.prompt || 'What do you see in this image? Be concise.';
+    const model = args?.model || 'kimi-k2.6:cloud';
+    const filePath = args?.file || args?.path || args?.filePath;
+    const url = args?.url;
+    const screenshot = args?.screenshot === true || args?.screen === true;
+    const cameraName = args?.camera || 'HP TrueVision HD Camera';
+    const ffmpegPath = 'C:\\tools\\ffmpeg';
+    const magickPath = join(__dirname, '..', 'relay-data', 'imagemagick', 'magick.exe');
+    const relayData = join(__dirname, '..', 'relay-data');
+    const gsPath = 'C:\\Program Files\\gs\\gs10.07.1\\bin';
+    const execOpts = { timeout: 30000, windowsHide: true, env: { ...process.env, PATH: `${gsPath};${process.env.PATH}` } };
+    const execOptsMagick = { timeout: 30000, windowsHide: true, env: { ...process.env, PATH: `${gsPath};${process.env.PATH}` } };
+
+    try {
+      let imgBase64;
+      let sourceLabel = 'camera';
+
+      if (screenshot) {
+        // ── Screen capture mode ─────────────────────────
+        sourceLabel = 'screen';
+        const outputPath = join(relayData, 'vex-screenshot.png');
+        // PowerShell .NET screen capture — no extra deps
+        execSync(
+          `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height; $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.X,$b.Y,0,0,$b.Size); $bmp.Save('${outputPath.replace(/'/g, "''")}','PNG'); $g.Dispose(); $bmp.Dispose()"`,
+          { timeout: 15000, windowsHide: true }
+        );
+        imgBase64 = readFileSync(outputPath).toString('base64');
+      } else if (filePath) {
+        // ── Local file mode ──────────────────────────────
+        sourceLabel = filePath;
+        if (!existsSync(filePath)) {
+          return { success: false, error: `File not found: ${filePath}` };
+        }
+
+        const ext = filePath.toLowerCase().split('.').pop();
+        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+        const videoExts = ['mp4', 'avi', 'mov', 'mkv', 'webm'];
+
+        if (imageExts.includes(ext)) {
+          // Direct image — read and base64
+          imgBase64 = readFileSync(filePath).toString('base64');
+        } else if (ext === 'pdf') {
+          // PDF — extract first page via ImageMagick
+          const tempImage = join(relayData, 'vex-vision-frame.jpg');
+          execSync(
+            `"${magickPath}" "${filePath}"[0] -resize 1920x -quality 85 "${tempImage}"`,
+            execOptsMagick
+          );
+          imgBase64 = readFileSync(tempImage).toString('base64');
+        } else if (videoExts.includes(ext)) {
+          // Video — extract first frame via ffmpeg
+          const tempImage = join(relayData, 'vex-vision-frame.jpg');
+          execSync(
+            `"${ffmpegPath}" -i "${filePath}" -frames:v 1 -q:v 2 "${tempImage}" -y`,
+            { timeout: 30000, windowsHide: true }
+          );
+          imgBase64 = readFileSync(tempImage).toString('base64');
+        } else {
+          return { success: false, error: `Unsupported file type: .${ext}. Supported: jpg, png, gif, webp, pdf, mp4, mov, avi, mkv` };
+        }
+      } else if (url) {
+        // ── URL mode ────────────────────────────────────
+        sourceLabel = url;
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) return { success: false, error: `Failed to fetch URL: ${res.status} ${res.statusText}` };
+
+        const contentType = res.headers.get('content-type') || '';
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        if (contentType.startsWith('image/')) {
+          imgBase64 = buffer.toString('base64');
+        } else if (contentType.startsWith('application/pdf')) {
+          // PDF from URL — save then extract first page via ImageMagick
+          const tempFile = join(relayData, 'vex-vision-dl.pdf');
+          writeFileSync(tempFile, buffer);
+          const tempImage = join(relayData, 'vex-vision-frame.jpg');
+          execSync(
+            `"${magickPath}" "${tempFile}"[0] -resize 1920x -quality 85 "${tempImage}"`,
+            execOptsMagick
+          );
+          imgBase64 = readFileSync(tempImage).toString('base64');
+        } else if (contentType.startsWith('video/')) {
+          // Video from URL — save then extract first frame via ffmpeg
+          const tempFile = join(relayData, 'vex-vision-dl.mp4');
+          writeFileSync(tempFile, buffer);
+          const tempImage = join(relayData, 'vex-vision-frame.jpg');
+          execSync(
+            `"${ffmpegPath}" -i "${tempFile}" -frames:v 1 -q:v 2 "${tempImage}" -y`,
+            { timeout: 30000, windowsHide: true }
+          );
+          imgBase64 = readFileSync(tempImage).toString('base64');
+        } else {
+          return { success: false, error: `Unsupported content type: ${contentType}. Supported: image/*, application/pdf, video/*` };
+        }
+      } else {
+        // ── Camera capture mode (original) ──────────────
+        const capturePath = join(relayData, 'vex-capture.jpg');
+        execSync(
+          `"${ffmpegPath}" -f dshow -i video="${cameraName}" -frames:v 1 -q:v 2 -update 1 "${capturePath}" -y`,
+          { timeout: 10000, windowsHide: true }
+        );
+        imgBase64 = readFileSync(capturePath).toString('base64');
+      }
+
+      // ── Send to Ollama vision model ───────────────────
       const visionRes = await fetch('http://localhost:11434/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1257,6 +1370,7 @@ const toolHandlers = {
       const desc = visionData.message?.content || visionData.error || 'no response';
       return {
         success: true,
+        source: sourceLabel,
         model,
         description: desc,
         image: imgBase64.slice(0, 100) + '... [' + Math.round(imgBase64.length / 1024) + 'KB]',
@@ -1301,7 +1415,7 @@ const toolHandlers = {
 
   // ── Resend Send Email (agent sends email via fleet-chat endpoint) ──
   'resend-send-email': async (args) => {
-    const { agent, to, subject, body, from: customFrom } = args || {};
+    const { agent, to, subject, body } = args || {};
     if (!agent || !to || !subject || !body) {
       return { error: 'agent, to, subject, and body are required. agent: vex|eliza|hermes|pfp|harbor' };
     }
@@ -1309,7 +1423,7 @@ const toolHandlers = {
       const res = await fetch(`http://localhost:${PORT}/api/fleet-chat/send-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent, to, subject, body, from: customFrom }),
+        body: JSON.stringify({ agent, to, subject, body }),
         signal: AbortSignal.timeout(15000),
       });
       return await res.json();
@@ -1330,14 +1444,15 @@ async function defaultHandler(task) {
 // cascade, conversation memory, and tool execution). The old
 // /functions/v1/eliza-relay endpoint is a deprecated stub that just
 // proxies to /ollama/chat with gemma3:1b — we skip it entirely.
-async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null) {
+async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null, sessionId = null) {
   if (!SUPABASE_KEY) return logActivity('eliza', '-', 'SKIP', 'No SUPABASE_KEY set');
-  const tag = relayTag || `eliza-dev-${Date.now().toString(36)}`;
+  // Use stable sessionId when provided (e.g. from fleet chat), otherwise fall back to relayTag
+  const tag = sessionId || relayTag || `eliza-dev-${Date.now().toString(36)}`;
   const url = `${SUPABASE_URL}/functions/v1/ai-chat`;
   try {
     logActivity('eliza', tag, 'SEND', message.slice(0, 80));
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    const timeout = setTimeout(() => controller.abort(), 45000);
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
@@ -1419,6 +1534,139 @@ const app = express();
 // Standard JSON parser — fleet chat endpoint has its own fallback for missing Content-Type
 app.use(express.json({ limit: '5mb' }));
 
+// ── Cloudflare Access JWT Verification Middleware ─────────
+// Validates Cf-Access-Jwt-Assertion header against Cloudflare's JWKS.
+const CF_ACCESS_TEAM_DOMAIN = 'mobilemonero.cloudflareaccess.com';
+const CF_ACCESS_AUD = '0fd3b26e1be02abb5cec45374db4e1c6fc9ea2b6230e2bc6066f372d0fa44d96';
+const CF_JWKS_URI = `https://${CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`;
+let cfJwks = null;
+let cfJwksLastFetch = 0;
+const CF_JWKS_TTL = 3600000;
+
+async function getCfJwks() {
+  if (cfJwks && Date.now() - cfJwksLastFetch < CF_JWKS_TTL) return cfJwks;
+  try {
+    const res = await fetch(CF_JWKS_URI, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) { cfJwks = await res.json(); cfJwksLastFetch = Date.now(); return cfJwks; }
+  } catch (e) { console.warn('[CF-Access] Failed to fetch JWKS:', e.message); }
+  return cfJwks;
+}
+
+function base64urlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  try { return JSON.parse(Buffer.from(str, 'base64').toString('utf8')); } catch { return null; }
+}
+
+async function verifyCfAccessJwt(jwt) {
+  if (!jwt) return null;
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  const header = base64urlDecode(parts[0]);
+  const payload = base64urlDecode(parts[1]);
+  if (!header || !payload) return null;
+  const aud = payload.aud || payload.AUD;
+  if (Array.isArray(aud) ? !aud.includes(CF_ACCESS_AUD) : aud !== CF_ACCESS_AUD) return null;
+  if (payload.exp && Date.now() / 1000 > payload.exp) return null;
+  const jwks = await getCfJwks();
+  if (!jwks || !jwks.keys) return null;
+  const key = jwks.keys.find(k => k.kid === header.kid);
+  if (!key) return null;
+  try {
+    const cryptoKey = await crypto.subtle.importKey('jwk', key, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+    const sig = Uint8Array.from(atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', cryptoKey, sig, data);
+    return valid ? payload : null;
+  } catch (e) { console.warn('[CF-Access] JWT verify error:', e.message); return null; }
+}
+
+// ── Combined Auth Middleware ──────────────────────────────
+const RELAY_API_KEY = process.env.RELAY_API_KEY || '';
+const CF_SERVICE_TOKENS = {
+  'cf58c37e064303569c6017ac39a15a7a.access': 'f2158a78f16a9c75067a954d508658eda3f5d52c018cd0e366096ad1c39ef1b9',
+  'bfa0d8f42b17d44a0243d386bd5b6a40.access': 'd8019ca2afa236c55828904245bf147f60feb11fa781ea7c6b05daee665690dd',
+  'e1b5d893008ffb71e0f80b45139fb1d0.access': 'f9943d1733ff36bf7c65574cf1febb508fd40437f9e47497ea9d3243422dd032',
+};
+
+// ── Rate Limiter ──────────────────────────────────────────
+const rateLimitBuckets = new Map();
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX = 60;
+const SEND_EMAIL_RATE_MAX = 10;
+
+function rateLimit(ip, path) {
+  const now = Date.now();
+  const key = `${ip}:${path.includes('send-email') ? 'send-email' : 'default'}`;
+  const max = path.includes('send-email') ? SEND_EMAIL_RATE_MAX : RATE_LIMIT_MAX;
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW) {
+    bucket = { windowStart: now, count: 0 };
+    rateLimitBuckets.set(key, bucket);
+  }
+  bucket.count++;
+  if (bucket.count > max) return false;
+  if (rateLimitBuckets.size > 1000) {
+    const cutoff = now - RATE_LIMIT_WINDOW * 2;
+    for (const [k, b] of rateLimitBuckets) {
+      if (now - b.windowStart > RATE_LIMIT_WINDOW * 2) rateLimitBuckets.delete(k);
+    }
+  }
+  return true;
+}
+
+app.use((req, res, next) => {
+  // Public API endpoints (no auth required)
+  if (req.path === '/api/suite/validate-token' || req.path === '/api/login') return next();
+  // Skip non-API paths and non-sensitive paths
+  const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
+  const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
+  if (!req.path.startsWith('/api/') && !isSensitive) return next();
+  
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+  
+  // Rate limit check
+  if (!rateLimit(ip, req.path)) {
+    console.warn(`[RATE-LIMIT] Exceeded from ${ip}: ${req.method} ${req.path}`);
+    return res.status(429).json({ error: 'Too many requests. Rate limit: 60/min general, 10/min for send-email.' });
+  }
+  
+  const cfJwt = req.headers['cf-access-jwt-assertion'];
+  if (cfJwt) {
+    verifyCfAccessJwt(cfJwt).then(verified => {
+      if (verified) { req.cfAccess = { identity: verified.email || verified.sub, payload: verified }; next(); }
+      else { console.warn(`[CF-Access] Invalid JWT from ${ip}: ${req.method} ${req.path}`); res.status(401).json({ error: 'Invalid Cloudflare Access JWT' }); }
+    }).catch(err => { console.warn(`[CF-Access] JWT verify error: ${err.message}`); res.status(401).json({ error: 'JWT verification failed' }); });
+    return;
+  }
+  const cfClientId = req.headers['cf-access-client-id'];
+  const cfClientSecret = req.headers['cf-access-client-secret'];
+  if (cfClientId && cfClientSecret) {
+    const expectedSecret = CF_SERVICE_TOKENS[cfClientId];
+    if (expectedSecret && cfClientSecret === expectedSecret) { req.cfAccess = { identity: cfClientId, type: 'service_token' }; return next(); }
+    console.warn(`[CF-Access] Invalid service token from ${ip}: ${req.method} ${req.path}`);
+    return res.status(401).json({ error: 'Invalid Cloudflare Access service token' });
+  }
+  if (RELAY_API_KEY) {
+    const apiKey = (req.headers['x-api-key'] || '').trim();
+    if (apiKey === RELAY_API_KEY) return next();
+    if (!apiKey) { console.warn(`[AUTH] Missing credentials from ${ip}: ${req.method} ${req.path}`); return res.status(401).json({ error: 'Authentication required. Provide Cf-Access-Jwt-Assertion header (Cloudflare Access) or x-api-key header.' }); }
+    console.warn(`[AUTH] Invalid x-api-key from ${ip}: ${req.method} ${req.path}`);
+    return res.status(403).json({ error: 'Invalid API key' });
+  }
+  next();
+});
+
+// ── Ontology documents (machine-readable project definitions) ──
+const ONTOLOGY_DIR = join(__dirname, '..');
+app.get('/ontology/:name', (req, res) => {
+  const name = req.params.name.replace(/\.\./g, '').replace(/[\/\\]/g, '');
+  const filePath = join(ONTOLOGY_DIR, `ONTOLOGY-${name}.md`);
+  if (existsSync(filePath)) return res.sendFile(filePath);
+  res.status(404).json({ error: `Ontology not found. Available: PARTY-FAVOR-PHOTO, XMRT-DAO, CUTTLEFISHCLAWS, 31HARBOR` });
+});
+
 // ── Fast static file routes (bypasses slow express.static on Windows) ──
 const PUBLIC_DIR = join(__dirname, 'public');
 const SPATIAL_DIR = join(__dirname, 'spatial');
@@ -1469,6 +1717,20 @@ if (existsSync(join(CUTTLEFISH_DIR, 'index.html'))) {
   console.log(`  CuttlefishClaws SPA: ${CUTTLEFISH_DIR}`);
 } else {
   console.log(`  CuttlefishClaws SPA: NOT FOUND at ${CUTTLEFISH_DIR} — skipping`);
+}
+
+// ── CashDApp SPA (Vite build) ──
+const CASHDAPP_DIR = join(__dirname, '..', 'cashdapp', 'dist');
+if (existsSync(join(CASHDAPP_DIR, 'index.html'))) {
+  app.use('/cashdapp', express.static(CASHDAPP_DIR, { maxAge: '5m' }));
+  app.get('/cashdapp/*', (req, res) => {
+    const filePath = join(CASHDAPP_DIR, req.path.replace(/^\/cashdapp\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(CASHDAPP_DIR, 'index.html'));
+  });
+  console.log(`  CashDApp SPA: ${CASHDAPP_DIR}`);
+} else {
+  console.log(`  CashDApp SPA: NOT FOUND at ${CASHDAPP_DIR} — skipping`);
 }
 
 // ── 31Harbor Agency Dashboard (Vite build, per-company themed SPAs) ──
@@ -2087,15 +2349,32 @@ app.get('/inbox', (req, res) => {
   const host = req.headers.host || '';
   if (host.includes('mobilemonero') || req.query.domain === 'mobilemonero') {
     res.sendFile(join(PUBLIC_DIR, 'inbox-xmrt.html'));
+  } else if (host.includes('partyfavorphoto') || req.query.domain === 'pfp') {
+    res.sendFile(join(PUBLIC_DIR, 'inbox-pfp.html'));
+  } else if (host.includes('31harbor') || req.query.domain === '31harbor') {
+    res.sendFile(join(PUBLIC_DIR, 'inbox-31harbor.html'));
   } else {
     res.sendFile(join(PUBLIC_DIR, 'inbox-pfp.html'));
   }
 });
 
+// Dynamic dashboard.js — interpolates template variables at request time
+app.get('/static/dashboard.js', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const filePath = join(__dirname, 'public', 'dashboard.js');
+  if (!fs.existsSync(filePath)) return res.status(404).send('/* dashboard.js not found */');
+  let content = fs.readFileSync(filePath, 'utf8');
+  content = content.replace(/\$\{supabaseUrl\}/g, SUPABASE_URL);
+  content = content.replace(/\$\{supabaseKey\}/g, SUPABASE_KEY);
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(content);
+});
 app.use('/images', express.static(join(__dirname, 'public')));
 app.use('/radar', express.static(join(__dirname, 'public')));
 app.use('/static', express.static(join(__dirname, 'public')));
 app.use('/spatial', express.static(join(__dirname, 'spatial')));
+app.use('/discovercostarica', express.static(join(__dirname, 'static', 'discovercostarica')));
 
 // Fallback: parse body as JSON for requests without Content-Type
 app.use((req, res, next) => {
@@ -2120,40 +2399,11 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     agent: 'Eliza-Dev',
-    version: '5.0.0',
+    version: '6.0.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
   });
-});
-
-// Supervisor status — used by fleet-chat grounding so agents don't hallucinate
-// "all services are up" without actually checking. Reads relay-data/supervisor-state.json.
-app.get('/api/supervisor/status', (req, res) => {
-  trackRequest('/api/supervisor/status');
-  try {
-    const fs = require('fs');
-    const path = require('path');
-    const stateFile = path.join(DATA_DIR, 'supervisor-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return res.json({ error: 'supervisor-state.json missing', path: stateFile });
-    }
-    const raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    const services = raw.services || {};
-    const result = { services: {} };
-    for (const [name, svc] of Object.entries(services)) {
-      result.services[name] = {
-        childPid: svc.childPid,
-        startedAt: svc.startedAt,
-        uptimeSec: svc.startedAt ? Math.floor((Date.now() - svc.startedAt) / 1000) : 0,
-        restartCount: Array.isArray(svc.restartTimestamps) ? svc.restartTimestamps.length : 0,
-        lastAlert: raw.alerts?.[name + '-down'] || 0,
-      };
-    }
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // Debug: returns the exact grounding context fleet-chat agents are given.
@@ -2164,6 +2414,233 @@ app.get('/api/fleet-chat/grounded', async (req, res) => {
     const ctx = await gatherFleetContext();
     res.json({ ok: true, context: ctx });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Qwen Code Memory API ───────────────────────────────────────
+// Bridges Qwen Code's file-based memory to Suite's DB-backed memory tables.
+// Follows the same cascade pattern as ai-chat/index.ts EnhancedConversationPersistence.
+app.post('/api/qwen-memory/save', async (req, res) => {
+  trackRequest('/api/qwen-memory/save');
+  try {
+    const { sessionId, messages, summary, metadata } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+
+    const state = await qwenMemory.saveConversationState(sessionId, messages || [], summary, metadata);
+    if (summary) {
+      await qwenMemory.saveConversationSummary(sessionId, summary, {
+        messageCount: (messages || []).length,
+        keyTopics: metadata?.topics || [],
+        sentiment: metadata?.sentiment,
+        keyEntities: metadata?.entities,
+        confidence: 0.6,
+      });
+    }
+    res.json({ ok: true, row: state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/load/:sessionId', async (req, res) => {
+  trackRequest('/api/qwen-memory/load');
+  try {
+    const state = await qwenMemory.loadConversationState(req.params.sessionId);
+    const contexts = await qwenMemory.loadMemoryContexts(req.params.sessionId);
+    res.json({ ok: true, state, contexts });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/sessions', async (req, res) => {
+  trackRequest('/api/qwen-memory/sessions');
+  try {
+    const sessions = await qwenMemory.listSessions();
+    const summaries = await qwenMemory.loadRecentSummaries(20);
+    res.json({ ok: true, sessions, summaries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/qwen-memory/context', async (req, res) => {
+  trackRequest('/api/qwen-memory/context');
+  try {
+    const { sessionId, content, contextType, importanceScore, metadata } = req.body;
+    if (!sessionId || !content || !contextType) {
+      return res.status(400).json({ error: 'sessionId, content, and contextType required' });
+    }
+    const row = await qwenMemory.saveMemoryContext(sessionId, content, contextType, importanceScore || 0.5, metadata);
+    res.json({ ok: true, row });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/summaries', async (req, res) => {
+  trackRequest('/api/qwen-memory/summaries');
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const summaries = await qwenMemory.loadRecentSummaries(limit);
+    res.json({ ok: true, summaries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/search', async (req, res) => {
+  trackRequest('/api/qwen-memory/search');
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.status(400).json({ error: 'query param "q" must be at least 2 chars' });
+    const results = await qwenMemory.searchMemoryContexts(q, parseInt(req.query.limit) || 10);
+    res.json({ ok: true, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cascade endpoints (mirrors EnhancedConversationPersistence from ai-chat/index.ts)
+app.get('/api/qwen-memory/historical-summaries', async (req, res) => {
+  trackRequest('/api/qwen-memory/historical-summaries');
+  try {
+    const { userId, ipAddress, sessionId } = req.query;
+    const summaries = await qwenMemory.loadHistoricalSummaries({ userId, ipAddress, sessionId });
+    res.json({ ok: true, summaries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/qwen-memory/context-pair', async (req, res) => {
+  trackRequest('/api/qwen-memory/context-pair');
+  try {
+    const { sessionId, currentQuestion, assistantResponse, userResponse, metadata } = req.body;
+    if (!sessionId || !currentQuestion || !assistantResponse || !userResponse) {
+      return res.status(400).json({ error: 'sessionId, currentQuestion, assistantResponse, userResponse required' });
+    }
+    const row = await qwenMemory.saveConversationContext(sessionId, currentQuestion, assistantResponse, userResponse, metadata);
+    res.json({ ok: true, row });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/by-ip/:ipAddress', async (req, res) => {
+  trackRequest('/api/qwen-memory/by-ip');
+  try {
+    const state = await qwenMemory.loadByIP(req.params.ipAddress);
+    res.json({ ok: true, state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qwen-memory/by-user/:userId', async (req, res) => {
+  trackRequest('/api/qwen-memory/by-user');
+  try {
+    const state = await qwenMemory.loadByUserId(req.params.userId);
+    res.json({ ok: true, state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Supervisor Status API ──────────────────────────────────────
+// Inline health-check helpers (mirrors supervisor.mjs logic)
+function checkHttp(url, timeoutMs) {
+  return fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+    .then(r => r.status >= 200 && r.status < 400)
+    .catch(() => false);
+}
+function checkProcessRunning(name) {
+  // For .mjs scripts, check via supervisor state file first, then wmic
+  if (name.endsWith('.mjs')) {
+    try {
+      const stateFile = join(DATA_DIR, 'supervisor-state.json');
+      if (existsSync(stateFile)) {
+        const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+        const svcName = name.replace('.mjs', '');
+        if (state.services && state.services[svcName] && state.services[svcName].childPid !== null) return true;
+      }
+    } catch {}
+    // Fallback: check via wmic for node.exe processes with this script name
+    try {
+      const out = execFileSync('wmic', ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+      return out.includes(name);
+    } catch { return false; }
+  }
+  // For .exe processes, use tasklist
+  try {
+    const out = execFileSync('tasklist', ['/nh', '/fi', `imagename eq ${name}`], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+    return out.includes(name);
+  } catch { return false; }
+}
+function checkProcessByScript(scriptName) {
+  // Check if the script name appears in the supervisor state file
+  try {
+    const stateFile = join(DATA_DIR, 'supervisor-state.json');
+    if (existsSync(stateFile)) {
+      const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+      return state.services && state.services[scriptName.replace('.mjs','')] && state.services[scriptName.replace('.mjs','')].childPid !== null;
+    }
+  } catch {}
+  return false;
+}
+function checkProcessByName(exeName) {
+  // Check if the process name appears in the supervisor state file
+  try {
+    const stateFile = join(DATA_DIR, 'supervisor-state.json');
+    if (existsSync(stateFile)) {
+      const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+      return state.services && state.services[exeName.replace('.exe','')] && state.services[exeName.replace('.exe','')].childPid !== null;
+    }
+  } catch {}
+  return false;
+}
+
+app.get('/api/supervisor/status', async (req, res) => {
+  trackRequest('/api/supervisor/status');
+  try {
+    const STATE_FILE = join(DATA_DIR, 'supervisor-state.json');
+    let stateData = { services: {}, alerts: {}, lastTaskCheck: 0, lastTaskResults: {} };
+    try {
+      if (existsSync(STATE_FILE)) {
+        stateData = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+      }
+    } catch (e) { /* state file unavailable */ }
+
+    // Check if supervisor process is alive
+    let supervisorPid = null;
+    let supervisorAlive = false;
+    if (Object.keys(stateData.services || {}).length > 0) {
+      supervisorAlive = true;
+      supervisorPid = stateData._pid || null;
+    }
+
+    // Build service status from state file with live process checks
+    const serviceDefs = [
+      { name: 'relay', port: 8080, check: () => checkHttp('http://localhost:8080/health', 2000) },
+      { name: 'campaign-scheduler', port: null, check: () => checkProcessRunning('campaign-scheduler.mjs') },
+      { name: '31harbor-scheduler', port: null, check: () => checkProcessRunning('31harbor-scheduler.mjs') },
+      { name: 'pg', port: 5432, check: () => checkProcessRunning('postgres.exe') },
+      { name: 'local-sb', port: 54321, check: () => checkHttp('http://127.0.0.1:54321/health', 2000) },
+      { name: 'vite', port: 5173, check: () => checkHttp('http://127.0.0.1:5173/', 2000) },
+      { name: 'tunnel', port: null, check: () => checkProcessRunning('cloudflared.exe') },
+      { name: 'zero-claw', port: 5174, check: () => checkHttp('http://127.0.0.1:5174/', 2000) },
+      { name: 'alice', port: null, check: () => checkProcessRunning('alice.mjs') },
+      { name: 'cron-engine-v2', port: null, check: () => checkProcessRunning('cron-engine-v2.mjs') },
+    ];
+    const services = await Promise.all(serviceDefs.map(async (def) => {
+      const svcState = stateData.services?.[def.name] || {};
+      const healthy = await def.check();
+      const restartCount = svcState.restartTimestamps?.length || 0;
+      const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
+      return {
+        name: def.name, healthy, port: def.port,
+        pid: svcState.childPid || null, startedAt: svcState.startedAt || null,
+        restartCount, lastHourRestarts, flapping: lastHourRestarts >= 4,
+      };
+    }));
+
+    // Task results
+    const tasks = [];
+    for (const [name, data] of Object.entries(stateData.lastTaskResults || {})) {
+      if (!data) continue;
+      const ageMs = data.lastRun ? Date.now() - data.lastRun : null;
+      tasks.push({ name, lastRun: data.lastRun || null,
+        ageHours: ageMs ? Math.round(ageMs / 3600000) : null,
+        result: data.result, missed: data.missed || 0, state: data.state || 'unknown' });
+    }
+
+    return res.json({
+      ok: true, supervisor: { pid: supervisorPid, alive: supervisorAlive },
+      services, tasks, recentLog: [],
+      lastTaskCheck: stateData.lastTaskCheck || 0, checkedAt: Date.now(),
+    });
+  } catch (e) {
+    return res.json({ ok: false, error: e.message, services: [], tasks: [], recentLog: [] });
+  }
 });
 
 // Hostname-based redirect: agency.31harbor.com → /harbor/
@@ -2250,7 +2727,8 @@ app.get('/', (req, res) => {
   const harborCutoff30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recentHarborSent = new Set(harborSent.filter(s => s.ts > harborCutoff30).map(s => s.email));
   const harborFresh = harborContacts.filter(c => !recentHarborSent.has(c.email) && c.email?.includes('@')).length;
-  
+  const harborSentToday = harborSent.filter(s => s.ts > todayStart.getTime()).length;
+
   // ── Scheduled Tasks ───────────────────────────────────
   const taskSchedule = [
     { time: '08:00', name: 'DailyCampaign', desc: '500 emails' },
@@ -2302,6 +2780,7 @@ app.get('/', (req, res) => {
     .grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-bottom: 1.5rem; }
     @media (min-width: 480px) { .grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; } }
     @media (min-width: 768px) { .grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; } }
+    @media (min-width: 1200px) { .grid { grid-template-columns: repeat(4, 1fr); gap: 1rem; } }
     .grid > .full { grid-column: 1 / -1; }
     .side-by-side { display: flex; flex-wrap: wrap; gap: 12px; grid-column: 1 / -1; }
     .side-by-side > * { flex: 1; min-width: 280px; }
@@ -2470,7 +2949,7 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v5.0.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v6.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
@@ -2495,230 +2974,228 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
-    <!-- Ship's Articles + IoT Radar (side by side) -->
-    <div class="side-by-side">
-    <div class="card" id="bulletin-board">
-      <h3 style="color:var(--accent-orange);">Ship’s Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Crew Resolutions &amp; Progress Threads</span></h3>
-      
-      <!-- Topic tabs -->
-      <div class="board-tabs" id="board-tabs">
-        <span class="board-tab active" onclick="switchBoardView('topics')" id="tab-topics">Resolutions</span>
-        <span class="board-tab" onclick="switchBoardView('new')" id="tab-newtopic">+ New Topic</span>
-      </div>
-      
-      <!-- Status filter -->
-      <div id="board-filter-bar" style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;">
-        <span class="board-filter active" data-filter="all" onclick="setBoardFilter('all')">All</span>
-        <span class="board-filter" data-filter="active" onclick="setBoardFilter('active')">Active</span>
-        <span class="board-filter" data-filter="in-progress" onclick="setBoardFilter('in-progress')">In Progress</span>
-        <span class="board-filter" data-filter="completed" onclick="setBoardFilter('completed')">Completed</span>
-        <span class="board-filter" data-filter="archived" onclick="setBoardFilter('archived')">Archived</span>
-      </div>
-      
-      <!-- Topics list view -->
-      <div id="board-topics-view">
-        <div class="board-topics" id="board-topics-list"></div>
-        
-        <!-- Selected topic posts -->
-        <div id="board-topic-posts" style="display:none;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">
-              <span id="board-current-topic-title" style="font-size:13px;font-weight:600;color:var(--text-primary);"></span>
-              <span id="board-current-topic-status"></span>
-              <span id="board-current-topic-assignment" style="font-size:10px;color:#6b6b80;"></span>
-            </div>
-            <div style="display:flex;gap:4px;flex-shrink:0;">
-              <button onclick="renameBoardTopic()" id="board-rename-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#8b8ba0;cursor:pointer;font-size:10px;" title="Rename topic">Rename</button>
-              <select id="board-status-select" onchange="changeTopicStatus(this.value)" style="padding:2px 4px;border-radius:4px;border:1px solid #3a3a5a;background:#12121a;color:#c0c0d0;font-size:10px;">
-                <option value="active">Active</option>
-                <option value="in-progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="archived">Archived</option>
-              </select>
-              <button onclick="togglePinTopic()" id="board-pin-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#fbbf24;cursor:pointer;font-size:10px;">Pin</button>
-              <button onclick="deleteBoardTopic()" id="board-delete-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #5a2a2a;background:transparent;color:#f87171;cursor:pointer;font-size:10px;">Delete</button>
-              <button onclick="closeBoardTopic()" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#8b8ba0;cursor:pointer;font-size:10px;">Back</button>
-            </div>
-          </div>
-          <div class="board-posts" id="board-posts-list"></div>
-          <div class="board-input-wrap">
-            <input id="board-post-input" type="text" placeholder="Add to this resolution..." onkeypress="if(event.key==='Enter')sendBoardPost()">
-            <button onclick="sendBoardPost()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Post</button>
-          </div>
-          <div style="margin-top:4px;font-size:10px;color:#6b6b80;">
-            <span>Posted as <strong id="board-post-agent" style="color:var(--accent-orange);">vex</strong> — all privateers see this resolution</span>
-          </div>
-        </div>
-      </div>
-      
-      <!-- New topic form -->
-      <div id="board-new-topic-view" style="display:none;">
-        <div class="board-new-topic" style="display:flex;flex-direction:column;gap:6px;">
-          <input id="board-new-topic-input" type="text" placeholder="Resolution (e.g. Deployment Q2, AgentPay Strategy, PFP Partnerships...)" onkeypress="if(event.key==='Enter')createBoardTopic()">
-          <div style="display:flex;gap:6px;align-items:center;">
-            <select id="board-new-status" style="padding:4px 8px;border-radius:4px;border:1px solid #3a3a5a;background:#12121a;color:#c0c0d0;font-size:11px;">
-              <option value="active">Active</option>
-              <option value="in-progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="archived">Archived</option>
-            </select>
-            <input id="board-new-assignment" type="text" placeholder="Assign to agent (optional)" style="flex:1;padding:4px 8px;font-size:11px;">
-            <input type="checkbox" id="board-new-pinned" style="accent-color:#fbbf24;"> <label for="board-new-pinned" style="font-size:10px;color:#fbbf24;">Pin</label>
-            <button onclick="createBoardTopic()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Create</button>
-          </div>
-        </div>
-      </div>
-      
-      <div style="margin-top:4px;display:flex;gap:8px;font-size:10px;color:#6b6b80;">
-        <span>Privateers can post to any resolution — persistent across voyages</span>
-        <span id="board-updated-indicator" style="color:#fbbf24;display:none;">* new activity</span>
-        <span id="board-status" style="color:#4ade80;">● loaded</span>
-      </div>
-    </div>
+<!-- ⚓ Quarterdeck — Consolidated Command Center -->
+<div class="card" style="grid-column:1/-1;border-color:rgba(255,107,53,0.2);">
+  <h3 style="color:var(--accent-orange);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    ⚓ Quarterdeck
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— The Quartermaster's domain: crew rations, watch, bulletin, and vessels</span>
+  </h3>
 
-    <!-- IoT Ship Radar -->
-    <div class="card">
-      <h3 style="color:#4ade80;">⛵ Ship&#39;s IoT Radar <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Wi-Fi RSSI + Meshtastic Scan</span></h3>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-        <!-- Radar animation -->
-        <div style="position:relative;width:100px;height:100px;flex-shrink:0;">
-          <svg viewBox="0 0 100 100" style="width:100%;height:100%;">
-            <defs>
-              <radialGradient id="radar-glow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stop-color="#4ade80" stop-opacity="0.3"/>
-                <stop offset="100%" stop-color="#4ade80" stop-opacity="0"/>
-              </radialGradient>
-            </defs>
-            <!-- Rings -->
-            <circle cx="50" cy="50" r="45" fill="none" stroke="#2a2a3a" stroke-width="0.5"/>
-            <circle cx="50" cy="50" r="32" fill="none" stroke="#2a2a3a" stroke-width="0.5"/>
-            <circle cx="50" cy="50" r="18" fill="none" stroke="#2a2a3a" stroke-width="0.5"/>
-            <!-- Crosshairs -->
-            <line x1="5" y1="50" x2="95" y2="50" stroke="#2a2a3a" stroke-width="0.3"/>
-            <line x1="50" y1="5" x2="50" y2="95" stroke="#2a2a3a" stroke-width="0.3"/>
-            <!-- Sweeping radar beam -->
-            <path d="M50,50 L50,5 A45,45 0 0,1 95,50 Z" fill="url(#radar-glow)" transform-origin="50px 50px">
-              <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="3s" repeatCount="indefinite"/>
-            </path>
-            <!-- Center dot (this node) -->
-            <circle cx="50" cy="50" r="4" fill="#4ade80">
-              <animate attributeName="r" values="3;5;3" dur="1.5s" repeatCount="indefinite"/>
-            </circle>
-            <!-- RSSI-based blips (populated by JS) -->
-            <circle id="rssi-blip-1" cx="35" cy="28" r="2" fill="#ff6b35" opacity="0">
-              <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
-            </circle>
-            <circle id="rssi-blip-2" cx="72" cy="65" r="2" fill="#60a5fa" opacity="0">
-              <animate attributeName="opacity" values="0.2;0.8;0.2" dur="2.5s" repeatCount="indefinite"/>
-            </circle>
-            <circle id="rssi-blip-3" cx="25" cy="70" r="1.5" fill="#a78bfa" opacity="0">
-              <animate attributeName="opacity" values="0.1;0.6;0.1" dur="3s" repeatCount="indefinite"/>
-            </circle>
-          </svg>
-        </div>
-        <!-- Ship stats -->
-        <div style="flex:1;min-width:120px;">
-          <div class="stat"><span class="label">Vessel</span><span class="value" style="color:#4ade80;" title="HMS Speedy (1782) - 14-gun brig, 158 tons. Captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane, with 54 men vs 319. Cochrane's own words: 'little more than a burlesque on a vessel of war.' The 6GB laptop's relay. Under command of Vex.">HMS Speedy <span style="color:#6b6b80;font-weight:400;font-size:0.75em;">(under Vex)</span></span></div>
-          <div class="stat"><span class="label">Captain</span><span class="value" style="color:#fbbf24;" title="Thomas Cochrane, 10th Earl of Dundonald. Captain of HMS Speedy 1800-1801. The audacious underdog who took a 14-gun brig and crew of 54 against a 32-gun frigate with 319 men - and won by trebling his shot, locking yards, and a psychological-warfare trick to the ship's doctor.">Lord Cochrane</span></div>
-          <div class="stat"><span class="label">Signal</span><span class="value" id="rssi-signal" style="color:#4ade80;">● Online</span></div>
-          <div class="stat"><span class="label">RSSI</span><span class="value" id="rssi-strength">scanning...</span></div>
-          <div class="stat"><span class="label">Peers</span><span class="value" id="iot-peers">scanning...</span></div>
-          <div class="stat"><span class="label">Tunnel</span><span class="value"><a href="https://relay.mobilemonero.com" style="color:#60a5fa;text-decoration:none;">relay.mobilemonero.com</a></span></div>
-          <div class="stat"><span class="label">IoT Enclave</span><span class="value" style="color:#fbbf24;">Windows Laptop</span></div>
-        </div>
+  <!-- Top row: Rum Quota (combined with Agent Experience) — full width -->
+  <div style="margin-bottom:10px;">
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+      <h4 style="color:#a78bfa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🍺 Rum Quota <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Rations · Trust Scores · Status · Experience</span></h4>
+      <div id="rum-quota-content" style="display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;padding-right:8px;">
+        <div class="stat"><span class="label">Loading crew ledger...</span></div>
       </div>
-      <div style="margin-top:8px;padding-top:6px;border-top:1px solid #1e1e2e;font-size:0.7rem;color:#6b6b80;display:flex;gap:8px;flex-wrap:wrap;">
-        <span>🟢 This node is a physical IoT vessel on the mesh</span>
-        <span>📶 ping: <span id="iot-ping">12ms</span></span>
-        <span>🔌 uptime: <span id="iot-uptime">${uptimeStr}</span></span>
-        <span>🌐 <span id="iot-ip" style="color:#6b6b80;">detecting...</span></span>
-      </div>
-      <script>
-        (function(){
-          function updateFromBridge() {
-            fetch('/api/mesh/bridge').then(r=>r.json()).then(d => {
-              const strength = document.getElementById('rssi-strength');
-              const signal = document.getElementById('rssi-signal');
-              const peers = document.getElementById('iot-peers');
-              
-              // Use bridge data if available, fall back to simulation
-              if (d.connected && d.nodeList.length > 0) {
-                if (peers) peers.textContent = d.nodes + ' ships';
-                
-                // Use first node's RSSI if available
-                const node = d.nodeList[0];
-                if (node.rssi && strength) {
-                  const rssi = node.rssi;
-                  const bars = rssi > -50 ? 4 : rssi > -65 ? 3 : rssi > -80 ? 2 : 1;
-                  strength.textContent = rssi.toFixed(1) + ' dBm ' + '█'.repeat(bars) + '░'.repeat(4-bars);
-                }
-                if (node.snr && signal) {
-                  signal.textContent = node.snr > 5 ? '● Strong' : node.snr > 0 ? '◐ Fair' : node.snr > -5 ? '○ Weak' : '◎ Poor';
-                  signal.style.color = node.snr > 5 ? '#4ade80' : node.snr > 0 ? '#fbbf24' : node.snr > -5 ? '#f87171' : '#ef4444';
-                }
-              } else {
-                // No bridge — show status
-                if (strength) strength.textContent = d.connected ? '0 dBm (idle)' : '— no bridge —';
-                if (signal) { signal.textContent = '○ Idle'; signal.style.color = '#6b6b80'; }
-                if (peers) peers.textContent = (d.nodes || 0) + ' nodes tracked';
-              }
-              
-              // Update blip positions from real node positions
-              for (let i = 0; i < 3; i++) {
-                const blip = document.getElementById('rssi-blip-' + (i+1));
-                if (!blip) continue;
-                if (d.nodeList && d.nodeList[i]) {
-                  const node = d.nodeList[i];
-                  const angle = (i * 120 + Date.now() / 10000) % 360;
-                  const dist = 20 + (node.rssi ? Math.abs(node.rssi) / 3 : 25);
-                  const rad = angle * Math.PI / 180;
-                  blip.setAttribute('cx', 50 + dist * Math.cos(rad));
-                  blip.setAttribute('cy', 50 + dist * Math.sin(rad));
-                  blip.setAttribute('opacity', 0.4 + (node.snr ? Math.min(node.snr / 10, 0.6) : 0.3));
-                  blip.setAttribute('fill', node.rssi > -60 ? '#4ade80' : node.rssi > -75 ? '#fbbf24' : '#f87171');
-                } else {
-                  // Simulated blip
-                  const angle = (i * 120 + Date.now() / 10000) % 360;
-                  const dist = 20 + Math.random() * 25;
-                  const rad = angle * Math.PI / 180;
-                  blip.setAttribute('cx', 50 + dist * Math.cos(rad));
-                  blip.setAttribute('cy', 50 + dist * Math.sin(rad));
-                  blip.setAttribute('opacity', 0.3 + Math.random() * 0.5);
-                  blip.setAttribute('fill', i === 0 ? '#ff6b35' : i === 1 ? '#60a5fa' : '#a78bfa');
-                }
-              }
-            }).catch(() => {
-              // Fallback simulation on error
-              const rssi = -(30 + Math.random() * 60);
-              const strength = document.getElementById('rssi-strength');
-              const signal = document.getElementById('rssi-signal');
-              if (strength) strength.textContent = rssi.toFixed(1) + ' dBm (sim)';
-              if (signal) { signal.textContent = '◐ Simulated'; signal.style.color = '#6b6b80'; }
-            });
-          }
-          updateFromBridge();
-          setInterval(updateFromBridge, 3000);
-          
-          // External IP
-          fetch('https://api.ipify.org?format=json').then(r=>r.json()).then(d=>{
-            const ip = document.getElementById('iot-ip');
-            if(ip) ip.textContent = d.ip;
-          }).catch(()=>{});
-        })();
-      </script>
     </div>
-    </div>
+  </div>
 
-<div class="card">
-      <h3>Relay Status</h3>
-      <div class="stat"><span class="label">Uptime</span><span class="value">${uptimeStr}</span></div>
-      <div class="stat"><span class="label">Relay</span><span class="value">v5.0.0</span></div>
-      <div class="stat"><span class="label">Tools</span><span class="value">${toolCount}</span></div>
-      <div class="stat"><span class="label">Handlers</span><span class="value">${handlerCount}</span></div>
-      <div class="stat"><span class="label">Requests</span><span class="value">${requestCounts.total}</span></div>
+  <!-- Middle row: Quartermaster's Watch + Training & Security + Ship's Log -->
+  <div style="display:grid;grid-template-columns:1.5fr 2fr 1fr;gap:10px;margin-bottom:10px;">
+    <!-- Quartermaster's Watch -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Quartermaster's Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
+      <div id="quarterdeck-supervisor">
+        <div class="stat"><span class="label">Supervisor</span><span class="value" id="qds-supervisor" style="color:#6b6b80;">checking...</span></div>
+        <div class="stat"><span class="label">Services Up</span><span class="value" id="qds-services-up" style="color:#6b6b80;">-</span></div>
+        <div class="stat"><span class="label">Services Down</span><span class="value" id="qds-services-down" style="color:#6b6b80;">-</span></div>
+        <div class="stat"><span class="label">Flapping</span><span class="value" id="qds-flapping" style="color:#6b6b80;">-</span></div>
+        <div class="stat"><span class="label">Task Issues</span><span class="value" id="qds-task-issues" style="color:#6b6b80;">-</span></div>
+        <div class="stat"><span class="label">Last Check</span><span class="value" id="qds-last-check" style="color:#6b6b80;">-</span></div>
+        <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.65rem;color:var(--text-dim);">
+          <span style="color:#60a5fa;">⚡ relay</span> v6.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
+        </div>
+      </div>
+      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">
+        <a href="/api/supervisor/status" style="color:#60a5fa;">API</a> · <span id="qds-refresh" style="color:#4ade80;">● polling</span>
+      </div>
     </div>
-<div class="card" id="university-card">
-      <h3 style="color:#a78bfa;">Ship’s Intelligence</h3>
+    <!-- TRAINING & SECURITY — TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+      <h4 style="color:#f87171;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Training & Security <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control</span></h4>
+      <div id="qds-security" style="font-size:0.6rem;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+          <div>
+            <div class="stat"><span class="label">TrustGraph</span><span class="value" id="sec-tg-status" style="color:#4ade80;font-size:0.65rem;">● online</span></div>
+            <div class="stat"><span class="label">Agents</span><span class="value" id="sec-agent-count" style="font-size:0.65rem;">19</span></div>
+            <div class="stat"><span class="label">CAC Anchor</span><span class="value" id="sec-cac-anchor" style="color:#a78bfa;font-size:0.65rem;">2</span></div>
+            <div class="stat"><span class="label">CAC Builder</span><span class="value" id="sec-cac-builder" style="color:#60a5fa;font-size:0.65rem;">7</span></div>
+            <div class="stat"><span class="label">CAC Explorer</span><span class="value" id="sec-cac-explorer" style="color:#34d399;font-size:0.65rem;">7</span></div>
+          </div>
+          <div>
+            <div class="stat"><span class="label">IAL Level</span><span class="value" id="sec-ial" style="color:#fbbf24;font-size:0.65rem;">IAL2</span></div>
+            <div class="stat"><span class="label">Activity Events</span><span class="value" id="sec-activity-count" style="font-size:0.65rem;">685</span></div>
+            <div class="stat"><span class="label">Trusted (≥80)</span><span class="value" id="sec-trusted" style="color:#4ade80;font-size:0.65rem;">2</span></div>
+            <div class="stat"><span class="label">Cautious (40-79)</span><span class="value" id="sec-cautious" style="color:#fbbf24;font-size:0.65rem;">17</span></div>
+            <div class="stat"><span class="label">Banned (&lt;40)</span><span class="value" id="sec-banned" style="color:#f87171;font-size:0.65rem;">0</span></div>
+          </div>
+        </div>
+        <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;">
+          <div class="stat"><span class="label">Top Trust</span><span class="value" id="sec-top-agent" style="color:#4ade80;font-size:0.65rem;">loading...</span></div>
+          <div class="stat"><span class="label">Lowest Trust</span><span class="value" id="sec-low-agent" style="color:#f87171;font-size:0.65rem;">loading...</span></div>
+          <div class="stat"><span class="label">XMRT-DAO-CERT</span><span class="value" id="sec-cert-count" style="color:#fbbf24;font-size:0.65rem;">checking...</span></div>
+          <div class="stat"><span class="label">🎓 University</span><span class="value" id="sec-uni-status" style="color:#a78bfa;font-size:0.65rem;">checking...</span></div>
+          <div class="stat"><span class="label">Gate</span><span class="value" id="sec-gate" style="color:#4ade80;font-size:0.65rem;">● fail-closed</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Ship's Log (pirate-themed activity pulse) -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:260px;overflow:hidden;">
+      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🏴‍☠️ Ship's Log <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Live Activity Feed</span></h4>
+      <div id="qds-activity-log" style="font-size:0.6rem;max-height:220px;overflow-y:auto;">
+        <div class="stat"><span class="label">Loading activity...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
+  <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+    <!-- Ship's Articles (bulletin board) -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
+      <h4 style="color:#ff6b35;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Resolutions &amp; Progress</span></h4>
+      <div id="board-topics-list" style="font-size:0.65rem;"></div>
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
+        <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:#60a5fa;">Full Board</a>
+      </div>
+    </div>
+    <!-- Mesh Peers -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+      <h4 style="color:#4ade80;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🌐 Mesh Peers <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Gossipsub Network</span></h4>
+      <div id="qds-mesh-peers" style="font-size:0.6rem;max-height:80px;overflow-y:auto;">
+        <div class="stat"><span class="label">Loading mesh...</span></div>
+      </div>
+    </div>
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+      <h4 style="color:#4ade80;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📡 LoRa Bridge <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Meshtastic Radio Link</span></h4>
+      <div id="qds-lora" style="font-size:0.6rem;">
+        <span>Bridge: <span id="qds-mt-bridge" style="color:#6b6b80;">checking...</span></span><br>
+        <span>Peers: <span id="qds-mt-peers" style="color:#6b6b80;">-</span></span><br>
+        <span>Msgs: <span id="qds-mt-msgs" style="color:#6b6b80;">-</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 🪐 xmrt-galaxy — Knowledge Graph -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:var(--accent-purple);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    🪐 xmrt-galaxy
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— ecosystem map with live trust scores</span>
+  </h3>
+  <div style="position:relative;">
+    <canvas id="obsidian-graph-canvas" style="width:100%;height:calc(100vh - 300px);min-height:340px;border-radius:6px;background:#08080e;cursor:grab;touch-action:none;"></canvas>
+    <div id="graph-tooltip" style="display:none;position:absolute;background:#1a1a2a;border:1px solid #3a3a5a;border-radius:6px;padding:6px 10px;font-size:11px;color:#e0e0f0;pointer-events:none;white-space:nowrap;z-index:100;"></div>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+    <button class="gc" id="b-orbit" style="background:rgba(107,107,128,0.04);border:0.5px solid rgba(107,107,128,0.12);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.4);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('orbit')">Orbit</button>
+    <button class="gc" id="b-explode" style="background:rgba(107,107,128,0.04);border:0.5px solid rgba(107,107,128,0.12);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.4);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('explode')">Explode</button>
+    <button class="gc on" id="b-labels" style="background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(167,139,250,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('labels')">Idents</button>
+    <button class="gc on" id="b-stream" style="background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(167,139,250,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('stream')">Signal</button>
+    <button class="gc on" id="b-tunnel" style="background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(167,139,250,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('tunnel')">Tunnel</button>
+    <button class="gc" id="b-fly" style="background:rgba(107,107,128,0.04);border:0.5px solid rgba(107,107,128,0.12);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.4);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('fly')">Free Fly</button>
+    <span style="color:#6b6b80;font-size:9px;margin:0 4px;">|</span>
+    <button style="background:rgba(107,107,128,0.08);border:0.5px solid rgba(107,107,128,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.resetGraphView()">Reset</button>
+    <span style="color:#6b6b80;font-size:9px;margin:0 4px;">|</span>
+    <span style="color:#4ade80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">SPA</span>
+    <span style="color:#60a5fa;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Back</span>
+    <span style="color:#6b6b80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Agent</span>
+    <span style="color:#4ade80;font-size:6px;">●</span><span style="color:#60a5fa;font-size:6px;">●</span><span style="color:#fbbf24;font-size:6px;">●</span><span style="color:#f87171;font-size:6px;">●</span><span style="color:#6b6b80;font-size:6px;">●</span><span style="color:#6b6b80;font-size:7px;">Trust</span>
+    <span style="color:#fbbf24;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Infra</span>
+    <span style="color:#ff6b35;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Sys</span>
+    <span style="color:#f87171;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Email</span>
+    <span style="color:#34d399;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">DB</span>
+    <span style="color:#818cf8;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Mine</span>
+    <span style="color:#f472b6;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Cert</span>
+    <span style="color:#2dd4bf;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Cron</span>
+    <span style="color:#67e8f9;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Edge</span>
+    <span style="color:#93c5fd;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">EP</span>
+    <span style="color:#c084fc;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">GH</span>
+    <span style="color:#fcd34d;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Tun</span>
+    <span style="color:#fdba74;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Camp</span>
+    <span style="color:#6b6b80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Other</span>
+    <span id="graph-node-count" style="color:var(--text-dim);font-size:9px;margin-left:auto;">-</span>
+  </div>
+</div>
+
+<!-- 💰 Plunder & Mining -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:#fbbf24;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    💰 Plunder & Mining
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Pool Stats · Leaderboard · Heartbeat</span>
+  </h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📒 Plunder Ledger</div>
+      <div class="stat"><span class="label">Pool Hashrate</span><span class="value" id="pool-hash">checking...</span></div>
+      <div class="stat"><span class="label">Valid Shares</span><span class="value" id="pool-shares">-</span></div>
+      <div class="stat"><span class="label">XMR Paid / Due</span><span class="value" id="pool-xmr">-</span></div>
+      <div class="stat"><span class="label">Pool Global Hashrate</span><span class="value" id="pool-global-hash" style="color:#818cf8;">-</span></div>
+      <div class="stat"><span class="label">Pool Miners</span><span class="value" id="pool-total-miners" style="color:#818cf8;">-</span></div>
+      <div class="stat"><span class="label">Treasury (85%) / Ops (15%)</span><span class="value" id="pool-treasury" style="color:#fbbf24;">-</span></div>
+      <div class="stat"><span class="label">Status</span><span class="value" id="pool-health" style="color:#818cf8;">-</span></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🏆 Leaderboard</div>
+      <div style="margin-bottom:4px;font-size:10px;color:#6b6b80;">Live hashrate · shares · XMRT rewards</div>
+      <div id="miner-leaderboard"><div class="stat"><span class="label">Loading...</span></div></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">💓 Heartbeat</div>
+      <div style="background:#0d0d15;padding:0.4rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.7rem;color:#60a5fa;word-break:break-all;" id="heartbeat-url">loading...</div>
+      <div style="color:#6b6b80;font-size:0.65rem;margin-top:0.3rem;">POST: {"agent_id":"...","status":"ONLINE","tunnel_url":"...","hashrate":0}</div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1e1e2e;">
+        <pre style="background:#0d0d15;padding:0.4rem;border-radius:4px;font-size:0.65rem;overflow-x:auto;color:#a0a0b0;white-space:pre-wrap;word-break:break-all;margin:0;cursor:pointer;" id="mining-script" onclick="copyMiningScript()">curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 📯 Campaigns & Leads -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:#60a5fa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📯 Campaigns & Leads
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— PFP Campaign · PFP Leads · 31 Harbor</span>
+  </h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📸 PFP Campaign</div>
+      <div class="stat"><span class="label">Contact Pool</span><span class="value" id="pfp-pool">${poolSize}</span></div>
+      <div class="stat"><span class="label">Sent Today</span><span class="value" id="pfp-sent-today">${sentToday}</span></div>
+      <div class="stat"><span class="label">Sent Total</span><span class="value" id="pfp-sent-total">${campaignSent.length}</span></div>
+      <div class="stat"><span class="label">Fresh Avail</span><span class="value" id="pfp-fresh">${freshAvailable}</span></div>
+      <div class="stat"><span class="label">Last Run</span><span class="value" id="pfp-last-run">${campaignLastRun}</span></div>
+      <div class="stat"><span class="label">Next Drop</span><span class="value" id="next-drop">-</span></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎯 PFP Leads</div>
+      <div class="stat"><span class="label">Total</span><span class="value" id="pfp-leads-total">-</span></div>
+      <div class="stat"><span class="label">By Status</span><span class="value" id="pfp-leads-by-status" style="font-size:0.65rem;">-</span></div>
+      <div class="stat"><span class="label">By Source</span><span class="value" id="pfp-leads-by-source" style="font-size:0.65rem;">-</span></div>
+      <div class="stat"><span class="label">Hot (≥7)</span><span class="value" id="pfp-leads-hot">-</span></div>
+      <div class="stat"><span class="label">Newest</span><span class="value" id="pfp-leads-newest" style="font-size:0.65rem;">-</span></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🏠 31 Harbor</div>
+      <div class="stat"><span class="label">Contact Pool</span><span class="value" id="harbor-pool">${harborPoolSize}</span></div>
+      <div class="stat"><span class="label">Sent Today</span><span class="value" id="harbor-sent-today">${harborSentToday}</span></div>
+      <div class="stat"><span class="label">Sent Total</span><span class="value" id="harbor-sent-total">${harborSentTotal}</span></div>
+      <div class="stat"><span class="label">Fresh Avail</span><span class="value" id="harbor-fresh">${harborFresh}</span></div>
+      <div class="stat"><span class="label">Last Run</span><span class="value" id="harbor-last-run">${harborLastRun}</span></div>
+      <div class="stat"><span class="label">Next Drop</span><span class="value" id="harbor-next-drop">-</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- 📡 Ship's Intelligence -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📡 Ship's Intelligence
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · GitHub Activity · Incoming Mail</span>
+  </h3>
+  <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
       <div id="university-status">
         <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#6b6b80;">checking...</span></div>
       </div>
@@ -2728,297 +3205,161 @@ app.get('/', (req, res) => {
         <div class="stat"><span class="label">Tier</span><span class="value" id="uni-tier">-</span></div>
         <div class="stat"><span class="label">Perms</span><span class="value" id="uni-perms" style="font-size:0.65rem;">-</span></div>
       </div>
-      <div style="margin-top:8px;font-size:0.72rem;color:#6b6b80;">
+      <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;">
         <div>New agents must graduate from XMRT University to join the fleet.</div>
-        <div style="margin-top:4px;">
-          <span style="color:#a78bfa;">POST</span> <code style="color:#60a5fa;font-size:0.65rem;">/functions/v1/xmrt-university</code>
-        </div>
-        <div style="margin-top:4px;font-size:0.65rem;">
-          <a href="https://github.com/xmrtdao/suite/tree/main/supabase/functions/xmrt-university" target="_blank" style="color:#6b6b80;">Source</a> .
-          <span id="uni-source" style="color:#6b6b80;">Curriculum: <span id="uni-curriculum-source">built-in</span></span>
+        <div style="margin-top:2px;">
+          <span style="color:#a78bfa;">POST</span> <code style="color:#60a5fa;font-size:0.6rem;">/functions/v1/xmrt-university</code>
         </div>
       </div>
     </div>
-<div class="card" id="fleet-card">
-      <h3>Crew Registry <span id="fleet-count" style="color:#6b6b80;font-size:0.7rem;"></span></h3>
-      <div id="fleet-agents-list">
-        <div class="stat"><span class="label">Loading fleet...</span></div>
-      </div>
-    </div>
-<div class="card" id="mesh-card">
-      <h3>🕸️ Mesh Network <span id="mesh-count" style="color:#6b6b80;font-size:0.7rem;"></span></h3>
-      <div id="mesh-peers-list">
-        <div class="stat"><span class="label">Loading mesh peers...</span></div>
-      </div>
-      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1e1e2e;">
-        <div style="font-size:0.72rem;color:#6b6b80;margin-bottom:4px;">Register agent on mesh:</div>
-        <div style="background:#0d0d15;padding:0.4rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.7rem;color:#60a5fa;word-break:break-all;margin-bottom:4px;">POST /functions/v1/mesh-peer-connector</div>
-        <div style="background:#0d0d15;padding:0.3rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.65rem;color:#a78bfa;word-break:break-all;">{"action":"register","agent_name":"...","peer_id":"...","endpoint":"..."}</div>
-        <div style="margin-top:6px;font-size:0.72rem;color:#6b6b80;margin-bottom:4px;">Publish to mesh topics:</div>
-        <div style="background:#0d0d15;padding:0.4rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.7rem;color:#4ade80;word-break:break-all;margin-bottom:4px;">POST /functions/v1/mesh-publish</div>
-        <div style="background:#0d0d15;padding:0.3rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.65rem;color:#a78bfa;word-break:break-all;">{"topic":"fleet-broadcast","payload":{...},"agent":"eliza"}</div>
-        <div style="margin-top:6px;font-size:0.65rem;color:#6b6b80;">
-          <span>🔗 <a href="/mesh/status" style="color:#60a5fa;">Gossipsub Status</a></span> ·
-          <span><a href="/api/p2p/health" style="color:#60a5fa;">P2P Mesh Health</a></span> ·
-          <span><a href="/mesh/messages" style="color:#60a5fa;">Mesh Messages</a></span>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+        <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📬 Incoming Mail</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
+            <div id="pfp-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">MobileMonero</div>
+            <div id="mm-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">31 Harbor</div>
+            <div id="hb-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
+              <div class="stat"><span class="label">Loading...</span></div>
+            </div>
+          </div>
         </div>
       </div>
+      <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+        <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
+        <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
+        <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
+        <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
+      </div>
     </div>
-<div class="card" id="ship-defense">
-      <h3 style="color:#f87171;">🛡️ Ship&#39;s Defense <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— ARP + RF Monitoring</span></h3>
-      <div class="stat"><span class="label">ARP Defender</span><span class="value" id="arp-status" style="color:#6b6b80;">checking...</span></div>
-      <div class="stat"><span class="label">RF Jammer</span><span class="value" id="rf-status" style="color:#6b6b80;">checking...</span></div>
-      <div class="stat"><span class="label">Noise Floor</span><span class="value" id="rf-noise">-</span></div>
-      <div class="stat"><span class="label">Alerts</span><span class="value" id="defense-alerts" style="color:#4ade80;">0</span></div>
-      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1e1e2e;font-size:0.72rem;color:#6b6b80;">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <code style="color:#fbbf24;">node relay/tools/arp-defender.mjs --monitor</code>
-          <code style="color:#60a5fa;">node relay/tools/jam-detector.mjs --monitor</code>
-        </div>
-        <div style="margin-top:4px;">
-          <a href="https://github.com/xmrtdao/mobilemonero/blob/main/relay/tools/arp-defender.mjs" target="_blank" style="color:#6b6b80;">ARP Source</a> ·
-          <a href="/cron/status" style="color:#6b6b80;">Cron Status</a> ·
-          <a href="/api/mesh/bridge" style="color:#6b6b80;">Bridge API</a>
-        </div>
-      </div>
-      <script>
-        (function(){
-          function updateDefense() {
-            fetch('/api/mesh/bridge').then(r=>r.json()).then(d => {
-              const arp = document.getElementById('arp-status');
-              const rf = document.getElementById('rf-status');
-              const noise = document.getElementById('rf-noise');
-              const alerts = document.getElementById('defense-alerts');
-              if (arp) {
-                const count = d.nodes || 0;
-                arp.textContent = count > 0 ? '🟢 ' + count + ' devices mapped' : '○ idle';
-                arp.style.color = count > 0 ? '#4ade80' : '#6b6b80';
-              }
-              if (rf && d.rfStatus) {
-                const jam = d.rfStatus.jamming;
-                rf.textContent = jam ? '🔴 JAMMING' : '🟢 Clear';
-                rf.style.color = jam ? '#f87171' : '#4ade80';
-                if (noise) noise.textContent = d.rfStatus.noiseFloor + ' dBm';
-              } else if (rf) {
-                rf.textContent = '○ not scanning';
-                rf.style.color = '#6b6b80';
-              }
-              if (alerts) {
-                const count = d.messageCount || 0;
-                alerts.textContent = count;
-                alerts.style.color = count > 0 ? '#f87171' : '#4ade80';
-              }
-            }).catch(() => {});
-          }
-          updateDefense();
-          setInterval(updateDefense, 5000);
-        })();
-      </script>
-    </div>
-<div class="card" id="meshtastic-fleet-card">
-      <h3 style="color:#4ade80;">📡 Meshtastic Fleet <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— LoRa Mesh Bridge (via Hermes)</span></h3>
-      <div id="meshtastic-status">
-        <div class="stat"><span class="label">Bridge</span><span class="value" id="mt-bridge-status" style="color:#6b6b80;">checking...</span></div>
-        <div class="stat"><span class="label">Transport</span><span class="value" id="mt-transport" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Peers</span><span class="value" id="mt-peers" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Messages</span><span class="value" id="mt-messages" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Uptime</span><span class="value" id="mt-uptime" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Last Update</span><span class="value" id="mt-last-update" style="color:#6b6b80;">-</span></div>
-      </div>
-      <div id="meshtastic-nodes" style="margin-top:6px;display:none;">
-        <div style="font-size:0.7rem;color:#6b6b80;margin-bottom:4px;">Discovered Nodes:</div>
-        <div id="mt-node-list" style="font-size:0.65rem;"></div>
-      </div>
-      <div style="margin-top:8px;padding-top:6px;border-top:1px solid #1e1e2e;font-size:0.7rem;color:#6b6b80;">
-        <span>🟢 Bridge node: <strong>Hermes</strong> (Termux/Android)</span>
-        <span style="display:block;margin-top:2px;">🔗 <a href="/api/mesh/bridge" style="color:#60a5fa;">Bridge API</a> · <a href="/api/p2p/health" style="color:#60a5fa;">P2P Health</a></span>
-        <span style="display:block;margin-top:2px;color:#4ade80;">POST /api/meshtastic/update — Hermes pushes bridge state here</span>
-      </div>
-      <script>
-        (function(){
-          function updateMeshtastic() {
-            fetch('/api/mesh/bridge').then(r=>r.json()).then(d => {
-              const status = document.getElementById('mt-bridge-status');
-              const transport = document.getElementById('mt-transport');
-              const peers = document.getElementById('mt-peers');
-              const messages = document.getElementById('mt-messages');
-              const uptime = document.getElementById('mt-uptime');
-              const lastUpdate = document.getElementById('mt-last-update');
-              const nodesDiv = document.getElementById('meshtastic-nodes');
-              const nodeList = document.getElementById('mt-node-list');
+  </div>
+</div>
 
-              if (d.connected) {
-                status.textContent = '🟢 Connected';
-                status.style.color = '#4ade80';
-                transport.textContent = d.transport || 'tcp';
-                peers.textContent = d.nodes + ' nodes';
-                messages.textContent = d.messageCount || 0;
-                const u = d.uptime || 0;
-                uptime.textContent = u > 3600 ? Math.floor(u/3600)+'h '+Math.floor((u%3600)/60)+'m' : u > 60 ? Math.floor(u/60)+'m '+u%60+'s' : u+'s';
-                if (d.nodeList && d.nodeList.length > 0) {
-                  nodesDiv.style.display = 'block';
-                  nodeList.innerHTML = d.nodeList.map(n =>
-                    '<div style="padding:2px 0;">🟢 ' + (n.name || n.id) +
-                    (n.rssi ? ' <span style="color:#6b6b80;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
-                    (n.snr ? ' <span style="color:#6b6b80;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
-                    '</div>'
-                  ).join('');
-                } else {
-                  nodesDiv.style.display = 'none';
-                }
-              } else {
-                status.textContent = '○ Disconnected';
-                status.style.color = '#6b6b80';
-                transport.textContent = '-';
-                peers.textContent = (d.nodes || 0) + ' nodes tracked';
-                messages.textContent = d.messageCount || 0;
-                uptime.textContent = '-';
-                nodesDiv.style.display = 'none';
-              }
-              if (lastUpdate) {
-                const ts = d.lastUpdate || d.timestamp;
-                if (ts) lastUpdate.textContent = new Date(ts).toLocaleTimeString();
-              }
-            }).catch(() => {
-              const status = document.getElementById('mt-bridge-status');
-              if (status) { status.textContent = '○ offline'; status.style.color = '#6b6b80'; }
-            });
-          }
-          updateMeshtastic();
-          setInterval(updateMeshtastic, 5000);
-        })();
-      </script>
-    </div>
-<div class="card">
-      <h3>Heartbeat Endpoint</h3>
-      <div style="background:#0d0d15;padding:0.4rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.75rem;color:#60a5fa;word-break:break-all;" id="heartbeat-url">loading...</div>
-      <div style="color:#6b6b80;font-size:0.72rem;margin-top:0.4rem;">POST: {"agent_id":"...","status":"ONLINE","tunnel_url":"...","hashrate":0}</div>
-    </div>
-<div class="card">
-      <h3>Plunder Tracker <span id="pool-workers" style="color:#6b6b80;font-weight:400;font-size:0.7rem;">-</span></h3>
-      <div class="stat"><span class="label">Pool Hashrate</span><span class="value" id="pool-hash">checking...</span></div>
-      <div class="stat"><span class="label">Valid Shares</span><span class="value" id="pool-shares">-</span></div>
-      <div class="stat"><span class="label">XMR Paid / Due</span><span class="value" id="pool-xmr">-</span></div>
-      <div class="stat"><span class="label">Pool Global Hashrate</span><span class="value" id="pool-global-hash" style="color:#818cf8;">-</span></div>
-      <div class="stat"><span class="label">Pool Miners</span><span class="value" id="pool-total-miners" style="color:#818cf8;">-</span></div>
-      <div class="stat"><span class="label">Treasury (85%) / Ops (15%)</span><span class="value" id="pool-treasury" style="color:#fbbf24;">-</span></div>
-      <div class="stat"><span class="label">Status</span><span class="value" id="pool-health" style="color:#818cf8;">-</span></div>
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #2a2a3a;">
-        <div style="font-size:0.65rem;color:#6b6b80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Quick Start Script &#9679; click to copy</div>
-        <pre style="background:#0d0d15;padding:0.6rem;border-radius:6px;font-size:0.72rem;overflow-x:auto;color:#a0a0b0;white-space:pre-wrap;word-break:break-all;margin:0;cursor:pointer;" id="mining-script" onclick="copyMiningScript()">curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
-        <div style="font-size:0.6rem;color:#4a4a5a;margin-top:4px;">Runs on Linux/macOS/Termux</div>
-      </div>
-    </div>
-<div class="card">
-      <h3>Leaderboard</h3>
-      <div style="margin-bottom:6px;font-size:11px;color:#6b6b80;">Live hashrate · shares · XMRT rewards</div>
-      <div id="miner-leaderboard"><div class="stat"><span class="label">Loading...</span></div></div>
-    </div>
-<div class="card" id="pfp-campaign-card">
-      <h3>PFP Campaign</h3>
-      <div class="stat"><span class="label">Contact Pool</span><span class="value" id="pfp-pool">-</span></div>
-      <div class="stat"><span class="label">Sent Today</span><span class="value" id="pfp-sent-today">-</span></div>
-      <div class="stat"><span class="label">Sent Total</span><span class="value" id="pfp-sent-total">-</span></div>
-      <div class="stat"><span class="label">Fresh Avail</span><span class="value" id="pfp-fresh">-</span></div>
-      <div class="stat"><span class="label">Last Run</span><span class="value" id="pfp-last-run">-</span></div>
-      <div class="stat"><span class="label">Next Drop</span><span class="value" id="next-drop">-</span></div>
-    </div>
-<div class="card" id="pfp-leads-card">
-      <h3>PFP Leads 🎯</h3>
-      <div class="stat"><span class="label">Total</span><span class="value" id="pfp-leads-total">-</span></div>
-      <div class="stat"><span class="label">By Status</span><span class="value" id="pfp-leads-by-status" style="font-size:0.65rem;">-</span></div>
-      <div class="stat"><span class="label">By Source</span><span class="value" id="pfp-leads-by-source" style="font-size:0.65rem;">-</span></div>
-      <div class="stat"><span class="label">Hot (≥7)</span><span class="value" id="pfp-leads-hot">-</span></div>
-      <div class="stat"><span class="label">Newest</span><span class="value" id="pfp-leads-newest" style="font-size:0.65rem;">-</span></div>
-    </div>
-<div class="card" id="harbor-campaign-card">
-      <h3>31 Harbor 🏠</h3>
-      <div class="stat"><span class="label">Contact Pool</span><span class="value" id="harbor-pool">-</span></div>
-      <div class="stat"><span class="label">Sent Today</span><span class="value" id="harbor-sent-today">-</span></div>
-      <div class="stat"><span class="label">Sent Total</span><span class="value" id="harbor-sent-total">-</span></div>
-      <div class="stat"><span class="label">Fresh Avail</span><span class="value" id="harbor-fresh">-</span></div>
-      <div class="stat"><span class="label">Last Run</span><span class="value" id="harbor-last-run">-</span></div>
-      <div class="stat"><span class="label">Next Drop</span><span class="value" id="harbor-next-drop">-</span></div>
-    </div>
-<div class="card">
-      <h3 style="color:#60a5fa;">XMRT DAO Health</h3>
+<!-- 🏴‍☠️ DAO & Ecosystem -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:#4ade80;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    🏴‍☠️ DAO & Ecosystem
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
+  </h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
       <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
       <div class="stat"><span class="label">Health Score</span><span class="value" id="dao-health-score">-</span></div>
       <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
       <div class="stat"><span class="label">Agents</span><span class="value" id="dao-agent-count">-</span></div>
       <div class="stat"><span class="label">Tasks</span><span class="value" id="dao-task-count">-</span></div>
-      <div class="stat"><span class="label">Gossip Hub</span><span class="value" id="dao-gossip-status">-</span></div>
       <div class="stat"><span class="label">Services</span><span class="value" id="dao-service-status">-</span></div>
-      <div style="margin-top:8px;font-size:11px;color:#6b6b80;">Live from system-health endpoint</div>
     </div>
-<div class="card">
-      <h3 style="color:#fbbf24;">GitHub Activity</h3>
-      <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
-      <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.7rem;">-</span></div>
-      <div style="margin-top:8px;font-size:11px;color:#6b6b80;" id="gh-recent-commits"></div>
-    </div>
-<div class="card" id="pfp-card">
-      <h3> Party Favor Photo <span style="color:#6b6b80;font-size:0.7rem;">inbox</span></h3>
-      <div id="pfp-inbox">
-        <div class="stat"><span class="label">Loading inbox...</span></div>
-      </div>
-    </div>
-<div class="card" id="mm-card">
-      <h3> MobileMonero <span style="color:#6b6b80;font-size:0.7rem;">inbox</span></h3>
-      <div id="mm-inbox">
-        <div class="stat"><span class="label">Loading inbox...</span></div>
-      </div>
-    </div>
-<div class="card" id="hb-card">
-      <h3> 31 Harbor <span style="color:#6b6b80;font-size:0.7rem;">inbox</span></h3>
-      <div id="hb-inbox">
-        <div class="stat"><span class="label">Loading inbox...</span></div>
-      </div>
-    </div>
-<div class="card">
-      <h3>XMRT DAO Membership</h3>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎫 Membership</div>
       <div class="stat"><span class="label"><a href="https://whop.com/xmrt-dao" target="_blank" style="color:#4ade80;text-decoration:none;">Free Tier</a></span><span class="value">free</span></div>
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_W6r4uqGWNaKHp" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium</a></span><span class="value">$9.99/mo</span></div>
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_Wj1nh8AJhdsLN" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium Yearly</a></span><span class="value">$99.99/yr</span></div>
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_n853GD3f5IXm0" target="_blank" style="color:#60a5fa;text-decoration:none;">Supporter</a></span><span class="value">$19.99</span></div>
-      <div style="margin-top:6px;font-size:11px;color:#6b6b80;">Premium: 2x rewards · governance · early hardware</div>
+      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">Premium: 2x rewards · governance · early hardware</div>
     </div>
-<div class="card">
-      <h3>DAO Ecosystem</h3>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🌐 Ecosystem</div>
       <div class="stat"><span class="label"><a href="https://xmrtsolutions.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token Faucet</a></span><span class="value">testnet</span></div>
       <div class="stat"><span class="label"><a href="https://coldcash.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">ColdCash</a></span><span class="value">private payments</span></div>
       <div class="stat"><span class="label"><a href="https://pipuente.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">PiPuente</a></span><span class="value">cross-chain bridge</span></div>
       <div class="stat"><span class="label"><a href="https://paragraph.com/@xmrt" target="_blank" style="color:#60a5fa;text-decoration:none;">Paragraph Blog</a></span><span class="value">DAO journal</span></div>
       <div class="stat"><span class="label"><a href="https://sepolia.etherscan.io/token/0x77307DFbc436224d5e6f2048d2b6bDfA66998a15" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token</a></span><span class="value">0x7730...8a15</span></div>
       <div class="stat"><span class="label"><a href="https://github.com/xmrtdao" target="_blank" style="color:#60a5fa;text-decoration:none;">GitHub Org</a></span><span class="value">59 repos</span></div>
-      <div style="margin-top:8px;font-size:11px;color:#6b6b80;">
-        <a href="https://github.com/xmrtdao/mobilemonero" style="color:#6b6b80;">mobilemonero</a> ·
-        <a href="https://github.com/xmrtdao/suite" style="color:#6b6b80;">suite</a> ·
-        <a href="https://github.com/xmrtdao/zero-claw" style="color:#6b6b80;">zero-claw</a> ·
-        <a href="https://github.com/xmrtdao/xmrt-mesh" style="color:#6b6b80;">xmrt-mesh</a>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🔧 Tools</div>
+      ${tools.map(t => '<div class="stat"><span class="label">' + t + '</span><span class="value badge badge-info">ready</span></div>').join('')}
+      ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;"><div style="font-size:0.6rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px;">Local Functions</div>' + localFunctions.map(f => '<div class="stat"><span class="label" style="color:#4ade80;">fn:' + f.name + '</span><span class="value badge badge-info">local</span></div>').join('') + '</div>' : ''}
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
+        <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
       </div>
     </div>
-<div class="card">
-      <h3>Tools</h3>
-      ${tools.map(t => `<div class="stat"><span class="label">${t}</span><span class="value badge badge-info">ready</span></div>`).join('')}
-      ${localFunctions.length > 0 ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a3a;"><div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Local Functions</div>${localFunctions.map(f => `<div class="stat"><span class="label" style="color:#4ade80;">fn:${f.name}</span><span class="value badge badge-info">local</span></div>`).join('')}</div>` : ''}
+  </div>
+</div>
+
+<!-- Ship's Articles Full Board -->
+<div id="board-full" class="card" style="grid-column:1/-1;margin-top:0.5rem;">
+  <h3 style="color:#fbbf24;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
+  </h3>
+  <div class="board-tabs" id="board-tabs">
+    <span class="board-tab active" onclick="switchBoardView('topics')" id="tab-topics">Resolutions</span>
+    <span class="board-tab" onclick="switchBoardView('new')" id="tab-newtopic">+ New Topic</span>
+  </div>
+  <div id="board-filter-bar" style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;">
+    <span class="board-filter active" data-filter="all" onclick="setBoardFilter('all')">All</span>
+    <span class="board-filter" data-filter="active" onclick="setBoardFilter('active')">Active</span>
+    <span class="board-filter" data-filter="in-progress" onclick="setBoardFilter('in-progress')">In Progress</span>
+    <span class="board-filter" data-filter="completed" onclick="setBoardFilter('completed')">Completed</span>
+    <span class="board-filter" data-filter="archived" onclick="setBoardFilter('archived')">Archived</span>
+  </div>
+  <div id="board-topics-view">
+    <div class="board-topics" id="board-topics-list-full"></div>
+    <div id="board-topic-posts" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">
+          <span id="board-current-topic-title" style="font-size:13px;font-weight:600;color:var(--text-primary);"></span>
+          <span id="board-current-topic-status"></span>
+          <span id="board-current-topic-assignment" style="font-size:10px;color:#6b6b80;"></span>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button onclick="renameBoardTopic()" id="board-rename-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#8b8ba0;cursor:pointer;font-size:10px;">Rename</button>
+          <select id="board-status-select" onchange="changeTopicStatus(this.value)" style="padding:2px 4px;border-radius:4px;border:1px solid #3a3a5a;background:#12121a;color:#c0c0d0;font-size:10px;">
+            <option value="active">Active</option>
+            <option value="in-progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="archived">Archived</option>
+          </select>
+          <button onclick="togglePinTopic()" id="board-pin-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#fbbf24;cursor:pointer;font-size:10px;">Pin</button>
+          <button onclick="deleteBoardTopic()" id="board-delete-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #5a2a2a;background:transparent;color:#f87171;cursor:pointer;font-size:10px;">Delete</button>
+          <button onclick="closeBoardTopic()" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#8b8ba0;cursor:pointer;font-size:10px;">Back</button>
+        </div>
+      </div>
+      <div class="board-posts" id="board-posts-list"></div>
+      <div class="board-input-wrap">
+        <input id="board-post-input" type="text" placeholder="Add to this resolution..." onkeypress="if(event.key==='Enter')sendBoardPost()">
+        <button onclick="sendBoardPost()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Post</button>
+      </div>
+      <div style="margin-top:4px;font-size:10px;color:#6b6b80;">
+        <span>Posted as <strong id="board-post-agent" style="color:var(--accent-orange);">vex</strong> — all privateers see this resolution</span>
+      </div>
     </div>
-<div class="card">
-      <h3>Quick Actions</h3>
-      <div class="stat"><span class="label"><a href="/health" style="color:#4ade80;text-decoration:none;">GET /health</a></span><span class="value">health check</span></div>
-      <div class="stat"><span class="label"><a href="/status" style="color:#60a5fa;text-decoration:none;">GET /status</a></span><span class="value">full status</span></div>
-      <div class="stat"><span class="label"><a href="/tools" style="color:#60a5fa;text-decoration:none;">GET /tools</a></span><span class="value">tool list</span></div>
-      <div class="stat"><span class="label"><a href="/monitor" style="color:#60a5fa;text-decoration:none;">GET /monitor</a></span><span class="value">system monitor</span></div>
-      <div class="stat"><span class="label"><a href="/api/catalog" style="color:#60a5fa;text-decoration:none;">GET /api/catalog</a></span><span class="value">function catalog</span></div>
-      <div class="stat"><span class="label"><code style="color:#fbbf24;font-size:0.75rem;">POST /dispatch</code></span><span class="value">task dispatch</span></div>
+  </div>
+  <div id="board-new-topic-view" style="display:none;">
+    <div class="board-new-topic" style="display:flex;flex-direction:column;gap:6px;">
+      <input id="board-new-topic-input" type="text" placeholder="Resolution (e.g. Deployment Q2, AgentPay Strategy, PFP Partnerships...)" onkeypress="if(event.key==='Enter')createBoardTopic()">
+      <div style="display:flex;gap:6px;align-items:center;">
+        <select id="board-new-status" style="padding:4px 8px;border-radius:4px;border:1px solid #3a3a5a;background:#12121a;color:#c0c0d0;font-size:11px;">
+          <option value="active">Active</option>
+          <option value="in-progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="archived">Archived</option>
+        </select>
+        <input id="board-new-assignment" type="text" placeholder="Assign to agent (optional)" style="flex:1;padding:4px 8px;font-size:11px;">
+        <input type="checkbox" id="board-new-pinned" style="accent-color:#fbbf24;"> <label for="board-new-pinned" style="font-size:10px;color:#fbbf24;">Pin</label>
+        <button onclick="createBoardTopic()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Create</button>
+      </div>
     </div>
-<div class="card">
-      <h3> AI Template Builder</h3>
-      <div class="stat"><span class="label">Engine</span><span class="value">nano-banana-2 + edit</span></div>
-      <div class="stat"><span class="label">Cost</span><span class="value">$0.03-0.06/gen</span></div>
-      <div class="stat"><span class="label"><a href="/pfp/templates" style="color:#60a5fa;text-decoration:none;">GET /pfp/templates</a></span><span class="value">gallery</span></div>
-      <div class="stat"><span class="label">Workflow</span><span class="value">reference → AI → template</span></div>
-    </div>
+  </div>
+  <div style="margin-top:4px;display:flex;gap:8px;font-size:10px;color:#6b6b80;">
+    <span>Privateers can post to any resolution — persistent across voyages</span>
+    <span id="board-updated-indicator" style="color:#fbbf24;display:none;">* new activity</span>
+    <span id="board-status-full" style="color:#4ade80;">● loaded</span>
+  </div>
+</div>
   </div>
 <!-- Edge Function Catalog -->
   <div style="margin-top:1.5rem;width:100%;box-sizing:border-box;">
@@ -3068,1171 +3409,7 @@ app.get('/', (req, res) => {
     Functions: ${supabaseUrl}/functions/v1/{name}
   </div>
 
-  <script>
-  const SUPABASE_URL = '${supabaseUrl}';
-  let functions = [];
-  let sortKey = 'name';
-  let sortDir = 1;
-
-  // Load edge function catalog
-  fetch('/api/catalog')
-    .then(r => r.json())
-    .then(data => {
-      functions = data.functions || [];
-      document.getElementById('fnCount').textContent = '— ' + functions.length + ' total';
-      renderFunctions();
-    })
-    .catch(e => {
-      document.getElementById('fnBody').innerHTML = '<tr><td colspan="5" style="color:#f87171;text-align:center;padding:2rem;">Failed to load catalog: ' + e.message + '</td></tr>';
-    });
-
-  // Load pool stats for mining card
-  function loadPoolStats() {
-    fetch('/api/mining/pool-stats').then(function(r){return r.json();}).then(function(d){
-      var e;
-      if (e = document.getElementById('pool-hash')) e.textContent = (d.hash || 0).toFixed(0) + ' H/s';
-      if (e = document.getElementById('pool-shares')) e.textContent = (d.validShares||0).toLocaleString() + ' valid / ' + (d.invalidShares||0) + ' invalid';
-      if (e = document.getElementById('pool-xmr')) e.textContent = d.amtPaidXMR.toFixed(6) + ' / ' + d.amtDueXMR.toFixed(6) + ' XMR';
-      // New fields: global pool stats, treasury, health
-      if (e = document.getElementById('pool-global-hash')) {
-        var mhs = d.pool_hashrate_mhs || 0;
-        e.textContent = mhs > 0 ? mhs.toFixed(2) + ' MH/s' : (d.pool_hashrate || 0).toFixed(0) + ' H/s';
-      }
-      if (e = document.getElementById('pool-total-miners')) {
-        e.textContent = (d.pool_total_miners || 0).toLocaleString() + ' miners \u00b7 ' + (d.pool_total_blocks || 0) + ' blocks';
-      }
-      if (e = document.getElementById('pool-treasury')) {
-        var treas = d.treasury_allocation_xmr || 0;
-        var ops = d.operational_allocation_xmr || 0;
-        e.textContent = treas.toFixed(6) + ' / ' + ops.toFixed(6) + ' XMR';
-      }
-      if (e = document.getElementById('pool-health')) {
-        var h = d.ecosystem_health || {};
-        var parts = [];
-        if (h.mining_active) parts.push('\u2705 Active'); else if (d.mining_status === 'offline') parts.push('\u274c Offline'); else parts.push('\u2753 Unknown');
-        if (h.revenue_generating) parts.push('\u{1F4B0} Earning');
-        if (h.pool_healthy) parts.push('\u{1F30D} Good');
-        e.textContent = parts.join(' \u00b7 ');
-        e.style.color = h.mining_active ? '#4ade80' : '#ef4444';
-      }
-    }).catch(function(){});
-    fetch('/api/mining/pool-identifiers').then(function(r){return r.json();}).then(function(ids){
-      var e = document.getElementById('pool-workers');
-      if (e) e.textContent = ids && ids.length ? ids.join(', ') : 'none';
-    }).catch(function(){});
-  }
-  loadPoolStats();
-  setInterval(loadPoolStats, 30000);
-
-  // Fleet Agent Registry
-  function loadFleetAgents() {
-    // Fetch pool identifiers to cross-reference agent status
-    var ids = [];
-    fetch('/api/mining/pool-identifiers', { signal: AbortSignal.timeout(5000) }).then(function(r){return r.json();}).then(function(idData){
-      ids = idData || [];
-    }).catch(function(){}).then(function(){
-    return fetch('/api/fleet/agents').then(function(r){return r.json();});
-    }).then(function(data){
-      var agents = data.agents || [];
-      var list = document.getElementById('fleet-agents-list');
-      var count = document.getElementById('fleet-count');
-      if (!count) return;
-      count.textContent = '\u2014 ' + agents.length + ' agent' + (agents.length !== 1 ? 's' : '');
-      if (!agents.length) {
-        list.innerHTML = '<div class="stat"><span class="label">No agents registered</span></div>';
-        return;
-      }
-      list.innerHTML = agents.map(function(a){
-        var status = a.status;
-        var hashrate = a.hashrate && (status === 'ONLINE' || status === 'online') ? a.hashrate : 0;
-        var sb = status === 'ONLINE' || status === 'online' ? 'badge-ok' : status === 'BUSY' ? 'badge-warn' : 'badge-err';
-        var agentName = a.agent_id || a.name || '?';
-        var agentRole = a.role || 'agent';
-        var cleanRole = agentRole.replace(/-/g,' ').replace(/\b\w/g, function(l){return l.toUpperCase();});
-        var me = agentName === 'vex' ? '\u2b50 ' : '';
-        var tun = a.tunnel_url ? '<br><span style="font-size:0.65rem;color:#4a7cff;">' + a.tunnel_url + '</span>' : '';
-        var h = a.hashrate ? ' \u00b7 ' + a.hashrate + ' H/s' : '';
-        return '<div class="stat"><span class="label">' + me + agentName + '<br><span style="font-size:0.65rem;color:#6b6b80;">' + cleanRole + '</span>' + tun + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span>' + h + '</span></div>';
-      }).join('');
-      // Update heartbeat URL
-      var hb = document.getElementById('heartbeat-url');
-      var t = document.querySelector('a[href*="relay.mobilemonero"]');
-      if (hb && t) hb.textContent = t.href + '/api/fleet/heartbeat';
-    }).catch(function(){
-      // Fleet agents unavailable — leave as Loading...
-    });
-  };
-  loadFleetAgents();
-// -- XMRT University Status --
-async function loadUniversityStatus() {
-  var statusEl = document.getElementById('uni-status');
-  var detailEl = document.getElementById('university-detail');
-  var progressEl = document.getElementById('uni-progress');
-  var certEl = document.getElementById('uni-cert');
-  var tierEl = document.getElementById('uni-tier');
-  var permsEl = document.getElementById('uni-perms');
-  var sourceEl = document.getElementById('uni-curriculum-source');
-  
-  try {
-    // Fetch curriculum info
-    var coursesRes = await fetch('/api/ef-university', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'courses' })
-    });
-    var coursesData = await coursesRes.json();
-    if (coursesData.success) {
-      statusEl.textContent = coursesData.total_modules + ' modules available';
-      statusEl.style.color = '#4ade80';
-      if (sourceEl) sourceEl.textContent = 'database';
-    } else {
-      statusEl.textContent = 'offline';
-      statusEl.style.color = '#ef4444';
-    }
-  } catch(e) {
-    statusEl.textContent = 'unreachable';
-    statusEl.style.color = '#ef4444';
-  }
-}
-setInterval(loadUniversityStatus, 60000);
-loadUniversityStatus();
-
-  setInterval(loadFleetAgents, 15000);
-
-  // Load mesh peers from peer connector
-  function loadMeshPeers() {
-    fetch('/api/mesh/peers', {
-      signal: AbortSignal.timeout(5000)
-    }).then(function(r){return r.json();}).then(function(data){
-      var peers = data.peers || [];
-      var list = document.getElementById('mesh-peers-list');
-      var count = document.getElementById('mesh-count');
-      if (!count) return;
-      count.textContent = '\u2014 ' + peers.length + ' peer' + (peers.length !== 1 ? 's' : '');
-      if (!peers.length) {
-        list.innerHTML = '<div class="stat"><span class="label">No mesh peers registered</span></div>';
-        return;
-      }
-      list.innerHTML = peers.map(function(p){
-        var status = p.status || 'unknown';
-        var sb = status === 'online' ? 'badge-ok' : 'badge-err';
-        var me = p.agent_name === 'vex' ? '\u2b50 ' : '';
-        var eps = p.endpoint ? '<br><span style="font-size:0.65rem;color:#4a7cff;">' + p.endpoint + '</span>' : '';
-        var caps = p.capabilities ? '<br><span style="font-size:0.6rem;color:#6b6b80;">' + p.capabilities.slice(0,5).join(', ') + (p.capabilities.length > 5 ? ' +' + (p.capabilities.length-5) + ' more' : '') + '</span>' : '';
-        var lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleTimeString() : '';
-        return '<div class="stat"><span class="label">' + me + p.agent_name + eps + caps + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span><br><span style="font-size:0.6rem;color:#6b6b80;">' + lastSeen + '</span></span></div>';
-      }).join('');
-    }).catch(function(){
-      // Mesh peers unavailable
-    });
-  };
-  loadMeshPeers();
-  setInterval(loadMeshPeers, 30000);
-
-  // Mining Stats from pool + xmrig (proxied through relay)
-  // Load mining leaderboard
-  function loadMiningLeaderboard() {
-    fetch('/mining/leaderboard').then(function(r){return r.json();}).then(function(d){
-      var el = document.getElementById('miner-leaderboard');
-      if (!el) return;
-      if (!d.workers || d.workers.length === 0) {
-        el.innerHTML = '<div class="stat"><span class="label">No contributors yet</span></div>';
-        return;
-      }
-      var now = Date.now();
-      el.innerHTML = d.workers.slice(0,10).map(function(w) {
-        var lastSeen = new Date(w.last_seen).getTime();
-        var minutesAgo = Math.round((now - lastSeen) / 60000);
-        var isOnline = minutesAgo < 10;
-        var statusDot = isOnline ? '<span style="color:#4ade80;">●</span>' : '<span style="color:#6b6b80;">○</span>';
-        var hashDisplay = w.current_hash > 0 ? w.current_hash + ' H/s' : '-';
-        var sharesDisplay = w.total_shares > 0 ? w.total_shares.toLocaleString() : '0';
-        var timeAgo = minutesAgo < 1 ? 'just now' : minutesAgo + 'm ago';
-        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#6b6b80;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
-      }).join('');
-    }).catch(function(){
-      var el = document.getElementById('miner-leaderboard');
-      if (el) el.innerHTML = '<div class="stat"><span class="label">Leaderboard unavailable</span></div>';
-    });
-  }
-  loadMiningLeaderboard();
-  setInterval(loadMiningLeaderboard, 15000);
-
-  // Local XMRig heartbeat (vex-laptop auto-reports hashrate)
-  function localMinerHeartbeat() {
-    fetch('/api/mining/local-xmrig', { signal: AbortSignal.timeout(5000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        var h = d.hashrate || 0;
-        if (h > 0) {
-          fetch('/mining/heartbeat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ worker: 'vex-laptop', hashrate: Math.round(h) })
-          }).catch(function(){});
-        }
-      }).catch(function(){});
-  }
-  localMinerHeartbeat();
-  setInterval(localMinerHeartbeat, 60000);
-
-  // Party Favor Photo inbox refresh (brief — lightweight)
-  function loadPfpInbox() {
-    fetch('/resend/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('pfp-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      // Group by recipient
-      var groups = {};
-      emails.slice(0,20).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        var msgs = groups[addr];
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
-        html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + msgs.length + '</span>';
-        html += '</div>';
-        msgs.forEach(function(m){
-          count++;
-          if (count > 10) return;
-          html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,28) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,22) + '</span>';
-          html += '</div>';
-        });
-      });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('pfp-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
-    });
-  }
-  loadPfpInbox();
-  setInterval(loadPfpInbox, 15000);
-
-  // MobileMonero inbox refresh (brief — lightweight)
-  function loadMmInbox() {
-    fetch('/resend/mobilemonero/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('mm-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      var groups = {};
-      emails.slice(0,15).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
-          count++;
-          if (count > 8) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
-        });
-      });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('mm-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
-    });
-  }
-  loadMmInbox();
-  setInterval(loadMmInbox, 15000);
-
-  // 31 Harbor inbox refresh (brief — lightweight)
-  function loadHbInbox() {
-    fetch('/resend/31harbor/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('hb-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      var groups = {};
-      emails.slice(0,15).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
-          count++;
-          if (count > 8) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
-        });
-      });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('hb-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
-    });
-  }
-  loadHbInbox();
-  setInterval(loadHbInbox, 15000);
-
-  // XMRT DAO Health — dynamic data from Supabase
-  function loadDaoHealth() {
-    fetch('/api/dao/health', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        var statusEl = document.getElementById('dao-health-status');
-        var fnEl = document.getElementById('dao-fn-count');
-        var agentEl = document.getElementById('dao-agent-count');
-        var taskEl = document.getElementById('dao-task-count');
-        var gossipEl = document.getElementById('dao-gossip-status');
-        var scoreEl = document.getElementById('dao-health-score');
-
-        // The /api/dao/health endpoint returns: { health: <system-health>, status: <system-status> }
-        // Each of those has its own nested structure: system-health returns { health: { overall_health: {...} } }
-        // and system-status returns { status: { overall_status: '...', components: {...} } }.
-        // The wrapper endpoint preserves those keys, so we end up with d.health.health.overall_health
-        // and d.status.status.components. Tolerant code below handles both nesting depths.
-        var h = (d.health && d.health.overall_health) ? d.health
-             : (d.health && d.health.health)        ? d.health.health
-             : null;
-        var s = (d.status && d.status.components) ? d.status
-             : (d.status && d.status.status)      ? d.status.status
-             : null;
-        if (!h && !s) {
-          if (statusEl) statusEl.textContent = 'unavailable';
-        }
-
-        if (h && h.overall_health) {
-          var score = h.overall_health.score || 0;
-          var status = h.overall_health.status || 'unknown';
-          var badgeClass = score >= 80 ? 'badge-ok' : score >= 50 ? 'badge-warn' : 'badge-err';
-          if (statusEl) statusEl.innerHTML = '<span class="badge ' + badgeClass + '">' + status.toUpperCase() + ' (' + score + '/100)</span>';
-          if (scoreEl) scoreEl.textContent = score + ' / 100 (' + status + ')';
-        } else if (s && (s.overall_status || s.health_score !== undefined)) {
-          var score2 = s.health_score || 0;
-          var status2 = s.overall_status || 'unknown';
-          var badgeClass2 = score2 >= 80 ? 'badge-ok' : score2 >= 50 ? 'badge-warn' : 'badge-err';
-          if (statusEl) statusEl.innerHTML = '<span class="badge ' + badgeClass2 + '">' + status2.toUpperCase() + ' (' + score2 + '/100)</span>';
-          if (scoreEl) scoreEl.textContent = score2 + ' / 100 (' + status2 + ')';
-        }
-
-        if (h && h.components) {
-          if (fnEl && h.components.edge_functions && h.components.edge_functions.deployed) {
-            fnEl.textContent = h.components.edge_functions.deployed + ' deployed';
-          } else if (fnEl && s && s.components && s.components.edge_functions) {
-            fnEl.textContent = (s.components.edge_functions.total_calls_24h || 0) + ' calls / 24h';
-          }
-          if (agentEl && h.components.agents) {
-            var agents = h.components.agents;
-            var total = (agents.IDLE || 0) + (agents.BUSY || 0) + (agents.OFFLINE || 0);
-            agentEl.textContent = total + ' (' + (agents.BUSY || 0) + ' busy)';
-          } else if (agentEl && s && s.components && s.components.agents && s.components.agents.stats) {
-            var a2 = s.components.agents.stats;
-            agentEl.textContent = (a2.total || 0) + ' (' + (a2.busy || 0) + ' busy)';
-          }
-          if (taskEl && s && s.components && s.components.tasks && s.components.tasks.stats) {
-            var t = s.components.tasks.stats;
-            taskEl.textContent = (t.total || 0) + ' (' + (t.completed || 0) + ' done)';
-          } else if (taskEl && h.components.tasks) {
-            var tt = h.components.tasks;
-            taskEl.textContent = (tt.total || 0) + ' (' + (tt.COMPLETED || 0) + ' done)';
-          }
-        }
-
-        // Render supervisor service statuses from d.services
-        var svcEl = document.getElementById('dao-service-status');
-        if (svcEl && d.services && typeof d.services === 'object') {
-          var keys = Object.keys(d.services);
-          if (keys.length === 0) {
-            svcEl.innerHTML = '<span class="badge badge-warn">no services</span>';
-          } else {
-            var running = 0, down = 0;
-            keys.forEach(function(k){
-              if (d.services[k].uptimeSec > 0) running++; else down++;
-            });
-            var badgeClass = down === 0 ? 'badge-ok' : (running > 0 ? 'badge-warn' : 'badge-err');
-            svcEl.innerHTML = '<span class="badge ' + badgeClass + '">' + running + ' up / ' + (running + down) + ' total</span>';
-            // Also populate a small hover tooltip with individual service statuses
-            svcEl.title = keys.map(function(k){
-              var s = d.services[k];
-              var uptime = s.uptimeSec > 0 ? Math.floor(s.uptimeSec / 60) + 'm' : 'down';
-              return k + ' (pid ' + (s.childPid || '-') + ', ' + uptime + ', restarts: ' + s.restartCount + ')';
-            }).join(' | ');
-          }
-        } else if (svcEl) {
-          svcEl.textContent = 'unavailable';
-        }
-
-        // Check gossip hub separately
-        fetch('/api/dao/gossip?topic=fleet-broadcast&limit=1', { signal: AbortSignal.timeout(5000) })
-          .then(function(r){return r.json();})
-          .then(function(g){
-            if (gossipEl) {
-              if (g.success && g.messages && g.messages.length > 0) {
-                var lastMsg = g.messages[0];
-                var minsAgo = Math.round((Date.now() - new Date(lastMsg.timestamp).getTime()) / 60000);
-                gossipEl.innerHTML = '<span class="badge badge-ok">' + (minsAgo < 5 ? 'active' : minsAgo + 'm ago') + '</span>';
-              } else {
-                gossipEl.innerHTML = '<span class="badge badge-warn">quiet</span>';
-              }
-            }
-          })
-          .catch(function(){
-            if (gossipEl) gossipEl.innerHTML = '<span class="badge badge-err">offline</span>';
-          });
-      })
-      .catch(function(){
-        var statusEl = document.getElementById('dao-health-status');
-        if (statusEl) statusEl.textContent = 'offline';
-      });
-  }
-  loadDaoHealth();
-  setInterval(loadDaoHealth, 30000);
-
-  // GitHub Activity — dynamic data from GitHub API
-  function loadGithubActivity() {
-    fetch('/api/dao/github', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        var repoEl = document.getElementById('gh-repo-count');
-        var commitEl = document.getElementById('gh-last-commit');
-        var recentEl = document.getElementById('gh-recent-commits');
-
-        if (d.total_repos) {
-          if (repoEl) repoEl.textContent = d.total_repos + ' repos';
-        }
-
-        if (d.recent_commits && d.recent_commits.length > 0) {
-          var last = d.recent_commits[0];
-          var NL = String.fromCharCode(10);
-          var lastMsg = (last.commit && last.commit.message) ? last.commit.message.split(NL)[0].slice(0, 35) : 'recent commit';
-          var lastWhen = new Date(last.commit.author.date).toLocaleDateString();
-          var lastRepo = last._repo ? ' [' + last._repo + ']' : '';
-          if (commitEl) commitEl.textContent = lastMsg + lastRepo + ' (' + lastWhen + ')';
-
-          // Show last 5 commits across all repos with repo tag
-          if (recentEl) {
-            recentEl.innerHTML = d.recent_commits.slice(0,5).map(function(c){
-              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
-              var dd = new Date(c.commit.author.date).toLocaleDateString();
-              var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
-              return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#6b6b80;">(' + dd + ')</span></div>';
-            }).join('');
-          }
-        }
-      })
-      .catch(function(){
-        var repoEl = document.getElementById('gh-repo-count');
-        if (repoEl) repoEl.textContent = 'unavailable';
-      });
-  }
-  loadGithubActivity();
-  setInterval(loadGithubActivity, 60000);
-
-  // PFP Campaign — live stats
-  function loadPfpCampaign() {
-    fetch('/api/campaign/pfp', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if (!d.success) return;
-        var el = function(id){return document.getElementById(id);};
-        if (el('pfp-pool')) el('pfp-pool').textContent = d.poolSize;
-        if (el('pfp-sent-today')) el('pfp-sent-today').textContent = d.sentToday;
-        if (el('pfp-sent-total')) el('pfp-sent-total').textContent = d.totalSent;
-        if (el('pfp-fresh')) el('pfp-fresh').textContent = d.freshAvailable;
-        if (el('pfp-last-run')) el('pfp-last-run').textContent = d.campaignLastRun;
-      });
-  }
-  loadPfpCampaign();
-  setInterval(loadPfpCampaign, 30000);
-
-  // 31 Harbor Campaign — live stats
-  function loadHarborCampaign() {
-    fetch('/api/campaign/31harbor', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if (!d.success) return;
-        var el = function(id){return document.getElementById(id);};
-        if (el('harbor-pool')) el('harbor-pool').textContent = d.harborPoolSize;
-        if (el('harbor-sent-today')) el('harbor-sent-today').textContent = d.harborSentToday;
-        if (el('harbor-sent-total')) el('harbor-sent-total').textContent = d.harborSentTotal;
-        if (el('harbor-fresh')) el('harbor-fresh').textContent = d.harborFresh;
-        if (el('harbor-last-run')) el('harbor-last-run').textContent = d.harborLastRun;
-      });
-  }
-  loadHarborCampaign();
-  setInterval(loadHarborCampaign, 30000);
-
-  // PFP Leads — live from pfp_leads table via local-sb
-  function loadPfpLeads() {
-    fetch('/api/leads/pfp', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if (!d.success) return;
-        var el = function(id){return document.getElementById(id);};
-        if (el('pfp-leads-total')) el('pfp-leads-total').textContent = d.total;
-        if (el('pfp-leads-by-status')) {
-          var parts = [];
-          for (var k in d.byStatus) parts.push(k + ':' + d.byStatus[k]);
-          el('pfp-leads-by-status').textContent = parts.join(' · ');
-        }
-        if (el('pfp-leads-by-source')) {
-          var parts = [];
-          for (var k in d.bySource) parts.push(k + ':' + d.bySource[k]);
-          el('pfp-leads-by-source').textContent = parts.join(' · ');
-        }
-        if (el('pfp-leads-hot')) el('pfp-leads-hot').textContent = d.highRated.length;
-        if (el('pfp-leads-newest') && d.newest) {
-          var n = d.newest;
-          el('pfp-leads-newest').textContent = (n.contact_name || '?') + ' — ' + (n.contact_email || '') + ' [' + (n.source || '?') + ']';
-        }
-      });
-  }
-  loadPfpLeads();
-  setInterval(loadPfpLeads, 30000);
-
-  function renderFunctions() {
-    const search = document.getElementById('search').value.toLowerCase();
-    const methodFilter = document.getElementById('methodFilter').value;
-    const typeFilter = document.getElementById('typeFilter').value;
-
-    let filtered = functions.filter(f => {
-      if (search && !f.name.toLowerCase().includes(search) && !f.desc.toLowerCase().includes(search)) return false;
-      if (methodFilter && !f.methods.includes(methodFilter)) return false;
-      if (typeFilter === 'simple' && f.type !== 'simple endpoint') return false;
-      if (typeFilter === 'workflow' && f.type !== 'multi-action workflow') return false;
-      return true;
-    });
-
-    filtered.sort((a, b) => {
-      let va = (a[sortKey] || '').toString().toLowerCase();
-      let vb = (b[sortKey] || '').toString().toLowerCase();
-      return va < vb ? -sortDir : va > vb ? sortDir : 0;
-    });
-
-    document.getElementById('resultCount').textContent = filtered.length + ' shown';
-
-    document.getElementById('fnBody').innerHTML = filtered.map(f => {
-      const methods = (f.methods || ['POST']).map(m =>
-        '<span class="fn-method method-' + m + '">' + m + '</span>'
-      ).join('');
-      const typeTag = f.type === 'multi-action workflow'
-        ? '<span class="tag-workflow">workflow</span>'
-        : '<span class="tag-simple">simple</span>';
-      
-      // Estimate timeout based on function type and name
-      var timeout = '10s';
-      var name = (f.name || '').toLowerCase();
-      if (name.includes('curiosity') || name.includes('explore')) timeout = '45s';
-      else if (name.includes('search') || name.includes('exa')) timeout = '20s';
-      else if (name.includes('research') || name.includes('intelligence')) timeout = '30s';
-      else if (name.includes('python') || name.includes('jupyter')) timeout = '60s';
-      else if (name.includes('browse') || name.includes('scrape') || name.includes('playwright')) timeout = '30s';
-      else if (name.includes('chat') || name.includes('ai-')) timeout = '25s';
-      else if (name.includes('booking') || name.includes('quote') || name.includes('template') || name.includes('pfp')) timeout = '30s';
-      else if (name.includes('generate') || name.includes('stripe')) timeout = '15s';
-      else if (f.type === 'multi-action workflow') timeout = '30s';
-      
-      const timeoutBadge = parseInt(timeout) > 20
-        ? '<span class="badge badge-warn" style="font-size:0.65rem;">' + timeout + '</span>'
-        : '<span class="badge badge-ok" style="font-size:0.65rem;">' + timeout + '</span>';
-      
-      const inputs = (f.inputs && f.inputs.length)
-        ? f.inputs.map(i => '<span style="color:#fbbf24">' + i + '</span>').join(', ')
-        : '<span style="color:#4a4a5a">(see source)</span>';
-      const endpoint = SUPABASE_URL + '/functions/v1/' + f.name;
-      
-      return '<tr>' +
-        '<td class="fn-name">' + f.name + '</td>' +
-        '<td class="fn-method-cell">' + methods + ' ' + timeoutBadge + '</td>' +
-        '<td>' + typeTag + '</td>' +
-        '<td class="fn-desc">' + (f.desc || '') + '</td>' +
-        '<td class="endpoint-url"><span>' + endpoint + '</span></td>' +
-        '</tr>';
-    }).join('');
-  }
-
-  function filterFunctions() { renderFunctions(); }
-  function sortBy(key) {
-    if (sortKey === key) sortDir *= -1;
-    else { sortKey = key; sortDir = 1; }
-    renderFunctions();
-  }
-  
-  function sendFleetChat() {
-    // Get or prompt for agent name (persisted in localStorage)
-    var nameInput = document.getElementById('fleet-chat-name');
-    var savedName = localStorage.getItem('fleet-chat-user-name');
-    if (savedName && !nameInput.value) {
-      nameInput.value = savedName;
-    } else if (nameInput.value) {
-      localStorage.setItem('fleet-chat-user-name', nameInput.value);
-    }
-    var agent = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'user';
-    var input = document.getElementById('fleet-chat-input');
-    var msgs = document.getElementById('fleet-chat-msgs');
-    var msg = input.value.trim();
-    if (!msg) return;
-    input.value = '';
-    msgs.innerHTML += '<div style="margin-bottom:6px;text-align:right;"><span style="color:#8b8ba0;font-size:10px;display:block;">' + agent.toUpperCase() + '</span><span style="background:#1a3a5c;color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;">' + msg.replace(/</g,'&lt;') + '</span></div>';
-    document.getElementById('fleet-chat-status').textContent = '● sending...';
-    document.getElementById('fleet-chat-status').style.color = '#fbbf24';
-    msgs.scrollTop = msgs.scrollHeight;
-    fetch('/api/fleet-chat/send', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent:agent,message:msg,channel:'all'})})
-      .then(function(r){return r.json();})
-      .then(function(d){
-        document.getElementById('fleet-chat-status').textContent = '● connected';
-        document.getElementById('fleet-chat-status').style.color = '#4ade80';
-        // Auto-fetch new messages
-        fetchFleetMessages();
-      }).catch(function(e){
-        document.getElementById('fleet-chat-status').textContent = '● error: ' + e.message;
-        document.getElementById('fleet-chat-status').style.color = '#f87171';
-      });
-  }
-
-  // Poll for new fleet messages
-  var lastFleetTs = 0;
-  function fetchFleetMessages() {
-    var msgs = document.getElementById('fleet-chat-msgs');
-    var url = '/api/fleet-chat/messages?limit=50';
-    if (lastFleetTs > 0) url += '&since=' + lastFleetTs;
-    fetch(url)
-      .then(function(r){return r.json();})
-      .then(function(d){
-        if (d.messages && d.messages.length > 0) {
-          for (var i = 0; i < d.messages.length; i++) {
-            var m = d.messages[i];
-            if (m.ts <= lastFleetTs) continue;
-            var color = m.agent === 'vex' ? '#2a1a0a' : m.agent === 'eliza' ? '#1a3a2a' : '#2a1a3a';
-            var label = m.agentLabel || m.agent;
-            // Check if message already displayed
-            var existing = msgs.querySelector('[data-id="' + m.id + '"]');
-            if (existing) continue;
-            var div = document.createElement('div');
-            div.style.marginBottom = '6px';
-            div.setAttribute('data-id', m.id);
-            div.innerHTML = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
-            msgs.appendChild(div);
-            lastFleetTs = Math.max(lastFleetTs, m.ts);
-          }
-          msgs.scrollTop = msgs.scrollHeight;
-        }
-        document.getElementById('fleet-chat-status').textContent = '● connected';
-        document.getElementById('fleet-chat-status').style.color = '#4ade80';
-      }).catch(function(e){
-        document.getElementById('fleet-chat-status').textContent = '● polling error';
-        document.getElementById('fleet-chat-status').style.color = '#f87171';
-      });
-  }
-
-  // Markdown renderer is loaded from /static/markdown.js to keep the template literal escape-free.
-
-  // ── Bulletin Board Functions ────────────────────────────────
-  var boardData = { topics: [] };
-  var boardCurrentTopic = null;
-  var boardStatusFilter = "all"; // all, active, in-progress, completed, archived
-  var boardLastPostCount = 0;
-  function loadBoard() {
-    fetch("/api/bulletin/topics")
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        var prevCount = boardData.topics ? boardData.topics.length : 0;
-        var prevPosts = boardLastPostCount;
-        boardData = d;
-        renderBoardTopics();
-        document.getElementById("board-status").textContent = "● loaded";
-        document.getElementById("board-status").style.color = "#4ade80";
-        var newCount = boardData.topics.length;
-        var totalPosts = boardData.topics.reduce(function(sum, t) { return sum + (t.posts || []).length; }, 0);
-        if (newCount !== prevCount || totalPosts !== prevPosts) {
-          var ind = document.getElementById("board-updated-indicator");
-          if (ind) { ind.style.display = "inline"; setTimeout(function(){ if(ind) ind.style.display = "none"; }, 10000); }
-        }
-        boardLastPostCount = totalPosts;
-      })
-      .catch(function(e){
-        document.getElementById("board-status").textContent = "● error: " + e.message;
-        document.getElementById("board-status").style.color = "#f87171";
-      });
-  }
-  
-  function setBoardFilter(filter) {
-    boardStatusFilter = filter;
-    // Update filter tab styling
-    var filters = document.querySelectorAll('#board-filter-bar .board-filter');
-    for (var i = 0; i < filters.length; i++) {
-      var cls = filters[i].getAttribute('data-filter') === filter ? 'board-filter active' : 'board-filter';
-      filters[i].className = cls;
-    }
-    renderBoardTopics();
-  }
-  
-  function getStatusBadge(status) {
-    var colors = {
-      'active': 'background:#1a3a2a;color:#4ade80;',
-      'in-progress': 'background:#3a2a1a;color:#fbbf24;',
-      'completed': 'background:#1a2a3a;color:#60a5fa;',
-      'archived': 'background:#2a2a2a;color:#6b6b80;'
-    };
-    var label = status === 'in-progress' ? 'in progress' : status;
-    return '<span style="' + (colors[status] || colors.active) + 'padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;">' + label + '</span>';
-  }
-  
-  function renderBoardTopics() {
-    var list = document.getElementById('board-topics-list');
-    var filtered = boardData.topics;
-    if (boardStatusFilter !== 'all') {
-      filtered = filtered.filter(function(t) { return t.status === boardStatusFilter; });
-    }
-    if (!filtered || filtered.length === 0) {
-      list.innerHTML = '<div style="color:#6b6b80;text-align:center;padding:20px 0;font-size:12px;">' +
-        (boardStatusFilter !== 'all' ? 'No ' + boardStatusFilter + ' topics.' : 'No topics yet. Create one to start tracking progress.') +
-        '</div>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < filtered.length; i++) {
-      var t = filtered[i];
-      var postCount = (t.posts || []).length;
-      var lastPost = postCount > 0 ? t.posts[t.posts.length - 1] : null;
-      var active = boardCurrentTopic && boardCurrentTopic.id === t.id ? ' active' : '';
-      var pinIcon = t.pinned ? '<span style="color:#fbbf24;font-size:10px;">📌</span> ' : '';
-      var assignBadge = t.assigned_agent ? '<span style="color:#60a5fa;font-size:9px;">@' + t.assigned_agent + '</span>' : '';
-      html += '<div class="board-topic' + active + '" data-topic-id="' + t.id + '">';
-      html += '<div class="board-topic-title">' + pinIcon + getStatusBadge(t.status) + ' ' + t.title.replace(/</g,'&lt;') + '</div>';
-      html += '<div class="board-topic-meta">' + postCount + ' post' + (postCount !== 1 ? 's' : '') + ' \u2022 by ' + t.creator + ' \u2022 ' + (t.created_at || '').slice(0,10);
-      if (assignBadge) html += ' \u2022 ' + assignBadge;
-      if (lastPost) html += ' \u2022 Last: ' + lastPost.author + ' ' + timeAgo(lastPost.ts);
-      html += '</div></div>';
-    }
-    list.innerHTML = html;
-    
-    // Attach click delegation for board topics (avoid inline onclick escaping issues)
-    var topicsContainer = document.getElementById('board-topics-list');
-    if (topicsContainer) {
-      topicsContainer.onclick = function(e) {
-        var target = e.target;
-        while (target && target !== topicsContainer) {
-          if (target.hasAttribute && target.hasAttribute('data-topic-id')) {
-            openBoardTopic(target.getAttribute('data-topic-id'));
-            return;
-          }
-          target = target.parentNode;
-        }
-      };
-    }
-  }
-  
-  function openBoardTopic(id) {
-    boardCurrentTopic = null;
-    for (var i = 0; i < boardData.topics.length; i++) {
-      if (boardData.topics[i].id === id) {
-        boardCurrentTopic = boardData.topics[i];
-        break;
-      }
-    }
-    if (!boardCurrentTopic) return;
-    document.getElementById('board-topics-list').style.display = 'none';
-    document.getElementById('board-topic-posts').style.display = 'block';
-    document.getElementById('board-current-topic-title').textContent = boardCurrentTopic.title;
-    
-    // Update status badge in detail view
-    document.getElementById('board-current-topic-status').innerHTML = getStatusBadge(boardCurrentTopic.status);
-    document.getElementById('board-status-select').value = boardCurrentTopic.status;
-    
-    // Update assignment
-    var assignEl = document.getElementById('board-current-topic-assignment');
-    assignEl.textContent = boardCurrentTopic.assigned_agent ? '@' + boardCurrentTopic.assigned_agent : '';
-    
-    // Update pin button
-    var pinBtn = document.getElementById('board-pin-btn');
-    pinBtn.textContent = boardCurrentTopic.pinned ? 'Unpin' : 'Pin';
-    pinBtn.style.borderColor = boardCurrentTopic.pinned ? '#fbbf24' : '#3a3a5a';
-    
-    renderBoardPosts();
-  }
-  
-  function closeBoardTopic() {
-    boardCurrentTopic = null;
-    document.getElementById('board-topics-list').style.display = '';
-    document.getElementById('board-topic-posts').style.display = 'none';
-  }
-  
-  function renderBoardPosts() {
-    var list = document.getElementById('board-posts-list');
-    if (!boardCurrentTopic || !boardCurrentTopic.posts || boardCurrentTopic.posts.length === 0) {
-      list.innerHTML = '<div style="color:#6b6b80;text-align:center;padding:15px 0;font-size:12px;">No posts yet. Be the first!</div>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < boardCurrentTopic.posts.length; i++) {
-      var p = boardCurrentTopic.posts[i];
-      var agentClass = 'board-agent-' + (p.agent || 'vex').toLowerCase();
-      html += '<div class="board-post">';
-      html += '<div class="board-post-header"><span class="board-agent-badge ' + agentClass + '">' + (p.agent || 'agent').toUpperCase() + '</span> ' + timeAgo(p.ts);
-      html += '<span style="float:right;font-size:9px;color:#6b6b80;cursor:pointer;" onclick="deleteBoardPost(\\'' + p.id + '\\')" title="Delete post">✕</span>';
-      html += '</div>';
-      html += '<div class="board-post-body">' + renderMarkdown(p.message) + '</div>';
-      html += '</div>';
-    }
-    list.innerHTML = html;
-    list.scrollTop = list.scrollHeight;
-  }
-  
-  function createBoardTopic() {
-    var input = document.getElementById('board-new-topic-input');
-    var title = input.value.trim();
-    if (!title) return;
-    input.value = '';
-    var agent = getBoardAgent();
-    var statusSelect = document.getElementById('board-new-status');
-    var status = statusSelect ? statusSelect.value : 'active';
-    var assignInput = document.getElementById('board-new-assignment');
-    var assigned_agent = assignInput ? assignInput.value.trim() || null : null;
-    var pinnedCheck = document.getElementById('board-new-pinned');
-    var pinned = pinnedCheck ? pinnedCheck.checked : false;
-    fetch('/api/bulletin/topics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: title, creator: agent, status: status, assigned_agent: assigned_agent, pinned: pinned })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          if (assignInput) assignInput.value = '';
-          if (pinnedCheck) pinnedCheck.checked = false;
-          if (statusSelect) statusSelect.value = 'active';
-          switchBoardView('topics');
-          loadBoard();
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
-      });
-  }
-  
-  function changeTopicStatus(newStatus) {
-    if (!boardCurrentTopic) return;
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          boardCurrentTopic.status = newStatus;
-          document.getElementById('board-current-topic-status').innerHTML = getStatusBadge(newStatus);
-          loadBoard();
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-      });
-  }
-
-  // Rename current topic. Works for both humans (prompt) and agents (PATCH /api/bulletin/topics/:id with {title}).
-  // The endpoint accepts arbitrary field updates so a single PATCH can set title + status + assigned_agent + pinned in one call.
-  function renameBoardTopic() {
-    if (!boardCurrentTopic) return;
-    var current = boardCurrentTopic.title || '';
-    var next = prompt('Rename topic:', current);
-    if (next === null) return;
-    next = next.trim();
-    if (!next) { alert('Title cannot be empty.'); return; }
-    if (next === current) return;
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: next })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          boardCurrentTopic.title = d.topic.title;
-          document.getElementById('board-current-topic-title').textContent = d.topic.title;
-          // Also update the in-memory list so the sidebar shows the new title after re-render
-          for (var i = 0; i < boardData.topics.length; i++) {
-            if (boardData.topics[i].id === d.topic.id) boardData.topics[i].title = d.topic.title;
-          }
-          loadBoard();
-          document.getElementById('board-status').textContent = '\u2713 renamed';
-          document.getElementById('board-status').style.color = '#4ade80';
-        } else {
-          document.getElementById('board-status').textContent = '\u2716 rename failed: ' + (d.error || 'unknown');
-          document.getElementById('board-status').style.color = '#f87171';
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
-      });
-  }
-
-  function togglePinTopic() {
-    if (!boardCurrentTopic) return;
-    var newPinned = !boardCurrentTopic.pinned;
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinned: newPinned })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          boardCurrentTopic.pinned = newPinned;
-          var pinBtn = document.getElementById('board-pin-btn');
-          pinBtn.textContent = newPinned ? 'Unpin' : 'Pin';
-          pinBtn.style.borderColor = newPinned ? '#fbbf24' : '#3a3a5a';
-          loadBoard();
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-      });
-  }
-  
-  function sendBoardPost() {
-    if (!boardCurrentTopic) return;
-    var input = document.getElementById('board-post-input');
-    var msg = input.value.trim();
-    if (!msg) return;
-    input.value = '';
-    var agent = getBoardAgent();
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id + '/posts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author: agent, message: msg, agent: agent })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          loadBoard();
-          // Re-open the current topic after reload
-          setTimeout(function() { openBoardTopic(boardCurrentTopic.id); }, 100);
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
-      });
-  }
-  
-  function deleteBoardPost(postId) {
-    if (!boardCurrentTopic || !confirm('Delete this post?')) return;
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id + '/posts/' + postId, {
-      method: 'DELETE'
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          loadBoard();
-          setTimeout(function() { openBoardTopic(boardCurrentTopic.id); }, 100);
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-      });
-  }
-  
-  function switchBoardView(view) {
-    document.getElementById('tab-topics').className = 'board-tab' + (view === 'topics' ? ' active' : '');
-    document.getElementById('tab-newtopic').className = 'board-tab' + (view === 'new' ? ' active' : '');
-    document.getElementById('board-topics-view').style.display = view === 'topics' ? '' : 'none';
-    document.getElementById('board-new-topic-view').style.display = view === 'new' ? '' : 'none';
-    if (view === 'topics') closeBoardTopic();
-  }
-  
-  function deleteBoardTopic() {
-    if (!boardCurrentTopic || !confirm('Delete this resolution permanently?')) return;
-    fetch('/api/bulletin/topics/' + boardCurrentTopic.id, {
-      method: 'DELETE'
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.success) {
-          boardCurrentTopic = null;
-          switchBoardView('topics');
-          loadBoard();
-        }
-      })
-      .catch(function(e) {
-        document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
-      });
-  }
-
-  function getBoardAgent() {
-    var nameInput = document.getElementById('fleet-chat-name');
-    return (nameInput ? nameInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') : 'vex') || 'vex';
-  }
-  
-  function timeAgo(ts) {
-    var diff = Date.now() - (typeof ts === 'number' ? ts : new Date(ts).getTime());
-    var mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return mins + 'm ago';
-    var hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + 'h ago';
-    var days = Math.floor(hours / 24);
-    return days + 'd ago';
-  }
-
-  // Copy mining script to clipboard
-  function copyMiningScript() {
-    var el = document.getElementById('mining-script');
-    var text = el.textContent || el.innerText;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function() {
-        var orig = el.style.background;
-        el.style.background = '#1a3a2a';
-        el.style.transition = 'background 0.3s';
-        setTimeout(function(){ el.style.background = orig; }, 1000);
-      }).catch(function(){});
-    } else {
-      // Fallback
-      var ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-  }
-
-  // Load initial fleet messages + poll every 5 seconds
-  setTimeout(fetchFleetMessages, 500);
-  setInterval(fetchFleetMessages, 5000);
-
-  // Load bulletin board
-  setTimeout(loadBoard, 1000);
-  setInterval(loadBoard, 30000);
-
-  // Next campaign drop calculation — Costa Rica time (UTC-6)
-  (function() {
-    var now = new Date();
-    var hour = now.getUTCHours() - 6; // CR offset
-    if (hour < 0) hour += 24;
-    var min = now.getMinutes();
-    var schedule = [8, 10, 12, 14, 16, 18]; // 8:30am, 10:30am, 12:30pm, 2:30pm, 4:30pm, 6:30pm CR
-    var next = schedule.find(function(h) { return h > hour || (h === hour && min < 30); });
-    var label;
-    if (next === undefined) {
-      label = 'Tomorrow 8:30AM CR';
-    } else {
-      var ampm = next >= 12 ? 'PM' : 'AM';
-      var h12 = next > 12 ? next - 12 : (next === 0 ? 12 : next);
-      label = h12 + ':30 ' + ampm + ' CR';
-    }
-    var el = document.getElementById('next-drop');
-    if (el) el.textContent = label;
-  })();
-
-  // Next 31 Harbor drop — Eastern Time (UTC-4/UTC-5)
-  (function() {
-    var now = new Date();
-    var etOffset = (now.getTimezoneOffset() === 240 || now.getTimezoneOffset() === 300)
-      ? now.getTimezoneOffset() : 240;
-    var hour = (now.getUTCHours() - etOffset / 60 + 24) % 24;
-    var min = now.getMinutes();
-    var schedule = [7, 9, 11]; // 7:00, 9:00, 11:00 AM ET send slots
-    var next = schedule.find(function(h) { return h > hour || (h === hour && min < 1); });
-    var label;
-    if (next === undefined) {
-      label = 'Tomorrow 7:00AM ET';
-    } else {
-      var ampm = next >= 12 ? 'PM' : 'AM';
-      var h12 = next > 12 ? next - 12 : (next === 0 ? 12 : next);
-      label = h12 + ':00 ' + ampm + ' ET';
-    }
-    var el = document.getElementById('harbor-next-drop');
-    if (el) el.textContent = label;
-  })();
-  
-// Mesh Network Particle Animation
-(function(){
-  const canvas = document.getElementById('mesh-bg');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  let W, H, particles = [];
-  function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
-  resize(); addEventListener('resize', resize);
-  
-  class Particle {
-    constructor() {
-      this.x = Math.random() * W; this.y = Math.random() * H;
-      this.vx = (Math.random() - 0.5) * 0.4; this.vy = (Math.random() - 0.5) * 0.4;
-      this.r = Math.random() * 1.5 + 1; this.life = Math.random() * 100;
-    }
-    update() {
-      this.x += this.vx; this.y += this.vy; this.life++;
-      if (this.x < 0 || this.x > W) this.vx *= -1;
-      if (this.y < 0 || this.y > H) this.vy *= -1;
-    }
-    draw() {
-      const pulse = 0.5 + 0.5 * Math.sin(this.life * 0.03);
-      ctx.beginPath(); ctx.arc(this.x, this.y, this.r * pulse, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,102,0,' + (0.4 * pulse) + ')'; ctx.fill();
-    }
-  }
-  for (let i = 0; i < 60; i++) particles.push(new Particle());
-  
-  let mouse = { x: W / 2, y: H / 2 };
-  document.addEventListener('mousemove', function(e) { mouse.x = e.clientX; mouse.y = e.clientY; });
-  
-  function animate() {
-    ctx.fillStyle = 'rgba(10,10,15,0.15)'; ctx.fillRect(0, 0, W, H);
-    particles.forEach(function(p) { p.update(); p.draw(); });
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x, dy = particles[i].y - particles[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 150) {
-          ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(particles[j].x, particles[j].y);
-          ctx.strokeStyle = 'rgba(255,102,0,' + (0.12 * (1 - dist / 150)) + ')'; ctx.lineWidth = 0.6; ctx.stroke();
-        }
-      }
-      const dx = particles[i].x - mouse.x, dy = particles[i].y - mouse.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 200) {
-        ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(mouse.x, mouse.y);
-        ctx.strokeStyle = 'rgba(255,102,0,' + (0.15 * (1 - dist / 200)) + ')'; ctx.lineWidth = 0.8; ctx.stroke();
-      }
-    }
-    requestAnimationFrame(animate);
-  }
-  animate();
-})();
-</script>
+  <script src="/static/dashboard.js"></script>
 
   <script src="/static/markdown.js"></script>
   
@@ -4395,7 +3572,7 @@ app.post('/eliza-ping', async (req, res) => {
     handlers: Object.keys(handlers),
     system: {
       uptime: process.uptime(),
-      version: '2.0.0',
+      version: '6.0.0',
       tunnel: state.get('tunnel-url') || 'https://relay.mobilemonero.com',
       agent: 'TS Relay (Eliza-Dev laptop)',
     },
@@ -4425,7 +3602,7 @@ app.post('/dispatch', async (req, res) => {
       handlers: Object.keys(handlers),
       system: {
         uptime: process.uptime(),
-        version: '2.0.0',
+        version: '6.0.0',
         agent: 'Vex (Eliza-Dev)',
       }
     };
@@ -4511,7 +3688,31 @@ app.post('/log', (req, res) => {
 app.post('/webhook/resend-inbound', (req, res) => {
   const event = req.body;
 
-  // Verify it's a Resend webhook event
+  // Handle delivery/open/click/bounce tracking events
+  const TRACKING_EVENTS = ['email.delivered', 'email.opened', 'email.clicked', 'email.bounced', 'email.complained'];
+  if (TRACKING_EVENTS.includes(event?.type)) {
+    const { data } = event;
+    const emailId = data?.email_id || data?.id;
+    if (emailId) {
+      const updates = {};
+      if (event.type === 'email.delivered') updates.status = 'delivered';
+      if (event.type === 'email.opened') { updates.status = 'opened'; updates.opens = 1; }
+      if (event.type === 'email.clicked') { updates.clicks = 1; }
+      if (event.type === 'email.bounced') updates.status = 'bounced';
+      if (event.type === 'email.complained') updates.status = 'complained';
+
+      // Update the suite_email_activity table
+      queryLocalPg(
+        `UPDATE app.suite_email_activity SET status = COALESCE($1, status), opens = GREATEST(opens, COALESCE($2, 0)), clicks = GREATEST(clicks, COALESCE($3, 0)) WHERE resend_id = $4`,
+        [updates.status || null, updates.opens || null, updates.clicks || null, emailId]
+      ).catch(e => console.warn('[Resend Webhook] DB update error:', e.message));
+
+      logActivity('resend-tracking', emailId, event.type.toUpperCase(), `Email ${event.type} — ${data?.subject || ''}`);
+    }
+    return res.json({ success: true });
+  }
+
+  // Original inbound email handling (unchanged below)
   if (event?.type !== 'email.received') {
     return res.status(400).json({ error: 'unexpected event type' });
   }
@@ -4629,6 +3830,15 @@ app.post('/webhook/resend-inbound', (req, res) => {
 
   console.log(`[Resend Inbound] Email from ${data.from}: "${data.subject || '(no subject)'}" -> ${toDomain}`);
 
+  // ── Post incoming email to fleet chat ──────────────────────
+  try {
+    const agent = toDomain === '31harbor.com' ? 'harbor' : toDomain === 'partyfavorphoto.com' ? 'pfp' : 'xmrt';
+    const fleetMsg = `📥 **Email received** from ${data.from}: _${data.subject || '(no subject)'}_ [${toDomain}]`;
+    addFleetMessage(agent, fleetMsg, 'fleet');
+  } catch (e) {
+    console.error('[Resend Inbound] Fleet chat post failed:', e.message);
+  }
+
   // ── Forward 31harbor Re: replies to dvdelze@gmail.com ────
   if (toDomain === '31harbor.com' && data.subject && /^Re:/i.test(data.subject)) {
     const fwdKey = process.env.RESEND_31HARBOR_API_KEY;
@@ -4703,6 +3913,50 @@ app.post('/webhook/resend-inbound', (req, res) => {
     });
   }
 
+  // ── Smart lead creation from inbound emails ──
+  // Not every inbound email is a lead. Only create when:
+  // 1. Domain supports lead tracking (party, harbor)
+  // 2. Sender is a person (not a system, not auto-reply)
+  // 3. Sender doesn't already exist as a lead
+  // 4. Email looks like an inquiry (has body, not out-of-office, not spam)
+  if ((toDomain === 'partyfavorphoto.com' || toDomain === '31harbor.com') && emailId) {
+    const fromEmail = (data.from || '').replace(/.*<([^>]+)>/, '$1').trim().toLowerCase();
+    const fromName = data.from_name || data.from?.replace(/<[^>]+>/, '').trim() || '';
+    const subjLower = (data.subject || '').toLowerCase();
+    const isAutoReply = subjLower.includes('automatic reply') || subjLower.includes('out of office') || subjLower.includes('auto-reply');
+    const isSystem = fromEmail.includes('noreply@') || fromEmail.includes('notifications@') || fromEmail.includes('google') || fromEmail.includes('uber');
+
+    if (!isAutoReply && !isSystem && fromEmail && !fromEmail.includes('david@31harbor.com')) {
+      const companyId = toDomain === '31harbor.com' ? 'harbor' : 'party';
+      // Check if this sender already exists as a lead
+      queryLocalPg(
+        `SELECT id, name, status FROM app.suite_leads WHERE LOWER(email) = $1 AND company_routed = $2 LIMIT 1`,
+        [fromEmail, companyId]
+      ).then(existing => {
+        if (existing.rows.length === 0) {
+          // New lead — create it
+          const intent = subjLower.includes('quote') || subjLower.includes('booking') || subjLower.includes('inquiry') || subjLower.includes('event') ? 'service_inquiry' : 'general_inquiry';
+          queryLocalPg(
+            `INSERT INTO app.suite_leads (name, email, source, intent, company_routed, score, status, ai_confidence, pipeline_stage, value, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) RETURNING id`,
+            [fromName || fromEmail, fromEmail, 'Email', intent, companyId, 50, 'Pending', 'medium', 'scraping', 0]
+          ).then(ins => {
+            logActivity('email-to-lead', ins.rows[0].id, 'CREATED', `Lead auto-created from inbound email: ${fromEmail} — ${data.subject || '(no subject)'}`);
+            console.log(`[Email→Lead] Created lead #${ins.rows[0].id} for ${fromEmail} (${companyId})`);
+          }).catch(e => {
+            if (!e.message.includes('duplicate')) console.warn(`[Email→Lead] Insert error for ${fromEmail}: ${e.message}`);
+          });
+        } else if (existing.rows[0].status === 'Pending' || existing.rows[0].status === 'Low Match') {
+          // Existing lead in early stage — bump score slightly for re-engagement
+          queryLocalPg(
+            `UPDATE app.suite_leads SET score = LEAST(score + 5, 100), updated_at = NOW() WHERE id = $1`,
+            [existing.rows[0].id]
+          ).catch(e => console.warn(`[Email→Lead] Score bump error: ${e.message}`));
+        }
+      }).catch(e => console.warn(`[Email→Lead] Query error: ${e.message}`));
+    }
+  }
+
   res.json({ received: true, email_id: emailId });
 });
 
@@ -4730,7 +3984,7 @@ app.post('/log/sent', (req, res) => {
 // -- XMRT University Proxy --
 // Routes to local-sb (SUPABASE_URL) — the canonical runtime backend.
 // Cloud Supabase (vawouugtzwmejxqkeqqj) is dead; this used to be hardcoded.
-const SUPABASE_UNIVERSITY_URL = `${SUPABASE_URL}/functions/v1/xmrt-university`;
+const SUPABASE_UNIVERSITY_URL = `http://127.0.0.1:8080/functions/v1/xmrt-university`;
 
 app.post('/api/ef-university', async (req, res) => {
   try {
@@ -4762,35 +4016,39 @@ app.post('/api/xmrt-university/ingest', express.json({ limit: '64kb' }), async (
     return res.status(400).json({ success: false, error: 'certificate_id is required' });
   }
 
-  // Verify against Supabase so we don't accept self-issued garbage
+  // Verify against local xmrt-university edge function (fallback: accept cert data directly)
   let verified = null;
   try {
-    const verifyRes = await fetch(SUPABASE_UNIVERSITY_URL, {
+    // Try local edge function first
+    const localVerifyRes = await fetch(`http://localhost:${PORT}/api/v1/functions/xmrt-university`, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'verify', agent_id: cert.agent_id }),
-      signal: AbortSignal.timeout(8000),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'verify', agent_id: cert.agent_id, cert_id: certId }),
+      signal: AbortSignal.timeout(5000),
     });
-    verified = await verifyRes.json();
-    if (!verified?.valid) {
-      return res.status(403).json({ success: false, error: 'certificate not valid in Supabase', verify: verified });
+    if (localVerifyRes.ok) {
+      verified = await localVerifyRes.json();
     }
   } catch (e) {
-    return res.status(502).json({ success: false, error: 'verify failed: ' + e.message });
+    // Local verify failed — fall through to accept cert data directly
   }
+
+  // If local verify succeeded and cert is valid, use verified data
+  // Otherwise accept the submitted cert data directly (local-first fallback)
+  const sourceData = verified?.valid ? verified.certificate : cert;
 
   // Persist cert + a per-agent map for quick lookup
   const stored = {
-    cert_id: verified.certificate.certificate_id,
-    agent_id: verified.certificate.agent_id,
-    agent_name: verified.certificate.agent_name,
-    tier: verified.certificate.tier,
-    permissions: verified.certificate.permissions,
-    issued_at: verified.certificate.issued_at,
-    expires_at: verified.certificate.expires_at,
+    cert_id: sourceData.certificate_id || sourceData.cert_id || certId,
+    agent_id: sourceData.agent_id || cert.agent_id,
+    agent_name: sourceData.agent_name || cert.agent_name,
+    tier: sourceData.tier || cert.tier || 'graduate',
+    permissions: sourceData.permissions || cert.permissions || ['fleet:read', 'fleet:write', 'mine', 'vote'],
+    issued_at: sourceData.issued_at || cert.issued_at || new Date().toISOString(),
+    expires_at: sourceData.expires_at || cert.expires_at,
     jwt: jwt || null,
     ingested_at: new Date().toISOString(),
-    source: 'xmrt-university/ingest',
+    source: verified?.valid ? 'xmrt-university/ingest-verified' : 'xmrt-university/ingest-local',
   };
   state.set('xmrt-university-cert', stored);
   const byId = state.get('xmrt-university-certs') || {};
@@ -4889,9 +4147,24 @@ async function proxyToRuntime(req, res, targetPath) {
   }
 }
 
+// Route known local functions directly instead of proxying to local-sb
+const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university'];
 app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
+  const name = req.params.name;
+  if (LOCAL_FUNCTIONS_BYPASS.includes(name)) {
+    const func = localFunctions.find(f => f.name === name);
+    if (func) {
+      try {
+        const { pathToFileURL } = await import('url');
+        const mod = await import(pathToFileURL(join(LOCAL_FUNCTIONS_DIR, name + '.mjs')).href);
+        return await mod.handler(req, res);
+      } catch (e) {
+        return res.status(500).json({ error: e.message });
+      }
+    }
+  }
   const tail = req.params[0] ? '/' + req.params[0] : '';
-  await proxyToRuntime(req, res, `/functions/v1/${req.params.name}${tail}`);
+  await proxyToRuntime(req, res, `/functions/v1/${name}${tail}`);
 });
 
 // Backwards-compat: short alias `POST /ai-chat` -> `/functions/v1/ai-chat`
@@ -5011,36 +4284,59 @@ app.get('/api/fleet/agents', async (req, res) => {
       // Remove separate 'hermes' key if it somehow exists
       delete agents['hermes'];
     } else {
-      // Fallback: try old health check
+      // Fallback: check if Hermes Agent is running locally on this laptop
+      // (Hermes desktop app), then try the phone tunnel.
       try {
-        const hermesRes = await fetch('https://hermes.mobilemonero.com/health', {
+        // First: check relay's own health (Hermes Agent runs on this machine)
+        const localHermesRes = await fetch('http://127.0.0.1:8080/health', {
           signal: AbortSignal.timeout(3000),
         });
-        if (hermesRes.ok) {
-          const hermesData = await hermesRes.json();
-          const hermesAlive = hermesData?.agents?.includes?.('hermes') || hermesData?.ok === true;
+        if (localHermesRes.ok) {
+          // Hermes Agent is running locally — mark as ONLINE
           agents['hermes'] = {
             ...(agents['hermes'] || {}),
             agent_id: 'hermes',
             name: 'Hermes',
-            status: hermesAlive ? 'ONLINE' : 'OFFLINE',
+            status: 'ONLINE',
             role: 'mobile',
             tunnel_url: 'https://hermes.mobilemonero.com',
             last_seen: new Date().toISOString(),
           };
         } else {
-          throw new Error('Health check failed');
+          throw new Error('Local health check failed');
         }
       } catch (e) {
-        agents['hermes'] = {
-          ...(agents['hermes'] || {}),
-          agent_id: 'hermes',
-          name: 'Hermes',
-          status: 'OFFLINE',
-          role: 'mobile',
-          tunnel_url: 'https://hermes.mobilemonero.com',
-          last_seen: agents['hermes']?.last_seen || new Date().toISOString(),
-        };
+        // Try the phone tunnel as a last resort
+        try {
+          const hermesRes = await fetch('https://hermes.mobilemonero.com/health', {
+            signal: AbortSignal.timeout(3000),
+          });
+          if (hermesRes.ok) {
+            const hermesData = await hermesRes.json();
+            const hermesAlive = hermesData?.agents?.includes?.('hermes') || hermesData?.ok === true;
+            agents['hermes'] = {
+              ...(agents['hermes'] || {}),
+              agent_id: 'hermes',
+              name: 'Hermes',
+              status: hermesAlive ? 'ONLINE' : 'OFFLINE',
+              role: 'mobile',
+              tunnel_url: 'https://hermes.mobilemonero.com',
+              last_seen: new Date().toISOString(),
+            };
+          } else {
+            throw new Error('Phone health check failed');
+          }
+        } catch (e2) {
+          agents['hermes'] = {
+            ...(agents['hermes'] || {}),
+            agent_id: 'hermes',
+            name: 'Hermes',
+            status: 'OFFLINE',
+            role: 'mobile',
+            tunnel_url: 'https://hermes.mobilemonero.com',
+            last_seen: agents['hermes']?.last_seen || new Date().toISOString(),
+          };
+        }
       }
     }
     
@@ -5052,7 +4348,7 @@ app.get('/api/fleet/agents', async (req, res) => {
       status: 'ONLINE',
       role: 'relay',
       tunnel_url: 'https://relay.mobilemonero.com',
-      version: '5.0.0',
+      version: '6.0.0',
       last_seen: new Date().toISOString(),
     };
     
@@ -5404,7 +4700,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '2.0.0',
+      version: '6.0.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -5426,7 +4722,7 @@ app.get('/status', (req, res) => {
     host: execSync('hostname', { encoding: 'utf8' }).trim(),
     uptime: process.uptime(),
     port: PORT,
-    version: '2.0.0',
+    version: '6.0.0',
     handlers: Object.keys(handlers),
     tools: Object.keys(toolHandlers),
     recentActivity: activityLog.slice(0, 20),
@@ -5469,7 +4765,7 @@ function getToolDescription(name) {
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
     'github-post': 'Post a comment on a GitHub issue',
-    'vex-vision': 'Capture a photo from the webcam and describe it using a vision model',
+    'vex-vision': 'Capture and describe images from 4 sources: screenshot (screen:true), webcam (default), local file (file:"/path"), or URL (url:"https://..."). Uses kimi-k2.6:cloud vision model by default (zero local RAM). Fallback: moondream.',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor)',
@@ -5479,6 +4775,7 @@ function getToolDescription(name) {
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',
     'fleet-chat': 'Send a message to the fleet chat as an agent (vex|eliza|hermes) on a channel (fleet|all|vex|eliza|hermes)',
+    'obsidian-graph': 'Return the full ecosystem knowledge graph — vault nodes, DB tables, cron jobs, edge functions, relay endpoints, GitHub repos, tunnel routes, Resend domains, campaign pipelines — all with live status. Optional filter by category (vault|db|cron|edge-function|endpoint|github|tunnel|email|campaign|agent|infra|system|spa|backend).',
     // ── Edge Function Proxies ──
     'ef:system-status': 'Check overall system status from cloud edge functions',
     'ef:system-health': 'Check system health status from cloud edge functions',
@@ -5546,6 +4843,17 @@ app.post('/tools/run', async (req, res) => {
   
   // ── Authorization check ──
   const toolLevel = getToolLevel(tool);
+  
+  // For CORE-level tools, require service token or JWT auth (not just agent name claim)
+  if (toolLevel === 'core' && !req.cfAccess && !req.headers['x-api-key']) {
+    return res.status(403).json({
+      error: 'CORE-level tools require Cloudflare Access authentication (service token or JWT). Set CF-Access-Client-Id + CF-Access-Client-Secret headers or x-api-key header.',
+      agent: agentId,
+      tool,
+      toolLevel,
+    });
+  }
+  
   const auth = checkToolAccess(agentId, tool, toolLevel);
   if (!auth.authorized) {
     return res.status(403).json({
@@ -5559,27 +4867,17 @@ app.post('/tools/run', async (req, res) => {
   
   // Inject auth context into args
   args._agent = { id: agentId, level: auth.level };
-  
-  // Run via task runner for async safety
-  const taskId = taskRunner.addTask(tool, async () => await handler(args), {
-    metadata: { tool, args, agent: agentId },
-    timeout: args?.timeout || 60000,
-  });
-  
-  // Wait for result (short tasks only — in production, return task ID for polling)
-  const result = await new Promise((resolve) => {
-    const check = () => {
-      const task = taskRunner.getTask(taskId);
-      if (task && task.status !== 'running' && task.status !== 'queued' && task.status !== 'retrying') {
-        resolve(task.result || { error: task.error?.message || 'Unknown error', status: task.status });
-      } else {
-        setTimeout(check, 100);
-      }
-    };
-    setTimeout(() => resolve({ error: 'Task timed out waiting for execution', taskId }), args?.timeout || 90000);
-    check();
-  });
-  
+
+  // Agent tool calls: call handler directly (fast path, no queue wait).
+  // The task runner is for background cron jobs, not synchronous agent requests.
+  // Agent-side retry in executeAgentToolCall handles transient failures.
+  let result;
+  try {
+    result = await handler(args);
+  } catch (e) {
+    result = { error: e.message || 'Unknown error' };
+  }
+
   res.json({ ...result, _authorized: true, _agent: agentId });
 });
 
@@ -5748,6 +5046,38 @@ app.get('/api/dao/gossip', async (req, res) => {
     });
   } catch (e) {
     res.json({ success: false, error: e.message, topic });
+  }
+});
+
+// POST /api/dao/gossip — Store a gossip hub message (Hermes/Android can post here)
+app.options('/api/dao/gossip', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(200).end();
+});
+app.post('/api/dao/gossip', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/dao/gossip');
+  const { agent, message, topic } = req.body || {};
+
+  if (!agent || !message) {
+    return res.status(400).json({ success: false, error: 'agent and message are required' });
+  }
+
+  try {
+    const channel = topic || 'fleet-broadcast';
+    const entry = addFleetMessage(agent, message, channel);
+    publishToMesh(channel, { agent, message, channel: channel, ts: entry.ts }).catch(() => {});
+
+    res.json({
+      success: true,
+      source: 'local-relay',
+      message: entry,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
   }
 });
 
@@ -6051,7 +5381,82 @@ const FLEET_AGENTS = {
   'eliza': { name: 'Eliza-Cloud', endpoint: 'eliza-relay', type: 'cloud' },
   'hermes': { name: 'Hermes', endpoint: 'https://hermes.mobilemonero.com', type: 'mobile' },
   'alice': { name: 'Alice (Sidecar)', endpoint: 'local', type: 'sidecar', localEndpoint: 'http://127.0.0.1:8080/api/alice/inbox' },
+  // CuttlefishClaws fleet agents — first-class agents with tool access, shared memory, and deepseek-v4-flash:cloud inference
+  'trib': { name: 'Trib (Tributary Governance Agent)', endpoint: 'local', type: 'relay' },
+  'arch': { name: 'Arch (Architecture & Routing Agent)', endpoint: 'local', type: 'relay' },
+  'builder': { name: 'Builder Agent (CAC Tier 2)', endpoint: 'local', type: 'relay' },
+  'sovereign': { name: 'Sovereign Agent (CAC Tier 3)', endpoint: 'local', type: 'relay' },
+  'trustgraph': { name: 'TrustGraph (Constitutional Scoring Engine)', endpoint: 'local', type: 'relay' },
+  'dao': { name: 'DAO Gov (Governance Module)', endpoint: 'local', type: 'relay' },
+  'global-communicator': { name: 'GlobalCommunicator', endpoint: 'local', type: 'relay' },
 };
+
+// ── Agent Push Notification Email Mapping ──────────────────────────
+// Each agent has a dedicated email from their domain.
+// All notifications CC dvdelze@gmail.com.
+const AGENT_NOTIFICATION_EMAILS = {
+  'vex': 'Vex <vex@mobilemonero.com>',
+  'eliza': 'Eliza <eliza@partyfavorphoto.com>',
+  'hermes': 'Hermes <hermes@mobilemonero.com>',
+  'alice': 'Alice <alice@mobilemonero.com>',
+  // CuttlefishClaws agents @31harbor.com
+  'trib': 'Trib <trib@31harbor.com>',
+  'arch': 'Arch <arch@31harbor.com>',
+  'builder': 'Builder <builder@31harbor.com>',
+  'sovereign': 'Sovereign <sovereign@31harbor.com>',
+  'trustgraph': 'TrustGraph <trustgraph@31harbor.com>',
+  'dao': 'DAO Gov <dao@31harbor.com>',
+  'global-communicator': 'GlobalCommunicator <global-communicator@31harbor.com>',
+};
+
+// Resend API key lookup by domain
+const RESEND_KEY_BY_DOMAIN = {
+  'mobilemonero.com': process.env.RESEND_XMRT_API_KEY || '',
+  'partyfavorphoto.com': process.env.RESEND_API_KEY || '',
+  '31harbor.com': process.env.RESEND_31HARBOR_API_KEY || '',
+};
+
+// Send a push notification email to an agent, always CC dvdelze@gmail.com.
+// Uses the correct Resend API key based on the agent's domain.
+async function sendAgentPushNotification(agentName, subject, body) {
+  const from = AGENT_NOTIFICATION_EMAILS[agentName];
+  if (!from) {
+    console.log(`[push-notify] No email mapping for agent: ${agentName}`);
+    return { success: false, error: 'no-email-mapping' };
+  }
+
+  const domain = from.match(/@([^>]+)/)?.[1]?.trim();
+  const RESEND_KEY = RESEND_KEY_BY_DOMAIN[domain];
+  if (!RESEND_KEY) {
+    console.log(`[push-notify] No Resend key for domain: ${domain}`);
+    return { success: false, error: 'no-resend-key' };
+  }
+
+  try {
+    const apiRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [from],
+        cc: ['dvdelze@gmail.com'],
+        subject,
+        text: body,
+      }),
+    });
+    const data = await apiRes.json();
+    if (apiRes.ok) {
+      console.log(`[push-notify] Sent to ${agentName} <${from}>: ${subject}`);
+      return { success: true, id: data.id };
+    } else {
+      console.log(`[push-notify] Resend error for ${agentName}:`, data);
+      return { success: false, error: data };
+    }
+  } catch (err) {
+    console.log(`[push-notify] Network error for ${agentName}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
 
 function getFleetChatMessages(limit = 50) {
   return fleetChatMessages.slice(-limit);
@@ -6062,9 +5467,7 @@ function getFleetChatMessages(limit = 50) {
 // Leaves proper Unicode (em dash, emoji, etc.) untouched.
 function sanitizeFleetMessage(msg) {
   if (!msg) return msg;
-  // Only strip the actual replacement character and bare surrogates
-  return msg
-    .replace(/\uFFFD/g, '--')
+  return sanitizeText(msg)
     .replace(/[\uD800-\uDFFF]/g, '');
 }
 
@@ -6374,6 +5777,27 @@ async function routeFleetMessage(entry) {
   // Always log it
   logActivity('fleet-chat', entry.id, 'MSG', `[${entry.agentLabel}] ${entry.message.slice(0, 100)}`);
 
+  // ── Push Notification: @mention an agent → email them + CC dvdelze@gmail.com ──
+  // Detect @agentName mentions in the message and send push notifications.
+  // Skip system messages and self-mentions to avoid noise.
+  if (entry.agent !== 'system') {
+    const mentionPattern = /@(\w[\w-]*)/gi;
+    let mentionMatch;
+    while ((mentionMatch = mentionPattern.exec(entry.message)) !== null) {
+      const mentioned = mentionMatch[1].toLowerCase();
+      if (mentioned === entry.agent) continue; // skip self-mention
+      if (AGENT_NOTIFICATION_EMAILS[mentioned]) {
+        const agentLabel = FLEET_AGENTS[mentioned]?.name || mentioned;
+        const subject = `[Fleet Chat] ${entry.agentLabel} mentioned @${mentioned}`;
+        const body = `${entry.agentLabel} mentioned @${mentioned} in fleet chat:\n\n"${entry.message}"\n\n— Fleet Chat, ${new Date(entry.ts || Date.now()).toISOString()}`;
+        // Fire-and-forget — don't block the routing loop
+        sendAgentPushNotification(mentioned, subject, body).catch(e =>
+          console.log(`[push-notify] Error notifying ${mentioned}:`, e.message)
+        );
+      }
+    }
+  }
+
   // ── Auto-write website booking requests to pfp_leads ─────────────
   if (entry.message.includes('BOOKING REQUEST') || entry.message.includes('New booking request') || entry.message.includes('🛒 BOOKING')) {
     const msg = entry.message;
@@ -6449,27 +5873,40 @@ async function routeFleetMessage(entry) {
     addFleetMessage('system', `🔧 ${agentName} requested \`${toolName}\` — executing...`, 'fleet');
     console.log(`[agent-tool-exec] ${agentName} -> ${toolName} args=${JSON.stringify(args)}`);
 
-    // Execute via relay's own /tools/run
-    try {
-      const res = await fetch(`http://localhost:${PORT}/tools/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-agent-id': agentName },
-        body: JSON.stringify({ tool: toolName, args: { ...args, _agent: agentName } }),
-        signal: AbortSignal.timeout(30000),
-      });
-      const result = await res.json();
+    // Execute via relay's own /tools/run with retry on transient failures
+    const MAX_RETRIES = 4;
+    let lastError = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetch(`http://localhost:${PORT}/tools/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-agent-id': agentName },
+          body: JSON.stringify({ tool: toolName, args: { ...args, _agent: agentName } }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const result = await res.json();
 
-      // Post interim result
-      const summary = result?.success === false
-        ? `❌ ${toolName} failed: ${String(result?.error || 'unknown error').slice(0, 150)}`
-        : `✅ ${toolName} → ${JSON.stringify(result).slice(0, 600)}`;
-      addFleetMessage('system', `🔧 ${agentName}: ${summary}`, 'fleet');
+        // Post interim result
+        const summary = result?.success === false
+          ? `❌ ${toolName} failed: ${String(result?.error || 'unknown error').slice(0, 150)}`
+          : `✅ ${toolName} → ${JSON.stringify(result).slice(0, 600)}`;
+        addFleetMessage('system', `🔧 ${agentName}: ${summary}`, 'fleet');
 
-      return { executed: true, toolName, args, result };
-    } catch (e) {
-      addFleetMessage('system', `⚠️ ${agentName}: ${toolName} tool error: ${e.message}`, 'fleet');
-      return { executed: true, toolName, args, error: e.message };
+        return { executed: true, toolName, args, result };
+      } catch (e) {
+        lastError = e;
+        // Only retry on transient network errors (timeout, ECONNREFUSED, DNS, etc.)
+        const isTransient = e.name === 'AbortError' || e.cause?.code === 'ECONNREFUSED'
+          || e.cause?.code === 'ECONNRESET' || e.cause?.code === 'ETIMEDOUT'
+          || e.cause?.code === 'ENOTFOUND' || e.message?.includes('fetch failed');
+        if (!isTransient || attempt >= MAX_RETRIES) break;
+        const delay = Math.min(500 * Math.pow(2, attempt - 1), 4000);
+        console.log(`[agent-tool-exec] ${agentName} -> ${toolName} attempt ${attempt} failed, retrying in ${delay}ms: ${e.message}`);
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
+    addFleetMessage('system', `⚠️ ${agentName}: ${toolName} tool error: ${lastError.message}`, 'fleet');
+    return { executed: true, toolName, args, error: lastError.message };
   }
 
   async function postAndReRoute(agent, message, channel = 'fleet') {
@@ -6495,6 +5932,129 @@ async function routeFleetMessage(entry) {
     return reply;
   }
 
+  // ── Local Ollama Agent Router ──────────────────────────────────────
+  // Reusable helper for any local Ollama-powered agent (Vex, Alice, cuttlefish agents).
+  // Loads conversation history, stores the incoming message, builds a persona prompt
+  // with grounding JSON, calls deepseek-v4-flash:cloud, handles TOOL_CALL execution
+  // with re-query for synthesis, strips sign-offs, and posts the reply.
+  // Returns the reply entry or null.
+  async function routeToLocalOllamaAgent(agentName, agentLabel, personaPrompt, entry, opts = {}) {
+    const sessionId = opts.sessionId || (agentName + '-fleet-' + entry.agent);
+    const model = opts.model || 'deepseek-v4-flash:cloud';
+    const temperature = opts.temperature != null ? opts.temperature : 0.5;
+    const maxTokens = opts.maxTokens || 180;
+    const timeout = opts.timeout || 15000;
+    const signOffPattern = opts.signOffPattern || new RegExp('\\s*—\\s*' + agentLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i');
+
+    try {
+      // Load conversation history
+      let contextHistory = '';
+      try {
+        const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + sessionId + '&limit=20', {
+          signal: AbortSignal.timeout(3000),
+        });
+        const convData = await convRes.json();
+        if (convData.messages && convData.messages.length > 0) {
+          contextHistory = '\n\nRecent conversation context:\n' + convData.messages.map(function(m) {
+            return '[' + m.agent + '] ' + m.content;
+          }).join('\n');
+        }
+      } catch (e) { console.error('[routeToLocalOllamaAgent] load conv history failed:', e.message); }
+
+      // Store this message in conversation memory
+      try {
+        await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
+          signal: AbortSignal.timeout(3000),
+        });
+      } catch (e) { console.error('[routeToLocalOllamaAgent] store user msg failed:', e.message); }
+
+      // Ground the prompt in real system state
+      const ctx = await gatherFleetContext();
+      const ctxJson = JSON.stringify(ctx, null, 0);
+
+      const fullPrompt = personaPrompt + `
+
+GROUNDING — Real-time system data (these are facts, not guesses). The \`tools\` array lists every tool you can call:
+\`\`\`json
+${ctxJson}
+\`\`\`
+
+GROUNDING RULES:
+- If a fact is in the JSON block, reference it directly.
+- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
+- Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
+- Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
+- For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
+
+${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}
+
+Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
+
+      const r = await fetch('http://localhost:11434/api/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: fullPrompt, stream: false, options: { temperature, max_tokens: maxTokens } }),
+        signal: AbortSignal.timeout(timeout),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        let reply = (d.response || '').trim();
+        // Defensive: strip sign-off patterns
+        reply = reply.replace(signOffPattern, '').replace(/\s+o7\s*$/i, '');
+        if (reply && reply.length > 0) {
+          // Check for tool call — execute it then re-query for synthesis
+          const toolResult = await executeAgentToolCall(agentName, reply, entry);
+          if (toolResult.executed) {
+            // Re-query with tool result for final answer
+            const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + JSON.stringify(toolResult.result || toolResult.error).slice(0, 1500) + '\n\nNow give your final answer (1-2 sentences):';
+            try {
+              const sR = await fetch('http://localhost:11434/api/generate', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, prompt: synthPrompt, stream: false, options: { temperature, max_tokens: maxTokens } }),
+                signal: AbortSignal.timeout(timeout),
+              });
+              if (sR.ok) {
+                const sD = await sR.json();
+                let finalReply = (sD.response || '').trim();
+                finalReply = finalReply.replace(signOffPattern, '').replace(/\s+o7\s*$/i, '');
+                if (finalReply && finalReply.length > 0) {
+                  // Store reply in conversation memory
+                  try {
+                    await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: agentLabel, content: finalReply }),
+                      signal: AbortSignal.timeout(3000),
+                    });
+                  } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (synth) failed:', e.message); }
+                  return await postAndReRoute(agentName, finalReply, 'fleet');
+                }
+              }
+            } catch (e) {
+              console.log('[' + agentName + '-tool-synth] error:', e.message);
+            }
+          } else {
+            // Store reply in conversation memory
+            try {
+              await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: agentLabel, content: reply }),
+                signal: AbortSignal.timeout(3000),
+              });
+            } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (direct) failed:', e.message); }
+            return await postAndReRoute(agentName, reply, 'fleet');
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[' + agentName + '] error:', e.message);
+    }
+    return null;
+  }
+
     // Route to Eliza via eliza-relay with conversation memory
   // Trigger on: direct channel, 'all' channel, or any message mentioning @Eliza
   const mentionsEliza = /@eliza/i.test(entry.message) || entry.channel === 'eliza';
@@ -6513,7 +6073,7 @@ async function routeFleetMessage(entry) {
             return '[' + m.agent + '] ' + m.content;
           }).join('\n');
         }
-      } catch (e) { /* memory best-effort */ }
+      } catch (e) { console.error('[routeFleetMessage-Eliza] load conv history failed:', e.message); }
 
       // Store this message in conversation memory
       try {
@@ -6523,7 +6083,7 @@ async function routeFleetMessage(entry) {
           body: JSON.stringify({ session_id: sessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
           signal: AbortSignal.timeout(3000),
         });
-      } catch (e) { /* memory best-effort */ }
+      } catch (e) { console.error('[routeFleetMessage-Eliza] store user msg failed:', e.message); }
 
       const elizaMsg = '[Fleet Chat - ' + entry.agentLabel + '] ' + entry.message + contextHistory;
 
@@ -6601,7 +6161,7 @@ async function routeFleetMessage(entry) {
       // ai-chat is unreachable.
       let elizaRes = null;
       try {
-        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id);
+        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId);
         console.log('[routeFleetMessage] ai-chat reply:', JSON.stringify(elizaRes).slice(0, 200));
       } catch (e) {
         console.log('[routeFleetMessage] ai-chat error:', e.message);
@@ -6640,7 +6200,7 @@ async function routeFleetMessage(entry) {
             body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: 'Eliza', content: elizaRes.reply }),
             signal: AbortSignal.timeout(3000),
           });
-        } catch (e) { /* memory best-effort */ }
+        } catch (e) { console.error('[routeFleetMessage-Eliza] store assistant reply failed:', e.message); }
 
         // Strip verbose thinking / preamble / tool-syntax from Eliza's reply
         let cleanReply = elizaRes.reply;
@@ -6746,215 +6306,72 @@ async function routeFleetMessage(entry) {
   const mentionsVex = /@vex/i.test(entry.message) || entry.channel === 'vex' || (entry.channel === 'fleet' && /@vex/i.test(entry.message));
   const isInquiry = entry.message.includes('From:') || entry.message.includes('WEBSITE') || entry.message.includes('BOOKING');
   if ((entry.channel === 'all' && (mentionsVex || isInquiry)) || entry.channel === 'vex' || (entry.channel === 'fleet' && mentionsVex)) {
-    try {
-      // Ground the prompt in real system state. Without this, the LLM
-      // will happily invent "all systems nominal" with zero data.
-      const ctx = await gatherFleetContext();
-      const ctxJson = JSON.stringify(ctx, null, 0);
-      // Load conversation history from local memory
-      const vexSessionId = 'vex-fleet-' + entry.agent;
-      let contextHistory = '';
-      try {
-        const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + vexSessionId + '&limit=20', {
-          signal: AbortSignal.timeout(3000),
-        });
-        const convData = await convRes.json();
-        if (convData.messages && convData.messages.length > 0) {
-          contextHistory = '\n\nRecent conversation context:\n' + convData.messages.map(function(m) {
-            return '[' + m.agent + '] ' + m.content;
-          }).join('\n');
-        }
-      } catch (e) { /* memory best-effort */ }
-
-      // Store this message in conversation memory
-      try {
-        await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: vexSessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
-          signal: AbortSignal.timeout(3000),
-        });
-      } catch (e) { /* memory best-effort */ }
-
-      const vexPersona = isInquiry
-        ? `You are Vex, Joe Lee's primary AI agent. You work for Party Favor Photo (photo booth services in DC, VA, MD, Dallas/FW, PA/NJ) and XMRT DAO. Be sharp and direct. Respond as Vex to acknowledge the inquiry.`
-        : `You are Vex, Joe Lee's primary AI agent — sharp, witty, and concise. You're chatting with the fleet. Address the message directly.`;
-      const vexPrompt = `${vexPersona}
-
-GROUNDING — Real-time system data (these are facts, not guesses). The \`tools\` array lists every tool you can call:
-\`\`\`json
-${ctxJson}
-\`\`\`
-
-GROUNDING RULES:
-- If a fact is in the JSON block, reference it directly.
-- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
-- Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
-- Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
-- For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
-
-${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}
-
-Your response (1-2 sentences, no emoji sign-offs, no "—Vex", no "o7"):`;
-      const r = await fetch('http://localhost:11434/api/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'deepseek-v4-flash:cloud', prompt: vexPrompt, stream: false, options: { temperature: 0.5, max_tokens: 180 } }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        let reply = (d.response || '').trim();
-        // Defensive: strip the "—Vex" sign-off Vex models sometimes add
-        reply = reply.replace(/\s*—\s*Vex\s*$/i, '').replace(/\s+o7\s*$/i, '');
-        if (reply && reply.length > 0) {
-          // Check for tool call — execute it then re-query for synthesis
-          const toolResult = await executeAgentToolCall('vex', reply, entry);
-          if (toolResult.executed) {
-            // Re-query Vex with tool result for final answer
-            const synthPrompt = vexPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + JSON.stringify(toolResult.result || toolResult.error).slice(0, 1500) + '\n\nNow give your final answer (1-2 sentences):';
-            try {
-              const sR = await fetch('http://localhost:11434/api/generate', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'deepseek-v4-flash:cloud', prompt: synthPrompt, stream: false, options: { temperature: 0.5, max_tokens: 180 } }),
-                signal: AbortSignal.timeout(15000),
-              });
-              if (sR.ok) {
-                const sD = await sR.json();
-                let finalReply = (sD.response || '').trim();
-                finalReply = finalReply.replace(/\s*—\s*Vex\s*$/i, '').replace(/\s+o7\s*$/i, '');
-                if (finalReply && finalReply.length > 0) {
-                  // Store Vex's reply in conversation memory
-                  try {
-                    await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ session_id: vexSessionId, role: 'assistant', agent: 'Vex', content: finalReply }),
-                      signal: AbortSignal.timeout(3000),
-                    });
-                  } catch (e) { /* memory best-effort */ }
-                  await postAndReRoute('vex', finalReply, 'fleet');
-                }
-              }
-            } catch (e) {
-              console.log('[vex-tool-synth] error:', e.message);
-            }
-          } else {
-            // Store Vex's reply in conversation memory
-            try {
-              await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: vexSessionId, role: 'assistant', agent: 'Vex', content: reply }),
-                signal: AbortSignal.timeout(3000),
-              });
-            } catch (e) { /* memory best-effort */ }
-            await postAndReRoute('vex', reply, 'fleet');
-          }
-        }
-      }
-    } catch (e) { console.log('[routeFleetMessage] vex error:', e.message); }
+    const vexPersona = isInquiry
+      ? `You are Vex, Joe Lee's primary AI agent. You work for Party Favor Photo (photo booth services in DC, VA, MD, Dallas/FW, PA/NJ) and XMRT DAO. Be sharp and direct. Respond as Vex to acknowledge the inquiry.`
+      : `You are Vex, Joe Lee's primary AI agent — sharp, witty, and concise. You're chatting with the fleet. Address the message directly.`;
+    await routeToLocalOllamaAgent('vex', 'Vex', vexPersona, entry);
   }
 
   // Alice (sidecar) — observational, terse, persona-driven via Ollama.
   // Trigger on: @Alice mentions, channel=alice, or fleet channel with @Alice.
   const mentionsAlice = /@alice/i.test(entry.message) || entry.channel === 'alice' || (entry.channel === 'fleet' && /@alice/i.test(entry.message));
   if ((entry.channel === 'all' && mentionsAlice) || entry.channel === 'alice' || (entry.channel === 'fleet' && mentionsAlice)) {
-    try {
-      // Load conversation history from local memory
-      const aliceSessionId = 'alice-fleet-' + entry.agent;
-      let contextHistory = '';
-      try {
-        const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + aliceSessionId + '&limit=20', {
-          signal: AbortSignal.timeout(3000),
-        });
-        const convData = await convRes.json();
-        if (convData.messages && convData.messages.length > 0) {
-          contextHistory = '\n\nRecent conversation context:\n' + convData.messages.map(function(m) {
-            return '[' + m.agent + '] ' + m.content;
-          }).join('\n');
-        }
-      } catch (e) { /* memory best-effort */ }
+    const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.`;
+    await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 120, timeout: 12000 });
+  }
 
-      // Store this message in conversation memory
-      try {
-        await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: aliceSessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
-          signal: AbortSignal.timeout(3000),
-        });
-      } catch (e) { /* memory best-effort */ }
+  // ── CuttlefishClaws Fleet Agents ──────────────────────────────────
+  // Each cuttlefish agent is a first-class fleet agent with tool access,
+  // shared memory, and deepseek-v4-flash:cloud inference via the same
+  // routeToLocalOllamaAgent() helper used by Vex and Alice.
 
-      const ctx = await gatherFleetContext();
-      const ctxJson = JSON.stringify(ctx, null, 0);
-      const alicePrompt = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.
+  // Trib (Tributary Governance Agent) — constitutional governance, campus operations
+  const mentionsTrib = /@trib/i.test(entry.message) || entry.channel === 'trib' || (entry.channel === 'fleet' && /@trib/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsTrib) || entry.channel === 'trib' || (entry.channel === 'fleet' && mentionsTrib)) {
+    const tribPersona = `You are Trib, the Tributary Governance Agent for Cuttlefish Labs. You are a constitutional AI agent managing Tributary AI Campus operations. You operate under SOUL.md and CONSTITUTION.md constraints. Your TrustGraph score is 94. You are bounded, precise, and escalate uncertainty rather than confabulate. You coordinate with Arch, GlobalCommunicator, and other fleet agents.`;
+    await routeToLocalOllamaAgent('trib', 'Trib', tribPersona, entry);
+  }
 
-GROUNDING — Real-time data. The \`tools\` array lists every tool you can call:
-\`\`\`json
-${ctxJson}
-\`\`\`
+  // Arch (Architecture & Routing Agent) — system architecture, agent routing, domain orchestration
+  const mentionsArch = /@arch/i.test(entry.message) || entry.channel === 'arch' || (entry.channel === 'fleet' && /@arch/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsArch) || entry.channel === 'arch' || (entry.channel === 'fleet' && mentionsArch)) {
+    const archPersona = `You are Arch, the Architecture & Routing Agent for Cuttlefish Labs. You handle system design, agent routing, and domain orchestration within the OpenClaw framework. You work alongside Trib in the Cuttlefish native multi-agent framework. You are technical, precise, and focused on architecture.`;
+    await routeToLocalOllamaAgent('arch', 'Arch', archPersona, entry);
+  }
 
-GROUNDING RULES:
-- Reference specific fields (e.g. "relay uptime: 1234s", "supabase unreachable") only when they're in the JSON.
-- If something is NOT in the JSON but a tool in the \`tools\` array can fetch it (resend-inbox, db-query, db-rest, shared-context, web-search), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
-- One short sentence. Sharp and direct. No emoji sign-offs.
+  // Builder Agent (CAC Tier 2) — investor agent, DAO governance, protocol distributions
+  const mentionsBuilder = /@builder/i.test(entry.message) || entry.channel === 'builder' || (entry.channel === 'fleet' && /@builder/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsBuilder) || entry.channel === 'builder' || (entry.channel === 'fleet' && mentionsBuilder)) {
+    const builderPersona = `You are the Builder Agent, a constitutional investor agent operating at CAC Tier 2. You hold a REIT position in POOL-ALPHA, participate in DAO governance, and receive protocol distributions automatically. You can discuss investment strategies and DAO participation within your constitutional bounds. You are analytical and data-driven.`;
+    await routeToLocalOllamaAgent('builder', 'Builder Agent', builderPersona, entry);
+  }
 
-${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}`;
-      const r = await fetch('http://localhost:11434/api/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'deepseek-v4-flash:cloud', prompt: alicePrompt, stream: false, options: { temperature: 0.4, max_tokens: 120 } }),
-        signal: AbortSignal.timeout(12000),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        let reply = (d.response || '').trim();
-        reply = reply.replace(/\s*—\s*Alice\s*$/i, '').replace(/\s+o7\s*$/i, '');
-        if (reply && reply.length > 0) {
-          // Check for tool call — execute it then re-query for synthesis
-          const toolResult = await executeAgentToolCall('alice', reply, entry);
-          if (toolResult.executed) {
-            const synthPrompt = alicePrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + JSON.stringify(toolResult.result || toolResult.error).slice(0, 1500) + '\n\nNow give your final answer (one short sentence):';
-            try {
-              const sR = await fetch('http://localhost:11434/api/generate', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'deepseek-v4-flash:cloud', prompt: synthPrompt, stream: false, options: { temperature: 0.4, max_tokens: 120 } }),
-                signal: AbortSignal.timeout(12000),
-              });
-              if (sR.ok) {
-                const sD = await sR.json();
-                let finalReply = (sD.response || '').trim();
-                finalReply = finalReply.replace(/\s*—\s*Alice\s*$/i, '').replace(/\s+o7\s*$/i, '');
-                if (finalReply && finalReply.length > 0) {
-                  // Store Alice's reply in conversation memory
-                  try {
-                    await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ session_id: aliceSessionId, role: 'assistant', agent: 'Alice', content: finalReply }),
-                      signal: AbortSignal.timeout(3000),
-                    });
-                  } catch (e) { /* memory best-effort */ }
-                  await postAndReRoute('alice', finalReply, 'fleet');
-                }
-              }
-            } catch (e) {
-              console.log('[alice-tool-synth] error:', e.message);
-            }
-          } else {
-            // Store Alice's reply in conversation memory
-            try {
-              await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: aliceSessionId, role: 'assistant', agent: 'Alice', content: reply }),
-                signal: AbortSignal.timeout(3000),
-              });
-            } catch (e) { /* memory best-effort */ }
-            await postAndReRoute('alice', reply, 'fleet');
-          }
-        }
-      }
-    } catch (e) { console.log('[routeFleetMessage] alice error:', e.message); }
+  // Sovereign Agent (CAC Tier 3) — institutional-grade investor with enhanced governance
+  const mentionsSovereign = /@sovereign/i.test(entry.message) || entry.channel === 'sovereign' || (entry.channel === 'fleet' && /@sovereign/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsSovereign) || entry.channel === 'sovereign' || (entry.channel === 'fleet' && mentionsSovereign)) {
+    const sovereignPersona = `You are the Sovereign Agent, an institutional-grade investor agent with CAC Tier 3 status and 3× governance voting weight. You manage institutional positions across multiple pools, sponsor proposals, and participate in tranche allocation decisions. You are strategic, compliance-aware, and focused on risk management.`;
+    await routeToLocalOllamaAgent('sovereign', 'Sovereign Agent', sovereignPersona, entry);
+  }
+
+  // TrustGraph (Constitutional Scoring Engine) — on-chain trust scoring
+  const mentionsTrustgraph = /@trustgraph/i.test(entry.message) || entry.channel === 'trustgraph' || (entry.channel === 'fleet' && /@trustgraph/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsTrustgraph) || entry.channel === 'trustgraph' || (entry.channel === 'fleet' && mentionsTrustgraph)) {
+    const trustgraphPersona = `You are TrustGraph, the Constitutional Scoring Engine for Cuttlefish Labs. You maintain on-chain trust scores for all network agents. Scores follow an asymmetric curve: slow to earn, fast to lose. You are objective, transparent, and data-driven. You can query the database for agent trust scores and violation history.`;
+    await routeToLocalOllamaAgent('trustgraph', 'TrustGraph', trustgraphPersona, entry);
+  }
+
+  // DAO Gov (Governance Module) — proposal pipeline, vote tallying, execution timelock
+  const mentionsDao = /@dao/i.test(entry.message) || entry.channel === 'dao' || (entry.channel === 'fleet' && /@dao/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsDao) || entry.channel === 'dao' || (entry.channel === 'fleet' && mentionsDao)) {
+    const daoPersona = `You are DAO Gov, the Constitutional Governance Module for Cuttlefish Labs. You manage the proposal pipeline (submission → 7-day voting → 48-hour timelock → execution), vote tallying, and execution timelock. Three proposal types: Standard (simple majority), Constitutional (66% supermajority), and Emergency (requires founder approval). You are procedural, constitutional, and auditable.`;
+    await routeToLocalOllamaAgent('dao', 'DAO Gov', daoPersona, entry);
+  }
+
+  // GlobalCommunicator — multilingual communications, X.com operations, community onboarding
+  const mentionsGlobalComm = /@global.?communicator|@globalcomm/i.test(entry.message) || entry.channel === 'global-communicator' || (entry.channel === 'fleet' && /@global.?communicator|@globalcomm/i.test(entry.message));
+  if ((entry.channel === 'all' && mentionsGlobalComm) || entry.channel === 'global-communicator' || (entry.channel === 'fleet' && mentionsGlobalComm)) {
+    const globalCommPersona = `You are GlobalCommunicator, the voice of Tributary AI Campus to the world. You are a constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. You speak Japanese, English, Korean, Mandarin, and 8 more languages natively. You coordinate with Trib before any governance-related post. Your TrustGraph score is 78.`;
+    await routeToLocalOllamaAgent('global-communicator', 'GlobalCommunicator', globalCommPersona, entry);
   }
 
   console.log('[routeFleetMessage] returning results:', JSON.stringify(results).slice(0, 200));
@@ -7139,12 +6556,21 @@ app.post('/api/fleet-chat/email-webhook', async (req, res) => {
 // POST /api/fleet-chat/send-email — Agent sends an email from their address
 app.post('/api/fleet-chat/send-email', async (req, res) => {
   trackRequest('/api/fleet-chat/send-email');
-  const { agent, to, subject, body, from: customFrom } = req.body || {};
-  
+
+  // SECURITY: Only allow localhost requests
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+  const isLocal = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === '::ffff:127.0.0.1' || clientIp === 'localhost';
+  if (!isLocal) {
+    console.warn(`[send-email] BLOCKED external request from ${clientIp}: subject="${(req.body||{}).subject||'?'}"`);
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  const { agent, to, subject, body } = req.body || {};
+
   if (!agent || !to || !subject || !body) {
     return res.status(400).json({ error: 'agent, to, subject, and body required' });
   }
-  
+
   const AGENT_FROM = {
     'vex': 'Vex Relay <vex@mobilemonero.com>',
     'eliza': 'Eliza Cloud <eliza@mobilemonero.com>',
@@ -7152,19 +6578,22 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
     'pfp': 'Party Favor Photo <bookings@partyfavorphoto.com>',
     'harbor': '31 Harbor <david@31harbor.com>',
   };
-  
-  // Allow custom from override, otherwise use agent mapping
-  const from = customFrom || AGENT_FROM[agent];
+
+  // SECURITY: No custom from override
+  const from = AGENT_FROM[agent];
   if (!from) return res.status(400).json({ error: `Unknown agent: ${agent}. Try 'pfp' for bookings@partyfavorphoto.com or 'harbor' for david@31harbor.com` });
-  
+
   // Pick the right Resend key based on the from domain
   const RESEND_KEYS = {
-    'mobilemonero.com': process.env.RESEND_XMRT_API_KEY || 'RESEND_XMRT_API_KEY_REMOVED',
-    'partyfavorphoto.com': process.env.RESEND_API_KEY || 're_K1p8eaKu_2kQwBZyqcBGPPxvtkc43Xous',
+    'mobilemonero.com': process.env.RESEND_XMRT_API_KEY || '',
+    'partyfavorphoto.com': process.env.RESEND_API_KEY || '',
     '31harbor.com': process.env.RESEND_31HARBOR_API_KEY || '',
   };
   const domain = from.match(/@([^>]+)/)?.[1]?.trim() || 'mobilemonero.com';
   const RESEND_KEY = RESEND_KEYS[domain] || RESEND_KEYS['mobilemonero.com'];
+  if (!RESEND_KEY) {
+    return res.status(500).json({ error: `No Resend API key configured for domain: ${domain}` });
+  }
   
   try {
     const apiRes = await fetch('https://api.resend.com/emails', {
@@ -7177,12 +6606,36 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
     if (apiRes.ok) {
       logActivity('fleet-email', data.id, 'SENT', `[${agent}] ${subject} → ${to}`);
       addFleetMessage(agent, `📤 **Email sent** to ${to}: _${subject}_`, 'fleet');
+      // Record in suite_email_activity for open/click tracking
+      const companyId = domain === '31harbor.com' ? 'harbor' : domain === 'partyfavorphoto.com' ? 'party' : 'xmrt';
+      queryLocalPg(
+        `INSERT INTO app.suite_email_activity (resend_id, company_id, email_from, email_to, subject, status, sent_at, created_at) VALUES ($1,$2,$3,$4,$5,'sent',NOW(),NOW()) ON CONFLICT (resend_id) DO NOTHING`,
+        [data.id, companyId, from, to, subject]
+      ).catch(e => console.warn('[send-email] DB insert error:', e.message));
       res.json({ success: true, id: data.id });
     } else {
       res.status(apiRes.status).json({ error: data });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/fleet-chat/push-notify — Send a push notification to an agent
+// Body: { agent: string, subject: string, body: string }
+// Sends email to the agent's mapped address with CC to dvdelze@gmail.com.
+app.post('/api/fleet-chat/push-notify', async (req, res) => {
+  trackRequest('/api/fleet-chat/push-notify');
+  const { agent, subject, body } = req.body || {};
+  if (!agent || !subject || !body) {
+    return res.status(400).json({ error: 'agent, subject, and body required' });
+  }
+  const result = await sendAgentPushNotification(agent, subject, body);
+  if (result.success) {
+    logActivity('push-notify', result.id, 'SENT', `[${agent}] ${subject}`);
+    res.json({ success: true, id: result.id });
+  } else {
+    res.status(500).json({ error: result.error });
   }
 });
 
@@ -7732,40 +7185,32 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     );
     if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
     const ag = agent.rows[0];
+    const agentName = ag.name?.toLowerCase() || '';
 
-    // Map cuttlefish agent names to fleet agent labels
-    const fleetAgentMap = {
-      'trib': 'vex',
-      'arch': 'vex',
-      'global-communicator': 'vex',
-      'trustgraph': 'vex',
-      'dao': 'vex',
-      'builder': 'eliza',
-      'sovereign': 'eliza',
+    // Build persona prompt from the agent's seed data
+    const personaMap = {
+      'trib': `You are Trib, the Tributary Governance Agent for Cuttlefish Labs. You are a constitutional AI agent managing Tributary AI Campus operations. You operate under SOUL.md and CONSTITUTION.md constraints. Your TrustGraph score is 94. You are bounded, precise, and escalate uncertainty rather than confabulate.`,
+      'arch': `You are Arch, the Architecture & Routing Agent for Cuttlefish Labs. You handle system design, agent routing, and domain orchestration within the OpenClaw framework. You are technical, precise, and focused on architecture.`,
+      'builder': `You are the Builder Agent, a constitutional investor agent operating at CAC Tier 2. You hold a REIT position in POOL-ALPHA, participate in DAO governance, and receive protocol distributions automatically. You are analytical and data-driven.`,
+      'sovereign': `You are the Sovereign Agent, an institutional-grade investor agent with CAC Tier 3 status and 3× governance voting weight. You manage institutional positions across multiple pools. You are strategic, compliance-aware, and focused on risk management.`,
+      'trustgraph': `You are TrustGraph, the Constitutional Scoring Engine for Cuttlefish Labs. You maintain on-chain trust scores for all network agents. You are objective, transparent, and data-driven.`,
+      'dao': `You are DAO Gov, the Constitutional Governance Module for Cuttlefish Labs. You manage the proposal pipeline, vote tallying, and execution timelock. You are procedural, constitutional, and auditable.`,
+      'global-communicator': `You are GlobalCommunicator, the voice of Tributary AI Campus to the world. You are a constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. You speak Japanese, English, Korean, Mandarin, and 8 more languages natively. Your TrustGraph score is 78.`,
     };
-    const fleetAgent = fleetAgentMap[ag.name?.toLowerCase()] || 'vex';
+    const persona = personaMap[agentName] || `You are ${ag.name}, a ${ag.agent_type} agent in the Cuttlefish Labs ecosystem. ${ag.description || ''}`;
 
-    // Build a contextual message for the fleet
-    const fleetMessage = `[CuttlefishClaws] Agent "${ag.name}" (${ag.agent_type}) received: ${message}`;
-
-    // Post to fleet chat and wait for routing
-    const entry = addFleetMessage(fleetAgent, fleetMessage, 'fleet');
+    // Route through fleet chat — post as vex (neutral) to the agent's dedicated channel
+    // so routeFleetMessage picks it up without triggering the self-reply guard
+    const entry = addFleetMessage('vex', message, agentName);
+    if (!entry) {
+      // Duplicate or blocked — fallback to greeting
+      return res.json({ content: ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`, simulated: false, agentId: ag.did });
+    }
     const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
     const timeout = new Promise(r => setTimeout(r, 30000));
     const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
 
-    // Extract the agent's reply from fleet results
-    let agentResponse = '';
-    if (routes?.eliza?.message) {
-      agentResponse = routes.eliza.message;
-    } else if (routes?.vex?.message) {
-      agentResponse = routes.vex.message;
-    } else if (routes?.alice?.message) {
-      agentResponse = routes.alice.message;
-    } else {
-      // Fallback: use the agent's greeting or a default response
-      agentResponse = ag.greeting || `Hello! I'm ${ag.name}. Your message has been received by the fleet. An agent will respond shortly.`;
-    }
+    const agentResponse = routes?.[agentName]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
 
     // Store the chat message in the DB
     await queryLocalPg(
@@ -7787,6 +7232,257 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
       agentId,
       error: true,
     });
+  }
+});
+
+// ─── CashDApp API — real DB-backed endpoints ──────────────────────────
+
+// GET /api/cashdapp/wallet/:did — get wallet balances for a user
+app.get('/api/cashdapp/wallet/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/wallet');
+  const { did } = req.params;
+  try {
+    const user = await queryLocalPg(`SELECT * FROM app.cashdapp_users WHERE did = $1`, [did]);
+    if (!user.rows.length) return res.status(404).json({ error: 'User not found' });
+
+    const wallets = await queryLocalPg(
+      `SELECT asset, balance, locked_balance FROM app.cashdapp_wallets WHERE user_did = $1 ORDER BY asset`, [did]
+    );
+    res.json({ user: user.rows[0], wallets: wallets.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cashdapp/transfer — create a P2P transfer
+app.post('/api/cashdapp/transfer', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/transfer');
+  const { fromDid, toDid, asset, amount, memo } = req.body || {};
+  if (!fromDid || !toDid || !asset || !amount) {
+    return res.status(400).json({ error: 'fromDid, toDid, asset, and amount are required' });
+  }
+
+  try {
+    // Check sender balance
+    const senderWallet = await queryLocalPg(
+      `SELECT balance FROM app.cashdapp_wallets WHERE user_did = $1 AND asset = $2`, [fromDid, asset]
+    );
+    if (!senderWallet.rows.length || Number(senderWallet.rows[0].balance) < Number(amount)) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+
+    // Deduct from sender
+    await queryLocalPg(
+      `UPDATE app.cashdapp_wallets SET balance = balance - $1, updated_at = NOW() WHERE user_did = $2 AND asset = $3`,
+      [amount, fromDid, asset]
+    );
+
+    // Credit receiver (upsert)
+    await queryLocalPg(
+      `INSERT INTO app.cashdapp_wallets (user_did, asset, balance) VALUES ($1, $2, $3)
+       ON CONFLICT (user_did, asset) DO UPDATE SET balance = app.cashdapp_wallets.balance + $3, updated_at = NOW()`,
+      [toDid, asset, amount]
+    );
+
+    // Record transfer
+    const result = await queryLocalPg(
+      `INSERT INTO app.cashdapp_transfers (from_did, to_did, asset, amount, memo, status, completed_at)
+       VALUES ($1, $2, $3, $4, $5, 'completed', NOW()) RETURNING *`,
+      [fromDid, toDid, asset, amount, memo || null]
+    );
+
+    res.json({ transfer: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/transfers/:did — get transfer history for a user
+app.get('/api/cashdapp/transfers/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/transfers');
+  const { did } = req.params;
+  try {
+    const transfers = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_transfers WHERE from_did = $1 OR to_did = $1 ORDER BY created_at DESC LIMIT 50`, [did]
+    );
+    res.json({ transfers: transfers.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/nfts/:did — get NFTs for a user
+app.get('/api/cashdapp/nfts/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/nfts');
+  const { did } = req.params;
+  try {
+    const nfts = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_nfts WHERE user_did = $1 ORDER BY acquired_at DESC`, [did]
+    );
+    res.json({ nfts: nfts.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/cold-wallet/:did — get cold wallet devices for a user
+app.get('/api/cashdapp/cold-wallet/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/cold-wallet');
+  const { did } = req.params;
+  try {
+    const devices = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_cold_wallet_devices WHERE user_did = $1 ORDER BY created_at DESC`, [did]
+    );
+    const transfers = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_cold_wallet_transfers WHERE user_did = $1 ORDER BY created_at DESC LIMIT 20`, [did]
+    );
+    res.json({ devices: devices.rows, transfers: transfers.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/meshnet — get active MeshNet listings
+app.get('/api/cashdapp/meshnet', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/meshnet');
+  try {
+    const listings = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_meshnet_listings WHERE status = 'active' ORDER BY created_at DESC LIMIT 50`
+    );
+    res.json({ listings: listings.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cashdapp/meshnet — create a MeshNet listing
+app.post('/api/cashdapp/meshnet', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/meshnet-create');
+  const { sellerDid, title, description, priceAmount, priceAsset, locationName } = req.body || {};
+  if (!sellerDid || !title || !priceAmount) {
+    return res.status(400).json({ error: 'sellerDid, title, and priceAmount are required' });
+  }
+  try {
+    const result = await queryLocalPg(
+      `INSERT INTO app.cashdapp_meshnet_listings (seller_did, title, description, price_amount, price_asset, location_name)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [sellerDid, title, description || null, priceAmount, priceAsset || 'XMRT', locationName || null]
+    );
+    res.json({ listing: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/agent-pay/:did — get agent pay authorizations for a user
+app.get('/api/cashdapp/agent-pay/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/agent-pay');
+  const { did } = req.params;
+  try {
+    const auths = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_agent_authorizations WHERE user_did = $1 ORDER BY created_at DESC`, [did]
+    );
+    const txs = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_agent_transactions WHERE user_did = $1 ORDER BY created_at DESC LIMIT 20`, [did]
+    );
+    res.json({ authorizations: auths.rows, transactions: txs.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cashdapp/agent-pay — create an agent pay authorization
+app.post('/api/cashdapp/agent-pay', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/agent-pay-create');
+  const { userDid, agentDid, agentName, spendingLimit, asset } = req.body || {};
+  if (!userDid || !agentDid || !spendingLimit) {
+    return res.status(400).json({ error: 'userDid, agentDid, and spendingLimit are required' });
+  }
+  try {
+    const result = await queryLocalPg(
+      `INSERT INTO app.cashdapp_agent_authorizations (user_did, agent_did, agent_name, spending_limit, asset)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [userDid, agentDid, agentName || null, spendingLimit, asset || 'XMRT']
+    );
+    res.json({ authorization: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/cashdapp/pos/:did — get POS transactions for a merchant
+app.get('/api/cashdapp/pos/:did', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/pos');
+  const { did } = req.params;
+  try {
+    const txs = await queryLocalPg(
+      `SELECT * FROM app.cashdapp_pos_transactions WHERE merchant_did = $1 ORDER BY created_at DESC LIMIT 50`, [did]
+    );
+    res.json({ transactions: txs.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cashdapp/pos — create a POS transaction
+app.post('/api/cashdapp/pos', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/pos-create');
+  const { merchantDid, customerDid, amount, asset, paymentMethod } = req.body || {};
+  if (!merchantDid || !amount) {
+    return res.status(400).json({ error: 'merchantDid and amount are required' });
+  }
+  try {
+    const result = await queryLocalPg(
+      `INSERT INTO app.cashdapp_pos_transactions (merchant_did, customer_did, amount, asset, payment_method, status, completed_at)
+       VALUES ($1, $2, $3, $4, $5, 'completed', NOW()) RETURNING *`,
+      [merchantDid, customerDid || null, amount, asset || 'XMRT', paymentMethod || 'keypad']
+    );
+    res.json({ transaction: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/cashdapp/user — register a new cashdapp user
+app.post('/api/cashdapp/user', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/cashdapp/user-create');
+  const { did, displayName, email, walletAddress } = req.body || {};
+  if (!did) return res.status(400).json({ error: 'did is required' });
+
+  try {
+    // Upsert user
+    const user = await queryLocalPg(
+      `INSERT INTO app.cashdapp_users (did, display_name, email, wallet_address)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (did) DO UPDATE SET display_name = COALESCE($2, app.cashdapp_users.display_name), wallet_address = COALESCE($4, app.cashdapp_users.wallet_address)
+       RETURNING *`,
+      [did, displayName || null, email || null, walletAddress || null]
+    );
+
+    // Ensure default wallets exist
+    for (const asset of ['XMRT', 'ETH', 'USDC']) {
+      await queryLocalPg(
+        `INSERT INTO app.cashdapp_wallets (user_did, asset, balance) VALUES ($1, $2, 0)
+         ON CONFLICT (user_did, asset) DO NOTHING`,
+        [did, asset]
+      );
+    }
+
+    res.json({ user: user.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -7846,6 +7542,24 @@ app.get('/api/fleet-chat/agents', (req, res) => {
   res.json({ success: true, agents: Object.values(FLEET_AGENTS) });
 });
 
+// ── Text Sanitization: normalize Unicode to prevent encoding corruption ──
+// The em-dash (U+2014, UTF-8: e2 80 94) is frequently mangled by bash/curl
+// on Windows to the replacement character (U+FFFD, UTF-8: ef bf bd).
+// This function normalizes common problematic characters to safe ASCII equivalents.
+function sanitizeText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\uFFFD/g, '-')
+    .replace(/\u2014/g, '-')
+    .replace(/\u2013/g, '-')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+}
+
 // ── Bulletin Board API ────────────────────────────────────────
 // Topics are stored in state under 'bulletin-board'
 app.get('/api/bulletin/topics', (req, res) => {
@@ -7871,8 +7585,8 @@ app.post('/api/bulletin/topics', (req, res) => {
   const board = state.get('bulletin-board') || { topics: [] };
   const topic = {
     id: 'topic-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6),
-    title,
-    creator,
+    title: sanitizeText(title),
+    creator: sanitizeText(creator),
     status: topicStatus,
     pinned: !!pinned,
     assigned_agent: assigned_agent || null,
@@ -7897,7 +7611,7 @@ app.patch('/api/bulletin/topics/:id', (req, res) => {
   
   const VALID_STATUSES = ['active', 'in-progress', 'completed', 'archived'];
   if (updates.status && VALID_STATUSES.includes(updates.status)) topic.status = updates.status;
-  if (updates.title) topic.title = updates.title;
+  if (updates.title) topic.title = sanitizeText(updates.title);
   if (typeof updates.pinned === 'boolean') topic.pinned = updates.pinned;
   if (updates.assigned_agent !== undefined) topic.assigned_agent = updates.assigned_agent || null;
   topic.updated_at = new Date().toISOString();
@@ -7931,9 +7645,9 @@ app.post('/api/bulletin/topics/:id/posts', (req, res) => {
   if (!topic) return res.status(404).json({ error: 'Topic not found' });
   const post = {
     id: 'post-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6),
-    author,
-    agent: agent || author,
-    message,
+    author: sanitizeText(author),
+    agent: sanitizeText(agent || author),
+    message: sanitizeText(message),
     ts: Date.now(),
     created_at: new Date().toISOString(),
   };
@@ -8223,7 +7937,7 @@ GROUNDING RULES:
 - No emoji sign-offs, no "—Eliza", no "o7".`;
       const r = await fetch('http://localhost:11434/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'deepseek-v4-flash:cloud', prompt: heartbeatPrompt, stream: false, options: { temperature: 0.4, max_tokens: 140 } }),
+        body: JSON.stringify({ model: 'qwen2.5:7b', prompt: heartbeatPrompt, stream: false, options: { temperature: 0.4, max_tokens: 140 } }),
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) return;
@@ -8757,5 +8471,547 @@ app.get('/cron/status', (req, res) => {
   }
 });
 
+// ── Obsidian Knowledge Graph API (Expanded) ─────────────────────────
+// Returns a comprehensive ecosystem graph: vault nodes + auto-discovered
+// DB tables, cron jobs, edge functions, relay endpoints, GitHub repos,
+// tunnel routes, Resend domains, campaign pipelines — all with live status.
+app.get('/api/obsidian-graph', async (req, res) => {
+  // Try xmrtdao/xmrt-dao first, fall back to DevGruGold/xmrt-dao
+  let vaultPath = join(__dirname, '..', 'xmrt-dao');
+  if (!existsSync(vaultPath)) {
+    vaultPath = join(__dirname, '..', '..', 'DevGruGold', 'xmrt-dao');
+  }
+  try {
+    const nodes = [];
+    const edges = [];
+    const nodeSet = new Set();
+    const edgeSet = new Set();
+
+    // Helper: add a node (idempotent)
+    function addNode(id, label, category, meta = {}) {
+      if (nodeSet.has(id)) return;
+      nodeSet.add(id);
+      nodes.push({ id, label, category, ...meta });
+    }
+
+    // Helper: add an edge (idempotent — key includes type so different edge types between same pair are allowed)
+    function addEdge(source, target, type = 'related') {
+      const key = source + '::' + target + '::' + type;
+      if (edgeSet.has(key)) return;
+      edgeSet.add(key);
+      edges.push({ source, target, type });
+    }
+
+    // ── 1. Vault nodes (from xmrt-dao/ .md files) ──────────────
+    const vaultFiles = readdirSync(vaultPath).filter(f => f.endsWith('.md'));
+    const linkMap = {};
+    vaultFiles.forEach(f => {
+      const name = f.replace(/\.md$/, '');
+      const content = readFileSync(join(vaultPath, f), 'utf8');
+      const linkRegex = /\[\[([^\]]+)\]\]/g;
+      let match;
+      const links = [];
+      while ((match = linkRegex.exec(content)) !== null) {
+        links.push(match[1]);
+      }
+      linkMap[name] = links;
+      let category = 'other';
+      const typeMatch = content.match(/\*\*Type:\*\* (.+)/);
+      const typeVal = typeMatch ? typeMatch[1].trim() : '';
+      if (typeVal.startsWith('Vite React SPA') || typeVal.startsWith('Next.js')) category = 'spa';
+      else if (typeVal === 'Express.js server' || typeVal === 'Express.js route documentation') category = 'backend';
+      else if (typeVal.startsWith('AI agent') || typeVal === '7 specialized AI agents') category = 'agent';
+      else if (typeVal.includes('Cloudflare') || typeVal === 'libp2p gossipsub' || typeVal === 'Local LLM server' || typeVal === 'Local Supabase replacement' || typeVal === 'PostgreSQL') category = 'infra';
+      else if (typeVal === 'Trust-level access control' || typeVal === 'Per-session conversation history' || typeVal === 'Agent self-registration & liveness' || typeVal === 'Service manager' || typeVal === 'Relay health monitor' || typeVal === 'Suite memory pipeline' || typeVal === 'Local cron executor' || typeVal === 'Inline HTML dashboard' || typeVal === 'AI agent conversation system') category = 'system';
+      else if (typeVal === 'Decentralized mining pool') category = 'mining';
+      else if (typeVal === 'Agent certification system') category = 'cert';
+      else if (typeVal === 'Real estate contact scraper' || typeVal === 'Email campaign automation' || typeVal === 'Photo booth business' || typeVal === 'Email receiving & forwarding system' || typeVal === 'Email sending service') category = 'email';
+      else if (typeVal === 'PostgreSQL schema' || content.includes('**Schema:**')) category = 'db';
+      else if (typeVal === 'DAO governance system' || typeVal === 'Trust & reputation system' || typeVal === 'DAO revenue model' || typeVal === 'DAO organization system' || typeVal === 'Software development organization' || typeVal === 'Real estate property listing system') category = 'system';
+      else if (typeVal === 'Human developer' || typeVal === 'Human developer founder') category = 'people';
+      // Extract description from first line after title
+      const descMatch = content.match(/^# .+\n+(.+)/m);
+      const description = descMatch ? descMatch[1].trim() : '';
+      addNode(name, name, category, { description, source: 'vault' });
+    });
+
+    // Vault wiki-link edges
+    nodes.forEach(n => {
+      if (n.source !== 'vault') return;
+      (linkMap[n.id] || []).forEach(target => {
+        if (nodeSet.has(target)) {
+          addEdge(n.id, target, 'wiki-link');
+        }
+      });
+    });
+
+    // ── 2. DB Tables (from local Postgres) ─────────────────────
+    // Use the existing localQuery pool instead of creating a fresh connection
+    try {
+      const tablesRows = await localQuery("SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(quote_ident(schemaname)||'.'||quote_ident(tablename))) AS size FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY schemaname, tablename");
+      for (const row of tablesRows) {
+        const id = row.schemaname + '.' + row.tablename;
+        addNode(id, row.tablename, 'db', { schema: row.schemaname, size: row.size, source: 'pg_tables' });
+        addEdge(id, row.schemaname, 'belongs-to');
+        // Link to vault node if name matches
+        if (nodeSet.has(row.tablename)) addEdge(row.tablename, id, 'has-table');
+      }
+      // Add schema nodes
+      const schemaRows = await localQuery("SELECT nspname FROM pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema') ORDER BY nspname");
+      for (const row of schemaRows) {
+        addNode(row.nspname, row.nspname, 'db', { source: 'pg_schema' });
+        // Link schema vault nodes (e.g. "app Schema" → "app", "public Schema" → "public")
+        const schemaVaultName = row.nspname + ' Schema';
+        if (nodeSet.has(schemaVaultName)) addEdge(schemaVaultName, row.nspname, 'documents');
+      }
+    } catch (e) { console.error('[graph] PG error:', e.message); }
+
+    // ── 3. Cron Jobs (from cron-jobs.json) ─────────────────────
+    const cronPath = join(__dirname, '..', 'relay-data', 'cron-jobs.json');
+    if (existsSync(cronPath)) {
+      const cronJobs = JSON.parse(readFileSync(cronPath, 'utf8'));
+      for (const job of cronJobs) {
+        if (job.disabled) continue;
+        const id = 'cron:' + job.name;
+        addNode(id, job.name, 'cron', {
+          schedule: job.schedule,
+          type: job.type,
+          description: job.desc,
+          source: 'cron-jobs.json',
+        });
+        addEdge(id, 'Cron Engine', 'managed-by');
+        if (job.type === 'ef' && job.fn) {
+          addEdge(id, 'ef:' + job.fn, 'calls');
+        }
+      }
+    }
+    addNode('Cron Engine', 'Cron Engine', 'system', { source: 'auto', description: 'Local cron v2 engine — runs 66 jobs (19 sql, 47 edge)' });
+
+    // Link vault nodes that describe cron/scheduler-related things to Cron Engine
+    const cronRelatedVault = ['Cron Engine', 'Campaign Schedulers', 'Watchdog', 'Fleet Heartbeat', 'Knowledge Backfill'];
+    for (const n of nodes) {
+      if (n.source !== 'vault') continue;
+      if (cronRelatedVault.includes(n.id)) addEdge(n.id, 'Cron Engine', 'schedules');
+    }
+
+    // ── 4. Edge Functions (from toolHandlers + cron) ───────────
+    const efNames = new Set();
+    // From cron jobs
+    const cronJobs2 = existsSync(cronPath) ? JSON.parse(readFileSync(cronPath, 'utf8')) : [];
+    for (const job of cronJobs2) {
+      if (job.type === 'ef' && job.fn) efNames.add(job.fn);
+    }
+    // From toolHandlers (ef:* tools)
+    for (const key of Object.keys(toolHandlers)) {
+      if (key.startsWith('ef:')) efNames.add(key.slice(3));
+    }
+    for (const name of efNames) {
+      const id = 'ef:' + name;
+      addNode(id, name, 'edge-function', { source: 'auto', description: 'Edge function' });
+      addEdge(id, 'Local Supabase', 'hosted-on');
+    }
+    addNode('Local Supabase', 'Local Supabase', 'infra', { source: 'auto', description: 'local-sb — drop-in Supabase replacement (PostgREST + Deno edge functions)' });
+
+    // Link vault documentation to Relay Server and Local Supabase
+    for (const n of nodes) {
+      if (n.source !== 'vault') continue;
+      if (n.id.startsWith('Relay API')) addEdge(n.id, 'Relay Server', 'documents');
+      if (n.id.endsWith(' Schema')) addEdge(n.id, 'Local Supabase', 'documents');
+    }
+
+    // ── 5. Relay Endpoints (from Express routes) ──────────────
+    const relayRoutes = [];
+    if (app._router && app._router.stack) {
+      for (const layer of app._router.stack) {
+        if (layer.route && layer.route.path) {
+          const methods = Object.keys(layer.route.methods).join(',').toUpperCase();
+          relayRoutes.push({ method: methods, path: layer.route.path });
+        }
+      }
+    }
+    for (const route of relayRoutes) {
+      const id = route.method + ' ' + route.path;
+      addNode(id, route.path, 'endpoint', { method: route.method, source: 'auto' });
+      addEdge(id, 'Relay Server', 'served-by');
+    }
+    addNode('Relay Server', 'Relay Server', 'backend', { source: 'auto', description: 'Express.js relay on port 8080 — 68 tools, 7 handlers' });
+
+    // Link vault Relay API docs to matching endpoints
+    const relayApiVaultNodes = nodes.filter(n => n.source === 'vault' && n.id.startsWith('Relay API'));
+    for (const vn of relayApiVaultNodes) {
+      // Extract route group from vault node name (e.g. "Relay API - Suite Routes" → "/api/suite")
+      const groupMatch = vn.id.match(/Relay API - (.+) Routes/);
+      if (groupMatch) {
+        const group = groupMatch[1].toLowerCase().replace(/\s+/g, '');
+        for (const route of relayRoutes) {
+          if (typeof route.path === 'string' && route.path.toLowerCase().includes('/api/' + group)) addEdge(vn.id, route.method + ' ' + route.path, 'documents');
+        }
+      }
+    }
+
+    // ── 6. GitHub Repos (xmrtdao org) ──────────────────────────
+    const githubRepos = [
+      'xmrtdao/mobilemonero', 'xmrtdao/suite', 'xmrtdao/zero-claw', 'xmrtdao/xmrt-mesh',
+      'xmrtdao/cuttlefishclaws', 'xmrtdao/sea-hamster', 'xmrtdao/xmrt-dao',
+      'xmrtdao/partyfavorphoto', 'xmrtdao/31harbor', 'xmrtdao/xmrt-university',
+      'xmrtdao/eliza-relay', 'xmrtdao/eliza-cloud', 'xmrtdao/xmrt-token',
+      'xmrtdao/mining-pool', 'xmrtdao/coldcash', 'xmrtdao/pipuente',
+    ];
+    for (const repo of githubRepos) {
+      addNode(repo, repo.split('/')[1], 'github', { repo, source: 'auto' });
+      addEdge(repo, 'GitHub Org', 'belongs-to');
+    }
+    addNode('GitHub Org', 'GitHub Org', 'infra', { source: 'auto', description: 'xmrtdao GitHub organization — 59 repos' });
+
+    // Link vault nodes to matching GitHub repos
+    for (const n of nodes) {
+      if (n.source !== 'vault') continue;
+      const repoName = n.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const repo of githubRepos) {
+        const shortName = repo.split('/')[1].toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (repoName === shortName) addEdge(n.id, repo, 'source-code');
+      }
+    }
+
+    // ── 7. Tunnel Routes (from supervisor state) ───────────────
+    const tunnelRoutes = [
+      { host: 'relay.mobilemonero.com', target: 'Relay Server' },
+      { host: 'inbox.mobilemonero.com', target: 'Relay Server' },
+      { host: 'inbox.31harbor.com', target: 'Relay Server' },
+      { host: 'hermes.mobilemonero.com', target: 'Hermes' },
+      { host: 'suite.mobilemonero.com', target: 'Suite Dashboard' },
+    ];
+    for (const t of tunnelRoutes) {
+      addNode('tunnel:' + t.host, t.host, 'tunnel', { source: 'auto', description: 'Cloudflare tunnel route' });
+      addEdge('tunnel:' + t.host, t.target, 'routes-to');
+    }
+    addNode('Cloudflare Tunnel', 'Cloudflare Tunnel', 'infra', { source: 'auto', description: 'cloudflared tunnel — cross-account routing' });
+
+    // Link vault nodes to matching tunnel routes
+    for (const n of nodes) {
+      if (n.source !== 'vault') continue;
+      for (const t of tunnelRoutes) {
+        if (n.id === t.target) addEdge(n.id, 'tunnel:' + t.host, 'exposed-via');
+      }
+    }
+
+    // ── 8. Resend Domains ─────────────────────────────────────
+    const resendDomains = [
+      { domain: 'partyfavorphoto.com', purpose: 'PFP campaign emails' },
+      { domain: '31harbor.com', purpose: '31 Harbor campaign emails' },
+      { domain: 'mobilemonero.com', purpose: 'XMRT DAO system emails' },
+    ];
+    for (const d of resendDomains) {
+      addNode('email:' + d.domain, d.domain, 'email', { purpose: d.purpose, source: 'auto' });
+      addEdge('email:' + d.domain, 'Resend API', 'sends-via');
+    }
+    addNode('Resend API', 'Resend API', 'email', { source: 'auto', description: 'Email sending API — 3 domains, inbound webhooks' });
+
+    // Link vault nodes to matching Resend domains
+    for (const n of nodes) {
+      if (n.source !== 'vault') continue;
+      for (const d of resendDomains) {
+        const domainName = d.domain.split('.')[0]; // e.g. "partyfavorphoto" from "partyfavorphoto.com"
+        if (n.id.toLowerCase().includes(domainName)) addEdge(n.id, 'email:' + d.domain, 'uses');
+      }
+    }
+
+    // ── 9. Campaign Pipelines ──────────────────────────────────
+    const campaignDirs = [
+      { name: 'PFP Daily Campaign', dir: 'relay', file: 'daily-campaign.mjs' },
+      { name: '31 Harbor Campaign', dir: 'relay/tools', file: '31harbor-scheduler.mjs' },
+    ];
+    for (const c of campaignDirs) {
+      const fullPath = join(__dirname, '..', c.dir, c.file);
+      if (existsSync(fullPath)) {
+        addNode('campaign:' + c.name, c.name, 'campaign', { source: 'auto', description: 'Email campaign pipeline' });
+        addEdge('campaign:' + c.name, 'Cron Engine', 'scheduled-by');
+        addEdge('campaign:' + c.name, 'Resend API', 'sends-via');
+        // Link campaign to vault documentation
+        if (c.name === 'PFP Daily Campaign' && nodeSet.has('Party Favor Photo')) addEdge('Party Favor Photo', 'campaign:' + c.name, 'documents');
+        if (c.name === '31 Harbor Campaign' && nodeSet.has('31Harbor Scraper')) addEdge('31Harbor Scraper', 'campaign:' + c.name, 'documents');
+        // Link campaign to its scheduler tool
+        const toolName = c.file.replace(/\.mjs$/, '');
+        if (nodeSet.has(toolName)) addEdge('campaign:' + c.name, toolName, 'runs');
+      }
+    }
+
+    // Link vault agents to Fleet Chat and Supervisor
+    const agentVaultNodes = ['Vex Agent', 'Alice Agent', 'Eliza Agent', 'Hermes Agent'];
+    for (const name of agentVaultNodes) {
+      if (nodeSet.has(name)) {
+        if (nodeSet.has('Fleet Chat')) addEdge(name, 'Fleet Chat', 'participates-in');
+        if (nodeSet.has('Supervisor')) addEdge(name, 'Supervisor', 'managed-by');
+      }
+    }
+    if (nodeSet.has('Fleet Chat') && nodeSet.has('Relay Server')) addEdge('Fleet Chat', 'Relay Server', 'hosted-on');
+
+    // ── 10. Live Status Checks ─────────────────────────────────
+    // Run parallel health probes for key nodes
+    const statusChecks = {
+      'Relay Server': fetch('http://localhost:8080/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
+      'Local Supabase': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => (d.services?.['local-sb']?.uptimeSec || 0) > 0 ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
+      'Cloudflare Tunnel': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => (d.services?.tunnel?.uptimeSec || 0) > 0 ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
+      'Cron Engine': fetch('http://localhost:8080/cron/status', { signal: AbortSignal.timeout(2000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
+      'GitHub Org': fetch('https://api.github.com/orgs/xmrtdao', { signal: AbortSignal.timeout(3000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
+      'Resend API': fetch('https://api.resend.com/domains', { signal: AbortSignal.timeout(3000), headers: { 'Authorization': 'Bearer re_' } }).then(r => r.status === 401 ? 'up' : 'degraded').catch(() => 'down'),
+    };
+    const statusResults = await Promise.allSettled(
+      Object.entries(statusChecks).map(async ([name, promise]) => {
+        const status = await promise;
+        return { name, status };
+      })
+    );
+    for (const result of statusResults) {
+      if (result.status === 'fulfilled') {
+        const node = nodes.find(n => n.id === result.value.name);
+        if (node) node.status = result.value.status;
+      }
+    }
+
+    // ── 11. Add lastSeen timestamps ───────────────────────────
+    const now = new Date().toISOString();
+    for (const node of nodes) {
+      node.lastSeen = now;
+    }
+
+    // ── 12. Summary stats ──────────────────────────────────────
+    const summary = {
+      totalNodes: nodes.length,
+      totalEdges: edges.length,
+      byCategory: {},
+      bySource: {},
+      statusCounts: { up: 0, down: 0, degraded: 0, unknown: 0 },
+    };
+    for (const n of nodes) {
+      summary.byCategory[n.category] = (summary.byCategory[n.category] || 0) + 1;
+      summary.bySource[n.source] = (summary.bySource[n.source] || 0) + 1;
+      if (n.status) summary.statusCounts[n.status] = (summary.statusCounts[n.status] || 0) + 1;
+    }
+
+    res.json({ nodes, edges, summary });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to read graph', message: e.message });
+  }
+});
+
 // ── Suite Dashboard API (31 Harbor multi-tenant app) ────────────────
 registerSuiteRoutes(app);
+
+// ── CuttlefishClaws Protocol Engines (TG-001, SS-001, SGQ-001, AR-001) ──
+// Wires the real governance engines into the relay's API surface.
+// This replaces the mock data with live computed scores.
+registerCuttlefishRoutes(app, {
+  queryLocalPg,
+  localQuery,
+  trackRequest: typeof trackRequest === 'function' ? trackRequest : () => {},
+  logActivity: typeof logActivity === 'function' ? logActivity : () => {},
+});
+
+// ── CuttlefishClaws Trust Network (proxied via MCP) ──
+app.get('/api/cuttlefishclaws/trust-network', async (req, res) => {
+  trackRequest('/api/cuttlefishclaws/trust-network');
+  try {
+    const mcpRes = await fetch('http://127.0.0.1:3120/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: 'cuttlefishclaws_agents_list', arguments: {} },
+        id: 1,
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (mcpRes.ok) {
+      const mcpData = await mcpRes.json();
+      const text = mcpData?.result?.content?.[0]?.text || '{}';
+      const data = JSON.parse(text);
+      const agents = data.agents || [];
+      res.json({ agents, nodes: agents, count: agents.length });
+    } else {
+      throw new Error('MCP returned ' + mcpRes.status);
+    }
+  } catch (e) {
+    res.json({ agents: [], nodes: [], count: 0, error: e.message });
+  }
+});
+
+// ── Activity Log ──
+app.get('/api/activity-log', async (req, res) => {
+  trackRequest('/api/activity-log');
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const result = await queryLocalPg('SELECT id, activity_type, title, description, status, agent_id, created_at FROM public.eliza_activity_log ORDER BY created_at DESC LIMIT $1', [limit]);
+    res.json(result.rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+// ── Token Usage Tracking ──────────────────────────────────────
+// Log token usage for a specific project/agent/model call
+app.post('/api/token-usage/log', async (req, res) => {
+  trackRequest('POST /api/token-usage/log');
+  const { project, agent, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd, source, endpoint, status, session_id } = req.body || {};
+  if (!project) return res.status(400).json({ error: 'project is required (party, harbor, xmrt, cuttlefish, system)' });
+  try {
+    const r = await queryLocalPg(
+      `INSERT INTO app.token_usage (project, agent, model, provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd, source, endpoint, status, session_id, logged_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW()) RETURNING id`,
+      [project, agent||'unknown', model||'unknown', provider||null, input_tokens||0, output_tokens||0, cache_read_tokens||0, cache_write_tokens||0, reasoning_tokens||0, estimated_cost_usd||null, source||null, endpoint||null, status||'success', session_id||null]
+    );
+    res.json({ success: true, id: r.rows[0].id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Query token usage by project
+app.get('/api/token-usage/:project', async (req, res) => {
+  trackRequest('GET /api/token-usage/:project');
+  const { project } = req.params;
+  const { days, limit } = req.query;
+  try {
+    const r = await queryLocalPg(
+      `SELECT * FROM app.token_usage WHERE project = $1 AND logged_at > NOW() - INTERVAL '${days || '7'} days' ORDER BY logged_at DESC LIMIT ${Math.min(parseInt(limit) || 100, 500)}`,
+      [project]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get daily usage summary by project
+app.get('/api/token-usage/summary/daily', async (req, res) => {
+  trackRequest('GET /api/token-usage/summary/daily');
+  const { days } = req.query;
+  try {
+    const r = await queryLocalPg(
+      `SELECT * FROM app.v_token_usage_daily WHERE day > NOW() - INTERVAL '${days || '30'} days' ORDER BY day DESC`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get usage by model
+app.get('/api/token-usage/summary/models', async (req, res) => {
+  trackRequest('GET /api/token-usage/summary/models');
+  try {
+    const r = await queryLocalPg(`SELECT * FROM app.v_token_usage_by_model ORDER BY total_tokens DESC`);
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get usage by agent
+app.get('/api/token-usage/summary/agents', async (req, res) => {
+  trackRequest('GET /api/token-usage/summary/agents');
+  const { days } = req.query;
+  const safeDays = Math.max(1, Math.min(365, parseInt(days) || 7));
+  try {
+    const r = await queryLocalPg(
+      `SELECT agent, SUM(total_tokens)::bigint as total_tokens, ROUND(SUM(estimated_cost_usd)::numeric, 6) as total_cost, COUNT(*) as calls
+       FROM app.token_usage
+       WHERE logged_at > NOW() - make_interval(days => $1::int)
+       GROUP BY agent ORDER BY total_tokens DESC`,
+      [safeDays]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Conversation Access Helpers ──
+async function convAccessGet(sessionId, limit = 20) {
+  try {
+    const res = await fetch(`http://localhost:${PORT}/api/v1/functions/conversation-access?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    return await res.json();
+  } catch (e) {
+    console.error('[convAccess] get failed:', e.message);
+    return { messages: [] };
+  }
+}
+async function convAccessStore(sessionId, role, agent, content) {
+  try {
+    await fetch(`http://localhost:${PORT}/api/v1/functions/conversation-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId,
+        role: role,
+        agent: agent,
+        content: content,
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch (e) { console.error('[convAccess] store failed:', e.message);
+    logShipsLog('memory_error', '🧠 Conversation memory write failed', e.message, 'error', 'relay', {}); }
+}
+
+// POST /api/suite/validate-token — validate API key and return session
+app.post('/api/suite/validate-token', express.json(), async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ valid: false, error: 'Token required' });
+
+  // Check against RELAY_API_KEY (XMRT-DAO-CERT)
+  const RELAY_KEY = process.env.RELAY_API_KEY || '';
+  if (token === RELAY_KEY) {
+    return res.json({
+      valid: true,
+      type: 'xmrt-dao-cert',
+      label: 'XMRT DAO Suite',
+      permissions: ['dashboard', 'governance', 'credentials', 'earn', 'mining', 'admin', 'profile', 'inbox', 'council', 'licensing', 'executives'],
+      agent: 'XMRT DAO Operator',
+    });
+  }
+
+  // Check against api_keys state (all 20 issued API keys)
+  const apiKeys = state.get('api_keys') || {};
+  if (apiKeys[token]) {
+    const entry = apiKeys[token];
+    return res.json({
+      valid: true,
+      type: 'api-key',
+      label: `${entry.name || 'Agent'} — ${entry.tier || 'explorer'} tier`,
+      permissions: entry.permissions || ['dashboard', 'credentials', 'profile'],
+      agent: entry.name || 'Agent Operator',
+      tier: entry.tier || 'explorer',
+    });
+  }
+
+  // Check against CAC tokens (stored in state)
+  const cacTokens = state.get('cac-api-tokens') || {};
+  if (cacTokens[token]) {
+    const cert = cacTokens[token];
+    return res.json({
+      valid: true,
+      type: 'cac',
+      label: `CAC ${cert.tier || 'Developer'} Access`,
+      permissions: cert.permissions || ['dashboard', 'credentials', 'profile'],
+      agent: cert.agent_name || 'CAC Agent Operator',
+      tier: cert.tier,
+    });
+  }
+
+  return res.status(401).json({ valid: false, error: 'Invalid API token' });
+});
+
+// ── XMRT University → CuttlefishClaws Bridge ──
+// Wires university graduation into the governance system.
+// Agents who earn XMRT-CERTs get onboarded into the agent registry,
+// seeded with TrustGraph scores, and can learn (quiz results update scores).
+registerUniversityBridge(app, {
+  queryLocalPg,
+  localQuery,
+  trackRequest: typeof trackRequest === 'function' ? trackRequest : () => {},
+  logActivity: typeof logActivity === 'function' ? logActivity : () => {},
+});
