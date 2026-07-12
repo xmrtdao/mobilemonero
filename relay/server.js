@@ -1669,12 +1669,14 @@ app.get('/ontology/:name', (req, res) => {
 
 // ── Host-based routing: tunnel ingress can't do path rewrites, so we do it here ──
 // suite.mobilemonero.com → /suite/*, cuttlefish.mobilemonero.com → /cuttlefishclaws/*
+// Only rewrites the root path — the SPA's built HTML already has correct base paths
+// (e.g. /suite/assets/..., /cuttlefishclaws/assets/...) so we must NOT double-prefix.
 app.use((req, res, next) => {
   const host = (req.get('host') || '').toLowerCase();
-  if (host === 'suite.mobilemonero.com' && !req.path.startsWith('/suite')) {
-    req.url = '/suite' + req.url;
-  } else if (host === 'cuttlefish.mobilemonero.com' && !req.path.startsWith('/cuttlefishclaws')) {
-    req.url = '/cuttlefishclaws' + req.url;
+  if (host === 'suite.mobilemonero.com' && req.path === '/') {
+    req.url = '/suite/';
+  } else if (host === 'cuttlefish.mobilemonero.com' && req.path === '/') {
+    req.url = '/cuttlefishclaws/';
   }
   next();
 });
