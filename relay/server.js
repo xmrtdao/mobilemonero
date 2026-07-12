@@ -6895,30 +6895,53 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
   const { agentId, message } = req.body || {};
   if (!agentId || !message) return res.status(400).json({ error: 'agentId and message required' });
 
-  const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
-  if (!RESEND_KEY) return res.status(500).json({ error: 'Resend key not configured' });
-
-  const body = `New agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nMessage: ${message}`;
-
   try {
-    const apiRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'Cuttlefish Labs <david@31harbor.com>',
-        to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
-        subject: `Agent Chat - ${agentId}`,
-        text: body,
-      }),
-    });
-    const data = await apiRes.json();
+    // Route through fleet chat — post the message as the user, let routeFleetMessage
+    // pick it up and route to the correct agent via ollama
+    const fleetMsg = addFleetMessage('vex', `[${agentId}] ${message}`, agentId.toLowerCase());
+    logActivity('cuttlefishclaws-chat', fleetMsg?.id || '?', 'RECEIVED', `Chat to ${agentId}: ${message.substring(0, 80)}`);
 
-    if (apiRes.ok) {
-      logActivity('contact-cuttlefishclaws-chat', data.id, 'SENT', `Chat from agent ${agentId}: ${message.substring(0, 80)}`);
-      res.json({ success: true, id: data.id, response: 'Your message has been received. An agent will respond shortly.' });
-    } else {
-      res.status(500).json({ error: data });
+    // Also send email notification to David (async, don't block)
+    const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
+    if (RESEND_KEY) {
+      const body = `New agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nMessage: ${message}`;
+      fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Cuttlefish Labs <david@31harbor.com>',
+          to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
+          subject: `Agent Chat - ${agentId}`,
+          text: body,
+        }),
+      }).catch(() => {});
     }
+
+    // Wait for agent response via fleet chat routing
+    const results = await routeFleetMessage({
+      agentLabel: agentId,
+      message: message,
+      channel: agentId.toLowerCase(),
+      userId: 'cuttlefishclaws-user',
+    });
+    // results is an object like {trib: {message: "reply text", ...}}
+    // Extract the first agent's reply text
+    var agentReply = '';
+    if (results && typeof results === 'object') {
+      var keys = Object.keys(results);
+      for (var ki = 0; ki < keys.length; ki++) {
+        var r = results[keys[ki]];
+        if (r && r.message) {
+          agentReply = r.message;
+          break;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      response: agentReply || 'Agent is processing your message. Check fleet chat for response.',
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
