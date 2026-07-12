@@ -63,7 +63,7 @@ const PG_URL = process.env.LOCAL_DATABASE_URL
 // (8090). The 8090 runtime is not running in the current local stack; local-sb
 // on 54321 is the actual edge function host. Override with LOCAL_RUNTIME_URL
 // env var if the suite runtime comes back.
-const RUNTIME_URL = process.env.LOCAL_RUNTIME_URL || 'http://127.0.0.1:54321';
+const RUNTIME_URL = process.env.LOCAL_RUNTIME_URL || 'http://localhost:8080';
 
 function log(msg, level = 'INFO') {
   const line = `[${new Date().toISOString()}] [${level}] ${sanitizeText(msg)}`;

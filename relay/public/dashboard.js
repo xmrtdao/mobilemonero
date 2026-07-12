@@ -582,16 +582,19 @@ loadAgentExperienceCard();
         if (!groups[addr]) groups[addr] = [];
         groups[addr].push(e);
       });
-      // Show last 10 emails per account
-      if (recentEl) {
-        recentEl.innerHTML = emails.slice(0,10).map(function(m){
-          var from = (m.from||'').substring(0,22);
-          var subj = (m.subject||'').substring(0,20);
-          return '<div style="padding:0.15rem 0;font-size:0.7rem;border-bottom:1px solid #1e1e2e;">' +
-            '<span style="color:#a0a0b0;">' + from + '</span> ' +
-            '<span style="color:#6b6b80;">' + subj + '</span></div>';
-        }).join('');
-      }
+      var count = 0;
+      Object.keys(groups).forEach(function(addr){
+        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
+        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
+        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
+        groups[addr].forEach(function(m){
+          count++;
+          if (count > 10) return;
+          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
+          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
+          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
+        });
+      });
       if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
       card.innerHTML = html;
     }).catch(function(){
@@ -626,7 +629,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 8) return;
+          if (count > 10) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -666,7 +669,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 8) return;
+          if (count > 10) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -2102,29 +2105,37 @@ loadAgentExperienceCard();
       // ── Outer glow (large, faint halo) ──
       var isStar = n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema';
       var glowSize = n.category === 'agent' || isStar ? r * 5 : r * 3;
-      // Cache gradient per node — avoids createRadialGradient every frame
-      if (!n._glowCache) {
-        n._glowCache = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowSize);
-        n._glowCache.addColorStop(0, warmColor + '20');
-        n._glowCache.addColorStop(0.3, warmColor + '08');
-        n._glowCache.addColorStop(1, 'transparent');
+      // Use a single reusable gradient at origin, translate canvas instead
+      if (!window._galaxyGlowGrad) {
+        window._galaxyGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+        window._galaxyGlowGrad.addColorStop(0, '#e8c06020');
+        window._galaxyGlowGrad.addColorStop(0.3, '#e8c06008');
+        window._galaxyGlowGrad.addColorStop(1, 'transparent');
       }
+      ctx.save();
+      ctx.translate(n.x, n.y);
+      ctx.scale(glowSize, glowSize);
       ctx.beginPath();
-      ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
-      ctx.fillStyle = n._glowCache;
+      ctx.arc(0, 0, 1, 0, Math.PI * 2);
+      ctx.fillStyle = window._galaxyGlowGrad;
       ctx.fill();
+      ctx.restore();
 
       // ── Inner glow (medium, visible aura) ──
-      if (!n._innerGlowCache) {
-        n._innerGlowCache = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 2);
-        n._innerGlowCache.addColorStop(0, warmColor + '60');
-        n._innerGlowCache.addColorStop(0.5, warmColor + '25');
-        n._innerGlowCache.addColorStop(1, 'transparent');
+      if (!window._galaxyInnerGlowGrad) {
+        window._galaxyInnerGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+        window._galaxyInnerGlowGrad.addColorStop(0, '#e8c06060');
+        window._galaxyInnerGlowGrad.addColorStop(0.5, '#e8c06025');
+        window._galaxyInnerGlowGrad.addColorStop(1, 'transparent');
       }
+      ctx.save();
+      ctx.translate(n.x, n.y);
+      ctx.scale(r * 2, r * 2);
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 2, 0, Math.PI * 2);
-      ctx.fillStyle = n._innerGlowCache;
+      ctx.arc(0, 0, 1, 0, Math.PI * 2);
+      ctx.fillStyle = window._galaxyInnerGlowGrad;
       ctx.fill();
+      ctx.restore();
 
       // ── Lens flare cross for agent nodes and star nodes ──
       if (n.category === 'agent' || n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema') {
@@ -2161,38 +2172,33 @@ loadAgentExperienceCard();
       // ── Agent nodes: golden ring + score gauge ──
       if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
-        // Outer ring (glowing golden)
+        // Outer ring (glowing golden) — no shadowBlur, use stroke alpha instead
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = warmColor + '15';
         ctx.fill();
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = (isSelected ? 3 : isHovered ? 2.5 : 1.5) / camZ;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 20 / camZ;
+        ctx.globalAlpha = isSelected ? 0.9 : isHovered ? 0.7 : 0.5;
         ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1.0;
 
-        // Inner filled arc showing score
+        // Inner filled arc showing score — no shadowBlur
         var arcEnd = -Math.PI / 2 + (score / 100) * Math.PI * 2;
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.6, -Math.PI / 2, arcEnd);
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = 3 / camZ;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 12 / camZ;
+        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
         ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1.0;
 
-        // Bright golden center dot
+        // Bright golden center dot — no shadowBlur
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.25, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = 0.8;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 15 / camZ;
+        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
         ctx.fill();
-        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
 
         // Score label
@@ -2378,16 +2384,25 @@ loadAgentExperienceCard();
       return;
     }
     const n = getNodeAtScreen(sx, sy);
-    hoveredNode = n;
-    canvas.style.cursor = n ? 'pointer' : 'grab';
-    if (n && tooltip) {
-      tooltip.style.display = 'block';
+    if (n !== hoveredNode) {
+      hoveredNode = n;
+      canvas.style.cursor = n ? 'pointer' : 'grab';
+      if (n && tooltip) {
+        // Cache connection count on the node so we don't filter edges every frame
+        if (n._connCount === undefined) {
+          n._connCount = edges.filter(function(e){return e.source === n.id || e.target === n.id;}).length;
+        }
+        tooltip.style.display = 'block';
+        tooltip.style.left = (sx + 14) + 'px';
+        tooltip.style.top = (sy - 10) + 'px';
+        tooltip.textContent = n.label + ' — ' + n.category + ' (' + n._connCount + ' connections)';
+      } else if (tooltip) {
+        tooltip.style.display = 'none';
+      }
+    } else if (n && tooltip) {
+      // Same node — just update position, skip DOM text/display changes
       tooltip.style.left = (sx + 14) + 'px';
       tooltip.style.top = (sy - 10) + 'px';
-      const connCount = edges.filter(e => e.source === n.id || e.target === n.id).length;
-      tooltip.textContent = n.label + ' — ' + n.category + ' (' + connCount + ' connections)';
-    } else if (tooltip) {
-      tooltip.style.display = 'none';
     }
   });
 
