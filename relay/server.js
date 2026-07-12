@@ -4187,7 +4187,7 @@ async function proxyToRuntime(req, res, targetPath) {
 }
 
 // Route known local functions directly instead of proxying to local-sb
-const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university'];
+const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university', 'code-monitor-daemon'];
 app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
   const name = req.params.name;
   if (LOCAL_FUNCTIONS_BYPASS.includes(name)) {
@@ -5395,10 +5395,22 @@ app.post('/scrape', async (req, res) => {
 
 // ── Ollama Chat ─────────────────────────────────────────────
 app.post('/ollama/chat', async (req, res) => {
-  const { message, model, temperature, maxTokens } = req.body;
+  const { message, model, temperature, maxTokens, agent: reqAgent } = req.body;
   trackRequest('/ollama/chat');
   if (!message) return res.status(400).json({ error: 'message is required' });
   const result = await ollamaChat(message, { model, temperature, maxTokens });
+  // Auto-log token usage — identify the caller from x-agent-id header, body.agent, or IP
+  const caller = req.headers['x-agent-id'] || reqAgent || req.ip || 'unknown';
+  if (result.promptEvalCount || result.evalCount) {
+    queryLocalPg(
+      `INSERT INTO app.token_usage (project, agent, model, provider, input_tokens, output_tokens, estimated_cost_usd, source, endpoint, status, logged_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+      ['system', caller, result.model || model || 'unknown', 'ollama',
+       result.promptEvalCount || 0, result.evalCount || 0,
+       result.costUsd || 0, 'ollama-chat', '/ollama/chat',
+       result.error ? 'error' : 'success']
+    ).catch(() => {});
+  }
   res.json(result);
 });
 
