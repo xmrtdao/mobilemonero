@@ -1635,7 +1635,7 @@ function rateLimit(ip, path) {
 
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
-  if (req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/contact/cuttlefishclaws/chat') return next();
+  if (req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/contact/cuttlefishclaws/chat' || req.path.startsWith('/api/cuttlefishclaws/')) return next();
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
@@ -6954,16 +6954,31 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
 // query against the app.cuttlefish_* tables.
 
 // GET /api/cuttlefishclaws/trust-score — query agent trust score + recent events
+// Accepts ?did= or ?agentId= (maps agent names to DIDs)
 app.get('/api/cuttlefishclaws/trust-score', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/cuttlefishclaws/trust-score');
   const did = req.query.did;
-  if (!did) return res.status(400).json({ error: 'did query parameter is required' });
+  const agentId = req.query.agentId;
+  if (!did && !agentId) return res.status(400).json({ error: 'did or agentId query parameter is required' });
+
+  // Map agent names to DIDs
+  const AGENT_DID_MAP = {
+    'trib': 'did:ethr:trib-v3',
+    'arch': 'did:ethr:arch-v1',
+    'builder': 'did:ethr:builder-v1',
+    'sovereign': 'did:ethr:sovereign-v1',
+    'trustgraph': 'did:ethr:trustgraph-v1',
+    'dao': 'did:ethr:dao-gov-v1',
+    'global-communicator': 'did:ethr:global-communicator-v1',
+  };
+  const resolvedDid = did || AGENT_DID_MAP[agentId?.toLowerCase()];
+  if (!resolvedDid) return res.status(400).json({ error: `Unknown agentId: ${agentId}` });
 
   try {
     const agent = await queryLocalPg(
       `SELECT did, trust_score, status, agent_type, agent_subtype, created_at
-       FROM app.cuttlefish_agents WHERE did = $1`, [did]
+       FROM app.cuttlefish_agents WHERE did = $1`, [resolvedDid]
     );
     if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
 

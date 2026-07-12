@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AGENTS } from '../../lib/mockData'
 
 interface Props {
@@ -6,6 +6,24 @@ interface Props {
 }
 
 export default function AgentsSection({ onOpenChat }: Props) {
+  const [liveScores, setLiveScores] = useState<Record<string, number>>({})
+
+  // Fetch real trust scores from the relay on mount
+  useEffect(() => {
+    const agentIds = ['trib', 'arch', 'builder', 'sovereign', 'trustgraph', 'dao', 'global-communicator']
+    Promise.all(
+      agentIds.map(id =>
+        fetch(`https://relay.mobilemonero.com/api/cuttlefishclaws/trust-score?agentId=${id}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => d && d.trustScore ? { id, score: d.trustScore } : null)
+          .catch(() => null)
+      )
+    ).then(results => {
+      const scores: Record<string, number> = {}
+      results.forEach(r => { if (r) scores[r.id] = r.score })
+      if (Object.keys(scores).length > 0) setLiveScores(scores)
+    })
+  }, [])
   const govAgents = AGENTS.filter(a => a.type === 'governance')
   const invAgents = AGENTS.filter(a => a.type === 'investor')
   const sysAgents = AGENTS.filter(a => a.type === 'system')
@@ -34,7 +52,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
           </h3>
           <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {govAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
+              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} liveScore={liveScores[agent.id]} />
             ))}
           </div>
         </div>
@@ -47,7 +65,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
           </h3>
           <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {invAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
+              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} liveScore={liveScores[agent.id]} />
             ))}
           </div>
         </div>
@@ -60,7 +78,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
           </h3>
           <div className="agents-grid grid grid-cols-1 md:grid-cols-2 gap-4">
             {sysAgents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} />
+              <AgentCard key={agent.id} agent={agent} onChat={onOpenChat} liveScore={liveScores[agent.id]} />
             ))}
           </div>
         </div>
@@ -72,6 +90,7 @@ export default function AgentsSection({ onOpenChat }: Props) {
 interface AgentCardProps {
   agent: typeof AGENTS[number]
   onChat: (id: string) => void
+  liveScore?: number
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -81,8 +100,9 @@ const FILE_TYPE_COLORS: Record<string, string> = {
   ts: '#9945ff',
 }
 
-function AgentCard({ agent, onChat }: AgentCardProps) {
+function AgentCard({ agent, onChat, liveScore }: AgentCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const displayScore = liveScore ?? agent.trustScore
 
   return (
     <div className="reveal border border-[var(--border)] bg-[rgba(255,140,0,0.02)] hover:border-[var(--amber2)] transition-all" data-testid="agent-card" data-agent-id={agent.id}>
@@ -126,13 +146,13 @@ function AgentCard({ agent, onChat }: AgentCardProps) {
           {agent.description}
         </p>
 
-        {agent.trustScore && (
+        {displayScore && (
           <div className="flex items-center gap-2 mb-4">
             <div className="text-[8px] tracking-[0.1em] text-[rgba(255,160,0,0.4)] uppercase">Trust</div>
             <div className="flex-1 h-1 bg-[rgba(255,140,0,0.1)] rounded overflow-hidden">
-              <div className="h-full bg-[var(--green)]" style={{ width: `${agent.trustScore}%` }} />
+              <div className="h-full bg-[var(--green)]" style={{ width: `${displayScore}%` }} />
             </div>
-            <div className="text-[10px] tracking-[0.05em] text-[var(--green)]">{agent.trustScore}</div>
+            <div className="text-[10px] tracking-[0.05em] text-[var(--green)]">{displayScore}</div>
           </div>
         )}
 
