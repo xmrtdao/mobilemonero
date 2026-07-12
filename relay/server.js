@@ -1667,6 +1667,18 @@ app.get('/ontology/:name', (req, res) => {
   res.status(404).json({ error: `Ontology not found. Available: PARTY-FAVOR-PHOTO, XMRT-DAO, CUTTLEFISHCLAWS, 31HARBOR` });
 });
 
+// ── Host-based routing: tunnel ingress can't do path rewrites, so we do it here ──
+// suite.mobilemonero.com → /suite/*, cuttlefish.mobilemonero.com → /cuttlefishclaws/*
+app.use((req, res, next) => {
+  const host = (req.get('host') || '').toLowerCase();
+  if (host === 'suite.mobilemonero.com' && !req.path.startsWith('/suite')) {
+    req.url = '/suite' + req.url;
+  } else if (host === 'cuttlefish.mobilemonero.com' && !req.path.startsWith('/cuttlefishclaws')) {
+    req.url = '/cuttlefishclaws' + req.url;
+  }
+  next();
+});
+
 // ── Fast static file routes (bypasses slow express.static on Windows) ──
 const PUBLIC_DIR = join(__dirname, 'public');
 const SPATIAL_DIR = join(__dirname, 'spatial');
