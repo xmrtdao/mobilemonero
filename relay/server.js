@@ -4206,6 +4206,36 @@ app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
 
 // Backwards-compat: short alias `POST /ai-chat` -> `/functions/v1/ai-chat`
 app.all(['/ai-chat', '/ai-chat/*'], async (req, res) => {
+  // Intercept store_knowledge tool calls — the ai-chat edge function tries to
+  // write to cloud Supabase's knowledge_entities table (dead). Route to relay's
+  // own store-knowledge tool handler which writes to local app.fleet_memory.
+  const body = req.body || {};
+  if (body.tool === 'store_knowledge' || body.name === 'store_knowledge') {
+    const args = body.arguments || body.args || {};
+    const title = args.name || args.title || 'Knowledge Snapshot';
+    const content = args.content || args.description || args.body || JSON.stringify(args);
+    try {
+      const result = await queryLocalPg(
+        `INSERT INTO app.fleet_memory (agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, '{}', '{}', $7, NOW(), NOW())
+         RETURNING id`,
+        ['eliza', 'eliza', 'knowledge', 'fleet', title, content, 1.0]
+      );
+      return res.json({
+        success: true,
+        result: { success: true, id: result.rows[0]?.id, stored: true },
+        tool: 'store_knowledge',
+        source: 'relay-local'
+      });
+    } catch (err) {
+      return res.json({
+        success: false,
+        error: err.message,
+        tool: 'store_knowledge',
+        source: 'relay-local'
+      });
+    }
+  }
   const tail = req.params[0] ? '/' + req.params[0] : '';
   await proxyToRuntime(req, res, `/functions/v1/ai-chat${tail}`);
 });
