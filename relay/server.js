@@ -5096,8 +5096,8 @@ app.get('/api/dao/github', async (req, res) => {
 
     const repos = reposRes.ok ? await reposRes.json() : { items: [] };
 
-    // Fetch recent commits from the 4 key repos in parallel
-    const keyRepos = ['xmrtdao/suite', 'xmrtdao/mobilemonero', 'xmrtdao/zero-claw', 'xmrtdao/xmrt-mesh', 'xmrtdao/sea-hampton-house'];
+    // Fetch recent commits from the 6 key repos in parallel
+    const keyRepos = ['xmrtdao/suite', 'xmrtdao/mobilemonero', 'xmrtdao/zero-claw', 'xmrtdao/xmrt-mesh', 'xmrtdao/sea-hampton-house', 'xmrtdao/cashdapp'];
     const commitResults = await Promise.allSettled(
       keyRepos.map(repo =>
         fetch(`https://api.github.com/repos/${repo}/commits?per_page=3`, {
