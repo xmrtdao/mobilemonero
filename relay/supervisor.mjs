@@ -26,6 +26,21 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
 
+// ── Text Sanitization ──────────────────────────────────────────
+function sanitizeText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\uFFFD/g, '-')
+    .replace(/\u2014/g, '-')
+    .replace(/\u2013/g, '-')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const DATA_DIR = join(ROOT, 'relay-data');
@@ -215,7 +230,7 @@ for (const svc of SERVICES) {
 // ── Logging ─────────────────────────────────────────────────
 const isDaemon = process.argv.includes('--daemon');
 function log(level, msg) {
-  const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
+  const line = `[${new Date().toISOString()}] [${level}] ${sanitizeText(msg)}`;
   try { writeFileSync(LOG_FILE, line + '\n', { flag: 'a' }); } catch {}
   if (!isDaemon) console.log(line);
 }

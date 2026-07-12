@@ -50,8 +50,8 @@ loadEnv();
 // ── Supabase Configuration ──────────────────────────────────
 const SUPABASE_URL = 'https://llulpuhtlxzsxxbsfcuu.supabase.co';
 const SUPABASE_PROJECT_REF = 'llulpuhtlxzsxxbsfcuu';
-const SUPABASE_DB_PASS = process.env.SUPABASE_DB_PASS || 'Cuttlefish2026Claws!Protocol';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_XP1J-rDgaOmMWOc4kSvD7g_s7bx3J8U';
+const SUPABASE_DB_PASS = process.env.SUPABASE_DB_PASS || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 // Direct Postgres connection string for Supabase
 const SUPABASE_DB_URL = process.env.SUPABASE_DB_URL ||

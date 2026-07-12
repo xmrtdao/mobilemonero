@@ -26,6 +26,21 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// ── Text Sanitization ──────────────────────────────────────────
+function sanitizeText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\uFFFD/g, '-')
+    .replace(/\u2014/g, '-')
+    .replace(/\u2013/g, '-')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT, 'relay-data');
@@ -74,7 +89,7 @@ function saveState(state) {
 }
 function log(msg) {
   const ts = new Date().toISOString();
-  const line = `[${ts}] ${msg}`;
+  const line = `[${ts}] ${sanitizeText(msg)}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
 }

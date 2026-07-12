@@ -28,6 +28,26 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'relay-data');
 const LOG_FILE = join(DATA_DIR, 'cron-engine-v2.log');
 const STATE_FILE = join(DATA_DIR, 'cron-engine-v2-state.json');
+
+// ── Text Sanitization ──────────────────────────────────────────
+function sanitizeText(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\uFFFD/g, '-')
+    .replace(/\u2014/g, '-')
+    .replace(/\u2013/g, '-')
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+}
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, '..', 'relay-data');
+const LOG_FILE = join(DATA_DIR, 'cron-engine-v2.log');
+const STATE_FILE = join(DATA_DIR, 'cron-engine-v2-state.json');
 mkdirSync(DATA_DIR, { recursive: true });
 
 // Prefer LOCAL_DATABASE_URL (the convention used in relay/.env) over
