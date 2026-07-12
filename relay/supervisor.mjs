@@ -161,6 +161,25 @@ const SERVICES = [
     startupGrace: 4_000,
     maxRestartsPerHour: 4,
   },
+  // ── MCP Servers ──────────────────────────────────────────
+  {
+    name: 'cuttlefishclaws-mcp',
+    cmd: 'node',
+    args: ['relay/cuttlefishclaws-mcp.mjs', '--http', '--port', '3120'],
+    cwd: ROOT,
+    healthCheck: () => checkHttp('http://127.0.0.1:3120/health', 2000),
+    startupGrace: 5_000,
+    maxRestartsPerHour: 4,
+  },
+  {
+    name: 'suite-mcp',
+    cmd: 'node',
+    args: ['relay/xmrtdao-suite-mcp.mjs', '--http', '--port', '3200'],
+    cwd: ROOT,
+    healthCheck: () => checkHttp('http://127.0.0.1:3200/health', 2000),
+    startupGrace: 5_000,
+    maxRestartsPerHour: 4,
+  },
 ];
 
 // Windows tasks we expect to fire (must match TaskName exactly)
