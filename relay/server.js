@@ -1444,7 +1444,7 @@ async function defaultHandler(task) {
 // cascade, conversation memory, and tool execution). The old
 // /functions/v1/eliza-relay endpoint is a deprecated stub that just
 // proxies to /ollama/chat with gemma3:1b — we skip it entirely.
-async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null, sessionId = null) {
+async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null, sessionId = null, historyMessages = []) {
   if (!SUPABASE_KEY) return logActivity('eliza', '-', 'SKIP', 'No SUPABASE_KEY set');
   // Use stable sessionId when provided (e.g. from fleet chat), otherwise fall back to relayTag
   const tag = sessionId || relayTag || `eliza-dev-${Date.now().toString(36)}`;
@@ -1453,15 +1453,19 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
     logActivity('eliza', tag, 'SEND', message.slice(0, 80));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
+    const body = {
+      userQuery: message,
+      senderName: senderName,
+      session_id: tag,
+    };
+    // Pass conversation history so ai-chat has context and skips its greeting
+    if (historyMessages.length > 0) {
+      body.messages = historyMessages;
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userQuery: message,
-        senderName: senderName,
-        // session_id keeps ai-chat's memory keyed per-tag for tools/dispatch flows
-        session_id: tag,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -6063,9 +6067,10 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
   const mentionsEliza = /@eliza/i.test(entry.message) || entry.channel === 'eliza';
   if (entry.channel === 'all' || entry.channel === 'eliza' || mentionsEliza) {
     try {
-      // Load conversation history from local memory
-      const sessionId = 'eliza-fleet-' + entry.agent;
+      // Load conversation history from local memory — single session for all fleet chat
+      const sessionId = 'eliza-fleet';
       let contextHistory = '';
+      let contextMessages = [];
       try {
         const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + sessionId + '&limit=20', {
           signal: AbortSignal.timeout(3000),
@@ -6075,6 +6080,9 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
           contextHistory = '\n\nRecent conversation context:\n' + convData.messages.map(function(m) {
             return '[' + m.agent + '] ' + m.content;
           }).join('\n');
+          contextMessages = convData.messages.map(function(m) {
+            return { role: m.agent === 'Eliza' ? 'assistant' : 'user', content: m.content };
+          });
         }
       } catch (e) { console.error('[routeFleetMessage-Eliza] load conv history failed:', e.message); }
 
@@ -6160,17 +6168,23 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       // Build the full prompt with grounding + tool results
       const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\nIf you need information NOT in the grounding block, output a single line `TOOL_CALL: {"tool":"<name>","args":{...}}` on its own line. I will execute the tool, then come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
 
-      // Primary path: ai-chat edge function. Deepseek fallback is used when
-      // ai-chat is unreachable.
+      // Primary path: ai-chat edge function.
       let elizaRes = null;
       try {
-        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId);
+        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId, contextMessages);
         console.log('[routeFleetMessage] ai-chat reply:', JSON.stringify(elizaRes).slice(0, 200));
+        // Detect greeting-only responses — ai-chat introduces itself on first
+        // message of every new session. Retry with the same session so the
+        // second call gets treated as a follow-up with real context.
+        if (elizaRes?.reply && /^(Hey there|Hello|Hi there|Welcome)[!?]?\s*(👋|😊)?\s*(I'm|I am)/i.test(elizaRes.reply.trim())) {
+          console.log('[routeFleetMessage] ai-chat greeted, retrying for real answer');
+          elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId, contextMessages);
+        }
       } catch (e) {
         console.log('[routeFleetMessage] ai-chat error:', e.message);
       }
 
-      // Fallback: if ai-chat failed, try local deepseek
+      // Fallback: if ai-chat still failed after retry, try deepseek
       if (!elizaRes?.reply) {
         try {
           const fbRes = await fetch('http://localhost:' + PORT + '/ollama/chat', {
