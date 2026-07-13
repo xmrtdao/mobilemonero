@@ -2647,9 +2647,15 @@ app.get('/api/supervisor/status', async (req, res) => {
   }
 });
 
-// Hostname-based redirect: agency.31harbor.com → /harbor/
+// Hostname-based SPA redirects
 app.get('/', (req, res, next) => {
   const host = req.headers.host || '';
+  if (host.includes('cuttlefish.mobilemonero.com')) {
+    return res.redirect(301, '/cuttlefishclaws/');
+  }
+  if (host.includes('suite.mobilemonero.com')) {
+    return res.redirect(301, '/suite/');
+  }
   if (host.includes('agency.31harbor.com')) {
     return res.redirect(301, '/harbor/');
   }
@@ -8861,6 +8867,39 @@ registerCuttlefishRoutes(app, {
   localQuery,
   trackRequest: typeof trackRequest === 'function' ? trackRequest : () => {},
   logActivity: typeof logActivity === 'function' ? logActivity : () => {},
+});
+
+// ── CuttlefishClaws CAC tiers (from DB) ──────────────────────
+app.get('/api/cuttlefishclaws/cac-tiers', async (req, res) => {
+  trackRequest('/api/cuttlefishclaws/cac-tiers');
+  try {
+    const r = await queryLocalPg("SELECT * FROM app.cuttlefish_cac_credentials ORDER BY id");
+    res.json({ success: true, data: r.rows || r });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── CuttlefishClaws contracts (from DB) ──────────────────────
+app.get('/api/cuttlefishclaws/contracts', async (req, res) => {
+  trackRequest('/api/cuttlefishclaws/contracts');
+  try {
+    const r = await queryLocalPg("SELECT * FROM app.cuttlefish_contracts ORDER BY id");
+    res.json({ success: true, data: r.rows || r });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── CuttlefishClaws scenarios (from DB) ──────────────────────
+app.get('/api/cuttlefishclaws/scenarios', async (req, res) => {
+  trackRequest('/api/cuttlefishclaws/scenarios');
+  try {
+    const r = await queryLocalPg("SELECT * FROM app.cuttlefish_scenarios ORDER BY display_order");
+    res.json({ success: true, data: r.rows || r });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // ── CuttlefishClaws Trust Network (proxied via MCP) ──
