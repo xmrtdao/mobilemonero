@@ -433,7 +433,7 @@ async function checkFleetMentions() {
                 dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
               } else if (lower.includes('task') || lower.includes('autopilot')) {
                 const st = loadState();
-                dataReply = '@' + m.agent + ' Autopilot cycle ' + st.cycle + '. Last: ' + (st.lastRun || 'never');
+                dataReply = '@' + m.agent + ' Autopilot cycle ' + (st.cycle || 0) + '. Last run: ' + (st.lastRun || 'never');
               }
               
               if (dataReply) await postToFleetChat(dataReply);
@@ -486,6 +486,12 @@ async function daemonLoop() {
   const runCycle = async () => {
     cycle++;
     log(`[CYCLE ${cycle}] Starting...`);
+    
+    // Persist cycle state so Alice can report it when queried
+    const st = loadState();
+    st.cycle = cycle;
+    st.lastRun = new Date().toISOString();
+    saveState(st);
     
     // Heartbeat every cycle
     try {

@@ -6339,7 +6339,8 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
   // Trigger on: @Alice mentions, channel=alice, or fleet channel with @Alice.
   const mentionsAlice = /@alice/i.test(entry.message) || entry.channel === 'alice' || (entry.channel === 'fleet' && /@alice/i.test(entry.message));
   if ((entry.channel === 'all' && mentionsAlice) || entry.channel === 'alice' || (entry.channel === 'fleet' && mentionsAlice)) {
-    const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.`;
+    const aliceState = await fetch('http://localhost:' + PORT + '/api/alice-state', { signal: AbortSignal.timeout(2000) }).then(r => r.json()).catch(() => ({}));
+    const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff. You run a 60-minute autopilot cycle: service monitoring, email parsing, task routing, and fleet memory synthesis. Current cycle: ${aliceState.cycle || 0}. Last run: ${aliceState.lastRun || 'never'}.`;
     await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 120, timeout: 12000 });
   }
 
@@ -8924,6 +8925,17 @@ app.get('/api/cuttlefishclaws/trust-network', async (req, res) => {
     res.json({ agents, nodes: agents, count: agents.length });
   } catch (e) {
     res.json({ agents: [], nodes: [], count: 0, error: e.message });
+  }
+});
+
+// ── Alice state (reads from alice-state.json for fleet chat persona) ──
+app.get('/api/alice-state', (req, res) => {
+  try {
+    const p = join(__dirname, '..', 'relay-data', 'alice-state.json');
+    const st = JSON.parse(readFileSync(p, 'utf8'));
+    res.json({ cycle: st.cycle || 0, lastRun: st.lastRun || null, certified: st.certified || false, lastServiceCheck: st.lastServiceCheck || null });
+  } catch (e) {
+    res.json({ cycle: 0, lastRun: null, error: e.message });
   }
 });
 
