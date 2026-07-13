@@ -2396,8 +2396,35 @@ app.use((req, res, next) => {
 });
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   trackRequest('/health');
+  
+  // Schema integrity check — warn if critical tables are missing columns
+  let schemaWarnings = [];
+  try {
+    const criticalChecks = [
+      { table: 'public.agents', cols: ['id', 'name', 'role', 'status', 'description'] },
+      { table: 'public.tasks', cols: ['id', 'title', 'status', 'assignee_agent_id', 'description'] },
+      { table: 'app.suite_users', cols: ['id', 'name', 'email', 'role', 'uuid'] },
+      { table: 'app.token_usage', cols: ['project', 'agent', 'model', 'input_tokens', 'output_tokens'] },
+      { table: 'app.conversations', cols: ['id', 'user_profile_id', 'session_id'] },
+      { table: 'app.messages', cols: ['id', 'conversation_id', 'role', 'content'] },
+    ];
+    for (const check of criticalChecks) {
+      const r = await queryLocalPg(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = split_part($1, '.', 1) AND table_name = split_part($1, '.', 2) AND column_name = ANY($2)`,
+        [check.table, check.cols]
+      );
+      const found = new Set(r.rows.map(row => row.column_name));
+      const missing = check.cols.filter(c => !found.has(c));
+      if (missing.length > 0) {
+        schemaWarnings.push(`${check.table} missing columns: ${missing.join(', ')}`);
+      }
+    }
+  } catch (e) {
+    schemaWarnings.push(`Schema check failed: ${e.message}`);
+  }
+
   res.json({
     status: 'ok',
     uptime: process.uptime(),
@@ -2407,6 +2434,7 @@ app.get('/health', (req, res) => {
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
+    schema: schemaWarnings.length === 0 ? 'clean' : schemaWarnings,
   });
 });
 
@@ -3282,9 +3310,6 @@ app.get('/', (req, res) => {
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🌐 Ecosystem</div>
-      <div class="stat"><span class="label"><a href="https://xmrtsolutions.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token Faucet</a></span><span class="value">testnet</span></div>
-      <div class="stat"><span class="label"><a href="https://coldcash.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">ColdCash</a></span><span class="value">private payments</span></div>
-      <div class="stat"><span class="label"><a href="https://pipuente.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">PiPuente</a></span><span class="value">cross-chain bridge</span></div>
       <div class="stat"><span class="label"><a href="https://paragraph.com/@xmrt" target="_blank" style="color:#60a5fa;text-decoration:none;">Paragraph Blog</a></span><span class="value">DAO journal</span></div>
       <div class="stat"><span class="label"><a href="https://sepolia.etherscan.io/token/0x77307DFbc436224d5e6f2048d2b6bDfA66998a15" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token</a></span><span class="value">0x7730...8a15</span></div>
       <div class="stat"><span class="label"><a href="https://github.com/xmrtdao" target="_blank" style="color:#60a5fa;text-decoration:none;">GitHub Org</a></span><span class="value">59 repos</span></div>
@@ -4229,6 +4254,13 @@ app.post('/api/fleet/heartbeat', (req, res) => {
     last_seen: new Date().toISOString(),
   };
   state.set('fleet.agents', agents);
+  
+  // Also update public.agents table for cross-system consistency
+  try {
+    queryLocalPg("UPDATE public.agents SET status=$1, last_seen=NOW(), updated_at=NOW(), current_workload=0 WHERE name=$2",
+      [status === 'ONLINE' ? 'idle' : status.toLowerCase(), name || agent_id]).catch(() => {});
+  } catch (e) { /* public.agents update best-effort */ }
+  
   res.json({ success: true, agent_id, status, registered: true });
 });
 
@@ -6340,7 +6372,18 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
   const mentionsAlice = /@alice/i.test(entry.message) || entry.channel === 'alice' || (entry.channel === 'fleet' && /@alice/i.test(entry.message));
   if ((entry.channel === 'all' && mentionsAlice) || entry.channel === 'alice' || (entry.channel === 'fleet' && mentionsAlice)) {
     const aliceState = await fetch('http://localhost:' + PORT + '/api/alice-state', { signal: AbortSignal.timeout(2000) }).then(r => r.json()).catch(() => ({}));
-    const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff. You run a 60-minute autopilot cycle: service monitoring, email parsing, task routing, and fleet memory synthesis. Current cycle: ${aliceState.cycle || 0}. Last run: ${aliceState.lastRun || 'never'}.`;
+    const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.
+
+AUTOPILOT CYCLE DEFINITION:
+- Interval: Every 60 minutes
+- Phase 1 — Service Monitor: Check relay (8080), tunnel (relay.mobilemonero.com), Ollama (11434), local-sb (54321), MUAPI balance, XMRT University, campaign scheduler. Alert if any are down.
+- Phase 2 — Email Parse: Fetch PFP + XMRT inboxes via inbound-email-parser.mjs. Classify as inquiry/info/spam. Create follow-up tasks for inquiries.
+- Phase 3 — Task Router: Fetch pending tasks from hourly-task-fetcher. Route by type: creative (MUAPI), email (campaign scheduler), brand (update guidelines), general (dispatch to relay).
+- Phase 4 — Fleet Autopilot: Run fleet-autopilot.mjs (GitHub audit, auto-close completed issues, auto-assign new tasks, human escalation).
+- Phase 5 — Fleet Memory: Persist observations to app.fleet_memory table. Every 3rd cycle, synthesize a terse fleet chat digest via Ollama.
+- Phase 6 — Mention Watch: Check fleet chat every 2 minutes for @alice/@alice-sidecar mentions. Respond with data.
+
+Current cycle: ${aliceState.cycle || 0}. Last run: ${aliceState.lastRun || 'never'}. Certificate: ${aliceState.certified ? 'YES' : 'NO'}.`;
     await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 120, timeout: 12000 });
   }
 
@@ -9064,16 +9107,30 @@ app.post('/api/suite/validate-token', express.json(), async (req, res) => {
   const { token } = req.body || {};
   if (!token) return res.status(400).json({ valid: false, error: 'Token required' });
 
-  // Check against RELAY_API_KEY (XMRT-DAO-CERT)
+  // Check against RELAY_API_KEY (XMRT-DAO-CERT) — superadmin
   const RELAY_KEY = process.env.RELAY_API_KEY || '';
   if (token === RELAY_KEY) {
-    return res.json({
-      valid: true,
-      type: 'xmrt-dao-cert',
-      label: 'XMRT DAO Suite',
-      permissions: ['dashboard', 'governance', 'credentials', 'earn', 'mining', 'admin', 'profile', 'inbox', 'council', 'licensing', 'executives'],
-      agent: 'XMRT DAO Operator',
-    });
+    // Look up the superadmin user from DB
+    try {
+      const userRes = await queryLocalPg('SELECT uuid, name, email, role FROM app.suite_users WHERE role = $1 LIMIT 1', ['superadmin']);
+      const user = userRes.rows?.[0];
+      return res.json({
+        valid: true,
+        type: 'xmrt-dao-cert',
+        label: 'XMRT DAO Suite',
+        permissions: ['dashboard', 'governance', 'credentials', 'earn', 'mining', 'admin', 'profile', 'inbox', 'council', 'licensing', 'executives'],
+        agent: 'XMRT DAO Operator',
+        user: user ? { uuid: user.uuid, name: user.name, email: user.email } : undefined,
+      });
+    } catch {
+      return res.json({
+        valid: true,
+        type: 'xmrt-dao-cert',
+        label: 'XMRT DAO Suite',
+        permissions: ['dashboard', 'governance', 'credentials', 'earn', 'mining', 'admin', 'profile', 'inbox', 'council', 'licensing', 'executives'],
+        agent: 'XMRT DAO Operator',
+      });
+    }
   }
 
   // Check against api_keys state (all 20 issued API keys)
