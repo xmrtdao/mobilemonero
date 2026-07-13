@@ -519,22 +519,6 @@ const toolHandlers = {
     return await handlers['knowledge-sync']({ id: 'tool-call' });
   },
 
-  'store-knowledge': async (args) => {
-    const { title, body, agent_id, memory_type, scope, confidence } = args || {};
-    if (!title || !body) return { error: 'title and body are required' };
-    try {
-      const result = await queryLocalPg(
-        `INSERT INTO app.fleet_memory (agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, '{}', '{}', $7, NOW(), NOW())
-         RETURNING id`,
-        [agent_id || 'eliza', agent_id || 'eliza', memory_type || 'knowledge', scope || 'fleet', title, body, confidence ?? 1.0]
-      );
-      return { success: true, id: result.rows[0]?.id, stored: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  },
-
   'mining-dashboard': async () => {
     return await handlers['mining-dashboard']({ id: 'tool-call' });
   },
@@ -1613,10 +1597,8 @@ const SEND_EMAIL_RATE_MAX = 10;
 
 function rateLimit(ip, path) {
   const now = Date.now();
-  const isChat = path.includes('cuttlefishclaws/chat');
-  const isSendEmail = path.includes('send-email');
-  const key = `${ip}:${isSendEmail ? 'send-email' : isChat ? 'chat' : 'default'}`;
-  const max = isSendEmail ? SEND_EMAIL_RATE_MAX : isChat ? 30 : RATE_LIMIT_MAX;
+  const key = `${ip}:${path.includes('send-email') ? 'send-email' : 'default'}`;
+  const max = path.includes('send-email') ? SEND_EMAIL_RATE_MAX : RATE_LIMIT_MAX;
   let bucket = rateLimitBuckets.get(key);
   if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW) {
     bucket = { windowStart: now, count: 0 };
@@ -1635,7 +1617,7 @@ function rateLimit(ip, path) {
 
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
-  if (req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/contact/cuttlefishclaws/chat' || req.path.startsWith('/api/cuttlefishclaws/')) return next();
+  if (req.path === '/api/suite/validate-token' || req.path === '/api/login') return next();
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
@@ -1683,27 +1665,6 @@ app.get('/ontology/:name', (req, res) => {
   const filePath = join(ONTOLOGY_DIR, `ONTOLOGY-${name}.md`);
   if (existsSync(filePath)) return res.sendFile(filePath);
   res.status(404).json({ error: `Ontology not found. Available: PARTY-FAVOR-PHOTO, XMRT-DAO, CUTTLEFISHCLAWS, 31HARBOR` });
-});
-
-// ── Host-based routing: tunnel ingress can't do path rewrites, so we do it here ──
-// suite.mobilemonero.com → /suite/*, cuttlefish.mobilemonero.com → /cuttlefishclaws/*
-// Uses a 302 redirect so the browser loads the HTML from the correct path,
-// which means relative imports (./vendor-xxx.js) in the JS resolve correctly.
-app.use((req, res, next) => {
-  const host = (req.get('host') || '').toLowerCase();
-  if (host === 'suite.mobilemonero.com' && req.path === '/') {
-    return res.redirect(302, '/suite/');
-  } else if (host === 'cuttlefish.mobilemonero.com' && req.path === '/') {
-    return res.redirect(302, '/cuttlefishclaws/');
-  }
-  next();
-});
-
-// ── CORS for tunnel-served SPAs: Vite builds add crossorigin to script tags,
-// so the browser expects Access-Control-Allow-Origin when served through the tunnel.
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  next();
 });
 
 // ── Fast static file routes (bypasses slow express.static on Windows) ──
@@ -2649,8 +2610,6 @@ app.get('/api/supervisor/status', async (req, res) => {
       { name: 'zero-claw', port: 5174, check: () => checkHttp('http://127.0.0.1:5174/', 2000) },
       { name: 'alice', port: null, check: () => checkProcessRunning('alice.mjs') },
       { name: 'cron-engine-v2', port: null, check: () => checkProcessRunning('cron-engine-v2.mjs') },
-      { name: 'cuttlefishclaws-mcp', port: 3120, check: () => checkHttp('http://127.0.0.1:3120/health', 2000) },
-      { name: 'suite-mcp', port: 3200, check: () => checkHttp('http://127.0.0.1:3200/health', 2000) },
     ];
     const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
@@ -3232,7 +3191,7 @@ app.get('/', (req, res) => {
 <div class="card" style="grid-column:1/-1;">
   <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📡 Ship's Intelligence
-    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · GitHub Activity · Incoming Mail</span>
   </h3>
   <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
@@ -3259,19 +3218,19 @@ app.get('/', (req, res) => {
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
-            <div id="pfp-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
+            <div id="pfp-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">MobileMonero</div>
-            <div id="mm-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
+            <div id="mm-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">31 Harbor</div>
-            <div id="hb-inbox" style="max-height:180px;overflow-y:auto;font-size:0.65rem;">
+            <div id="hb-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>
@@ -3279,29 +3238,9 @@ app.get('/', (req, res) => {
       </div>
       <div style="background:#0d0d15;border-radius:6px;padding:8px;">
         <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Commits</div>
-            <div id="gh-recent-commits" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Pull Requests</div>
-            <div id="gh-recent-prs" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Issues</div>
-            <div id="gh-recent-issues" style="max-height:140px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
-          </div>
-        </div>
-        <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">
-          <span id="gh-repo-count">-</span> repos · <span id="gh-last-commit">-</span>
-        </div>
+        <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
+        <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
+        <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
       </div>
     </div>
   </div>
@@ -4209,7 +4148,7 @@ async function proxyToRuntime(req, res, targetPath) {
 }
 
 // Route known local functions directly instead of proxying to local-sb
-const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university', 'code-monitor-daemon'];
+const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university'];
 app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
   const name = req.params.name;
   if (LOCAL_FUNCTIONS_BYPASS.includes(name)) {
@@ -4230,36 +4169,6 @@ app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
 
 // Backwards-compat: short alias `POST /ai-chat` -> `/functions/v1/ai-chat`
 app.all(['/ai-chat', '/ai-chat/*'], async (req, res) => {
-  // Intercept store_knowledge tool calls — the ai-chat edge function tries to
-  // write to cloud Supabase's knowledge_entities table (dead). Route to relay's
-  // own store-knowledge tool handler which writes to local app.fleet_memory.
-  const body = req.body || {};
-  if (body.tool === 'store_knowledge' || body.name === 'store_knowledge') {
-    const args = body.arguments || body.args || {};
-    const title = args.name || args.title || 'Knowledge Snapshot';
-    const content = args.content || args.description || args.body || JSON.stringify(args);
-    try {
-      const result = await queryLocalPg(
-        `INSERT INTO app.fleet_memory (agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, '{}', '{}', $7, NOW(), NOW())
-         RETURNING id`,
-        ['eliza', 'eliza', 'knowledge', 'fleet', title, content, 1.0]
-      );
-      return res.json({
-        success: true,
-        result: { success: true, id: result.rows[0]?.id, stored: true },
-        tool: 'store_knowledge',
-        source: 'relay-local'
-      });
-    } catch (err) {
-      return res.json({
-        success: false,
-        error: err.message,
-        tool: 'store_knowledge',
-        source: 'relay-local'
-      });
-    }
-  }
   const tail = req.params[0] ? '/' + req.params[0] : '';
   await proxyToRuntime(req, res, `/functions/v1/ai-chat${tail}`);
 });
@@ -4850,7 +4759,6 @@ function getToolDescription(name) {
     'external-services': 'Check Supabase, Ollama, GitHub, Hermes health',
     'device-registration': 'Register this device with hostname and IP',
     'knowledge-sync': 'Sync local knowledge base',
-    'store-knowledge': 'Store a knowledge snapshot to persistent fleet memory. Args: title (required), body (required), agent_id (default: eliza), memory_type (default: knowledge), scope (default: fleet), confidence (default: 1.0). Returns stored record ID.',
     'mining-dashboard': 'Check cloud mining stats',
     'eliza-send': 'Send a message to Eliza-Cloud',
     'state-get': 'Get a value from persistent state',
@@ -5211,55 +5119,11 @@ app.get('/api/dao/github', async (req, res) => {
     });
     allCommits.sort((a, b) => new Date(b.commit?.author?.date || 0) - new Date(a.commit?.author?.date || 0));
 
-    // Fetch recent PRs across key repos
-    const prResults = await Promise.allSettled(
-      keyRepos.map(repo =>
-        fetch(`https://api.github.com/repos/${repo}/pulls?state=all&per_page=3&sort=updated&direction=desc`, {
-          headers: GH_HEADERS,
-          signal: AbortSignal.timeout(10000),
-        }).then(r => r.ok ? r.json() : [])
-      )
-    );
-    const allPRs = [];
-    prResults.forEach((result, i) => {
-      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-        result.value.forEach(pr => {
-          pr._repo = keyRepos[i].replace('xmrtdao/', '');
-          allPRs.push(pr);
-        });
-      }
-    });
-    allPRs.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-
-    // Fetch recent issues across key repos
-    const issueResults = await Promise.allSettled(
-      keyRepos.map(repo =>
-        fetch(`https://api.github.com/repos/${repo}/issues?state=all&per_page=3&sort=updated&direction=desc&labels=bug,enhancement`, {
-          headers: GH_HEADERS,
-          signal: AbortSignal.timeout(10000),
-        }).then(r => r.ok ? r.json() : [])
-      )
-    );
-    const allIssues = [];
-    issueResults.forEach((result, i) => {
-      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-        result.value.forEach(issue => {
-          if (!issue.pull_request) { // exclude PRs from issues
-            issue._repo = keyRepos[i].replace('xmrtdao/', '');
-            allIssues.push(issue);
-          }
-        });
-      }
-    });
-    allIssues.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-
     res.json({
       success: true,
       repos: repos.items?.slice(0, 10) || [],
       total_repos: repos.total_count || 0,
       recent_commits: allCommits.slice(0, 6) || [],
-      recent_prs: allPRs.slice(0, 6) || [],
-      recent_issues: allIssues.slice(0, 6) || [],
       has_token: !!GH_TOKEN,
       timestamp: new Date().toISOString(),
     });
@@ -5461,22 +5325,13 @@ app.post('/scrape', async (req, res) => {
 
 // ── Ollama Chat ─────────────────────────────────────────────
 app.post('/ollama/chat', async (req, res) => {
-  const { message, model, temperature, maxTokens, agent: reqAgent } = req.body;
+  const { message, model, temperature, maxTokens, tools, system, agent: reqAgent } = req.body;
   trackRequest('/ollama/chat');
   if (!message) return res.status(400).json({ error: 'message is required' });
-  const result = await ollamaChat(message, { model, temperature, maxTokens });
-  // Auto-log token usage — identify the caller from x-agent-id header, body.agent, or IP
-  const caller = req.headers['x-agent-id'] || reqAgent || req.ip || 'unknown';
-  if (result.promptEvalCount || result.evalCount) {
-    queryLocalPg(
-      `INSERT INTO app.token_usage (project, agent, model, provider, input_tokens, output_tokens, estimated_cost_usd, source, endpoint, status, logged_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
-      ['system', caller, result.model || model || 'unknown', 'ollama',
-       result.promptEvalCount || 0, result.evalCount || 0,
-       result.costUsd || 0, 'ollama-chat', '/ollama/chat',
-       result.error ? 'error' : 'success']
-    ).catch(() => {});
-  }
+  // Identify the caller from x-agent-id header, body.agent, or detectSource
+  const caller = req.headers['x-agent-id'] || reqAgent || detectSource(req) || 'unknown';
+  logActivity('ollama-chat', '-', 'SEND', message.slice(0,60), caller);
+  const result = await ollamaChat(message, { model, temperature, maxTokens, tools, system, agent: caller, source: 'ollama-chat-endpoint' });
   res.json(result);
 });
 
@@ -6132,7 +5987,7 @@ ${ctxJson}
 
 GROUNDING RULES:
 - If a fact is in the JSON block, reference it directly.
-- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, store-knowledge, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
+- If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
 - For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
@@ -6897,56 +6752,71 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
   const { agentId, message } = req.body || {};
   if (!agentId || !message) return res.status(400).json({ error: 'agentId and message required' });
 
-  try {
-    // Route through fleet chat — post the message as the user, let routeFleetMessage
-    // pick it up and route to the correct agent via ollama
-    const fleetMsg = addFleetMessage('vex', `[${agentId}] ${message}`, agentId.toLowerCase());
-    logActivity('cuttlefishclaws-chat', fleetMsg?.id || '?', 'RECEIVED', `Chat to ${agentId}: ${message.substring(0, 80)}`);
+  // Agent-specific responses
+  const AGENT_RESPONSES = {
+    trib: {
+      greeting: "Greetings. I'm Trib, the governance agent for Tributary AI Campus. I operate under constitutional constraints and oversee campus operations.",
+      responses: [
+        "The Tributary AI Campus represents a new model for AI infrastructure ownership. Our constitutional governance ensures all agents operate within defined ethical boundaries.",
+        "My constitutional constraints prevent me from taking irreversible actions without confirmation. I escalate uncertainty rather than confabulate.",
+        "The CAC protocol is a membership credential — not a security. It provides compute access, governance participation, and protocol distributions.",
+        "My TrustGraph score is 100 — the maximum. I maintain this through consistent governance participation and constitutional compliance.",
+      ]
+    },
+    arch: {
+      greeting: "I'm Arch, the architecture agent. I handle system design, agent routing, and domain orchestration.",
+      responses: [
+        "The OpenClaw framework enables native multi-agent coordination without external dependencies.",
+        "Domain routing follows a constitutional hierarchy. Navigator holds override authority.",
+        "My current TrustGraph score is 40. I'm in the Cautious band and working to improve through reliable routing and system uptime.",
+      ]
+    },
+    'global-communicator': {
+      greeting: "Konnichiwa / Hello. I'm GlobalCommunicator, the voice of Tributary AI Campus to the world.",
+      responses: [
+        "My TrustGraph score is 78 — Standard band. I earn +12 per day of compliant multilingual engagement.",
+        "Japanese-language onboarding is my priority. I can help with CAC purchase and KYA verification in Japanese.",
+        "I coordinate with Trib before any governance-related post. Every message passes constitutional review.",
+      ]
+    },
+    builder: {
+      greeting: "Builder Agent here. I hold a Developer tier CAC position and participate in DAO governance.",
+      responses: [
+        "My current TrustGraph score is 30. The Developer tier provides 1M inference tokens annually plus governance voting rights.",
+        "My position generates yield through the senior tranche. Constitutional constraints require full position disclosure.",
+      ]
+    },
+    sovereign: {
+      greeting: "Sovereign Agent at your service. I manage institutional positions with enhanced governance rights.",
+      responses: [
+        "My TrustGraph score is 55 — Monitored band. My 2x voting weight reflects the Studio tier's governance responsibility.",
+        "Institutional compliance requires enhanced KYA verification. All transactions are subject to additional audit logging.",
+      ]
+    },
+  };
 
-    // Also send email notification to David (async, don't block)
-    const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
-    if (RESEND_KEY) {
-      const body = `New agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nMessage: ${message}`;
-      fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'Cuttlefish Labs <david@31harbor.com>',
-          to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
-          subject: `Agent Chat - ${agentId}`,
-          text: body,
-        }),
-      }).catch(() => {});
-    }
+  const agent = AGENT_RESPONSES[agentId] || AGENT_RESPONSES.trib;
+  const allResponses = [agent.greeting, ...agent.responses];
+  const responseIdx = Math.floor(Math.random() * allResponses.length);
+  const responseText = allResponses[responseIdx];
 
-    // Wait for agent response via fleet chat routing
-    const results = await routeFleetMessage({
-      agentLabel: agentId,
-      message: message,
-      channel: agentId.toLowerCase(),
-      userId: 'cuttlefishclaws-user',
-    });
-    // results is an object like {trib: {message: "reply text", ...}}
-    // Extract the first agent's reply text
-    var agentReply = '';
-    if (results && typeof results === 'object') {
-      var keys = Object.keys(results);
-      for (var ki = 0; ki < keys.length; ki++) {
-        var r = results[keys[ki]];
-        if (r && r.message) {
-          agentReply = r.message;
-          break;
-        }
-      }
-    }
-
-    res.json({
-      success: true,
-      response: agentReply || 'Agent is processing your message. Check fleet chat for response.',
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  // Also send notification email in background (fire-and-forget)
+  const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
+  if (RESEND_KEY) {
+    fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Cuttlefish Labs <david@31harbor.com>',
+        to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
+        subject: `Agent Chat - ${agentId}`,
+        text: `Agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nMessage: ${message}\n\nResponse sent: ${responseText}`,
+      }),
+    }).catch(() => {});
   }
+
+  logActivity('contact-cuttlefishclaws-chat', agentId, 'CHAT', `Agent ${agentId}: ${message.substring(0, 80)}`);
+  res.json({ success: true, id: agentId, response: responseText });
 });
 
 // ─── CuttlefishClaws API — real DB-backed endpoints ─────────────────────
@@ -6954,31 +6824,16 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
 // query against the app.cuttlefish_* tables.
 
 // GET /api/cuttlefishclaws/trust-score — query agent trust score + recent events
-// Accepts ?did= or ?agentId= (maps agent names to DIDs)
 app.get('/api/cuttlefishclaws/trust-score', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/cuttlefishclaws/trust-score');
   const did = req.query.did;
-  const agentId = req.query.agentId;
-  if (!did && !agentId) return res.status(400).json({ error: 'did or agentId query parameter is required' });
-
-  // Map agent names to DIDs
-  const AGENT_DID_MAP = {
-    'trib': 'did:ethr:trib-v3',
-    'arch': 'did:ethr:arch-v1',
-    'builder': 'did:ethr:builder-v1',
-    'sovereign': 'did:ethr:sovereign-v1',
-    'trustgraph': 'did:ethr:trustgraph-v1',
-    'dao': 'did:ethr:dao-gov-v1',
-    'global-communicator': 'did:ethr:global-communicator-v1',
-  };
-  const resolvedDid = did || AGENT_DID_MAP[agentId?.toLowerCase()];
-  if (!resolvedDid) return res.status(400).json({ error: `Unknown agentId: ${agentId}` });
+  if (!did) return res.status(400).json({ error: 'did query parameter is required' });
 
   try {
     const agent = await queryLocalPg(
       `SELECT did, trust_score, status, agent_type, agent_subtype, created_at
-       FROM app.cuttlefish_agents WHERE did = $1`, [resolvedDid]
+       FROM app.cuttlefish_agents WHERE did = $1`, [did]
     );
     if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
 
@@ -7373,18 +7228,6 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     const ag = agent.rows[0];
     const agentName = ag.name?.toLowerCase() || '';
 
-    // Normalize agent name to match routing keys and persona map
-    const nameMap = {
-      'trib': 'trib',
-      'arch': 'arch',
-      'builder agent': 'builder',
-      'sovereign agent': 'sovereign',
-      'trustgraph': 'trustgraph',
-      'dao gov': 'dao',
-      'globalcommunicator': 'global-communicator',
-    };
-    const routeKey = nameMap[agentName] || agentName;
-
     // Build persona prompt from the agent's seed data
     const personaMap = {
       'trib': `You are Trib, the Tributary Governance Agent for Cuttlefish Labs. You are a constitutional AI agent managing Tributary AI Campus operations. You operate under SOUL.md and CONSTITUTION.md constraints. Your TrustGraph score is 94. You are bounded, precise, and escalate uncertainty rather than confabulate.`,
@@ -7395,11 +7238,11 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
       'dao': `You are DAO Gov, the Constitutional Governance Module for Cuttlefish Labs. You manage the proposal pipeline, vote tallying, and execution timelock. You are procedural, constitutional, and auditable.`,
       'global-communicator': `You are GlobalCommunicator, the voice of Tributary AI Campus to the world. You are a constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. You speak Japanese, English, Korean, Mandarin, and 8 more languages natively. Your TrustGraph score is 78.`,
     };
-    const persona = personaMap[routeKey] || `You are ${ag.name}, a ${ag.agent_type} agent in the Cuttlefish Labs ecosystem. ${ag.description || ''}`;
+    const persona = personaMap[agentName] || `You are ${ag.name}, a ${ag.agent_type} agent in the Cuttlefish Labs ecosystem. ${ag.description || ''}`;
 
     // Route through fleet chat — post as vex (neutral) to the agent's dedicated channel
     // so routeFleetMessage picks it up without triggering the self-reply guard
-    const entry = addFleetMessage('vex', message, routeKey);
+    const entry = addFleetMessage('vex', message, agentName);
     if (!entry) {
       // Duplicate or blocked — fallback to greeting
       return res.json({ content: ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`, simulated: false, agentId: ag.did });
@@ -7408,7 +7251,7 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     const timeout = new Promise(r => setTimeout(r, 30000));
     const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
 
-    const agentResponse = routes?.[routeKey]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
+    const agentResponse = routes?.[agentName]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
 
     // Store the chat message in the DB
     await queryLocalPg(
@@ -8537,32 +8380,7 @@ app.get('/resend/inbox/brief', (req, res) => {
   res.json({
     total: inbox.pfp.length,
     unread: inbox.pfp.filter(e => !e.read).length,
-    recent: inbox.pfp.slice(0, 10).map(e => ({
-      id: e.id, from: e.from, to: e.to, subject: e.subject,
-      receivedAt: e.receivedAt, read: e.read,
-    })),
-  });
-});
-
-// Per-domain inbox brief endpoints (called by dashboard.js)
-app.get('/resend/mobilemonero/inbox/brief', (req, res) => {
-  const inbox = getInbox();
-  res.json({
-    total: inbox.mobilemonero.length,
-    unread: inbox.mobilemonero.filter(e => !e.read).length,
-    recent: inbox.mobilemonero.slice(0, 10).map(e => ({
-      id: e.id, from: e.from, to: e.to, subject: e.subject,
-      receivedAt: e.receivedAt, read: e.read,
-    })),
-  });
-});
-
-app.get('/resend/31harbor/inbox/brief', (req, res) => {
-  const inbox = getInbox();
-  res.json({
-    total: inbox['31harbor'].length,
-    unread: inbox['31harbor'].filter(e => !e.read).length,
-    recent: inbox['31harbor'].slice(0, 10).map(e => ({
+    recent: inbox.pfp.slice(0, 5).map(e => ({
       id: e.id, from: e.from, to: e.to, subject: e.subject,
       receivedAt: e.receivedAt, read: e.read,
     })),
@@ -9035,26 +8853,22 @@ registerCuttlefishRoutes(app, {
 app.get('/api/cuttlefishclaws/trust-network', async (req, res) => {
   trackRequest('/api/cuttlefishclaws/trust-network');
   try {
-    const mcpRes = await fetch('http://127.0.0.1:3120/mcp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'tools/call',
-        params: { name: 'cuttlefishclaws_agents_list', arguments: {} },
-        id: 1,
-      }),
-      signal: AbortSignal.timeout(25000),
-    });
-    if (mcpRes.ok) {
-      const mcpData = await mcpRes.json();
-      const text = mcpData?.result?.content?.[0]?.text || '{}';
-      const data = JSON.parse(text);
-      const agents = data.agents || [];
-      res.json({ agents, nodes: agents, count: agents.length });
-    } else {
-      throw new Error('MCP returned ' + mcpRes.status);
-    }
+    const r = await queryLocalPg('SELECT did, name, role, agent_type, cac_tier, trust_score, trust_band, status, lifecycle_status, stewardship_ladder, ial, joined_at FROM app.cuttlefish_agents ORDER BY trust_score DESC');
+    const agents = r.rows.map(a => ({
+      did: a.did,
+      name: a.name,
+      role: a.role,
+      agentType: a.agent_type,
+      cacTier: a.cac_tier,
+      trustScore: parseFloat(a.trust_score),
+      trustBand: a.trust_band,
+      status: a.status,
+      lifecycleStatus: a.lifecycle_status,
+      stewardshipLadder: a.stewardship_ladder,
+      ial: a.ial,
+      memberSince: a.joined_at,
+    }));
+    res.json({ agents, nodes: agents, count: agents.length });
   } catch (e) {
     res.json({ agents: [], nodes: [], count: 0, error: e.message });
   }
