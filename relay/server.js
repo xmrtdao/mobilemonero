@@ -2399,7 +2399,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     agent: 'Eliza-Dev',
-    version: '6.0.0',
+    version: '7.0.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -2648,6 +2648,10 @@ app.get('/', (req, res, next) => {
   const host = req.headers.host || '';
   if (host.includes('agency.31harbor.com')) {
     return res.redirect(301, '/harbor/');
+  }
+  // suite.mobilemonero.com → Suite SPA landing with auth widget
+  if (host.includes('suite.mobilemonero.com') || host.includes('suite.')) {
+    return res.redirect(301, '/suite/');
   }
   next();
 });
@@ -2949,7 +2953,7 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v6.0.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v7.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
@@ -3004,7 +3008,7 @@ app.get('/', (req, res) => {
         <div class="stat"><span class="label">Task Issues</span><span class="value" id="qds-task-issues" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Last Check</span><span class="value" id="qds-last-check" style="color:#6b6b80;">-</span></div>
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.65rem;color:var(--text-dim);">
-          <span style="color:#60a5fa;">⚡ relay</span> v6.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
+          <span style="color:#60a5fa;">⚡ relay</span> v7.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
         </div>
       </div>
       <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">
@@ -3572,7 +3576,7 @@ app.post('/eliza-ping', async (req, res) => {
     handlers: Object.keys(handlers),
     system: {
       uptime: process.uptime(),
-      version: '6.0.0',
+      version: '7.0.0',
       tunnel: state.get('tunnel-url') || 'https://relay.mobilemonero.com',
       agent: 'TS Relay (Eliza-Dev laptop)',
     },
@@ -3602,7 +3606,7 @@ app.post('/dispatch', async (req, res) => {
       handlers: Object.keys(handlers),
       system: {
         uptime: process.uptime(),
-        version: '6.0.0',
+        version: '7.0.0',
         agent: 'Vex (Eliza-Dev)',
       }
     };
@@ -4348,7 +4352,7 @@ app.get('/api/fleet/agents', async (req, res) => {
       status: 'ONLINE',
       role: 'relay',
       tunnel_url: 'https://relay.mobilemonero.com',
-      version: '6.0.0',
+      version: '7.0.0',
       last_seen: new Date().toISOString(),
     };
     
@@ -4700,7 +4704,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '6.0.0',
+      version: '7.0.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -4722,7 +4726,7 @@ app.get('/status', (req, res) => {
     host: execSync('hostname', { encoding: 'utf8' }).trim(),
     uptime: process.uptime(),
     port: PORT,
-    version: '6.0.0',
+    version: '7.0.0',
     handlers: Object.keys(handlers),
     tools: Object.keys(toolHandlers),
     recentActivity: activityLog.slice(0, 20),
@@ -6565,11 +6569,16 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const { agent, to, subject, body } = req.body || {};
+  const { agent, to, subject, body, html } = req.body || {};
 
-  if (!agent || !to || !subject || !body) {
-    return res.status(400).json({ error: 'agent, to, subject, and body required' });
+  if (!agent || !to || !subject || !(body || html)) {
+    return res.status(400).json({ error: 'agent, to, subject, and body (or html) required' });
   }
+
+  // Sanitize subject and body to prevent em-dash / Unicode corruption
+  // bash/curl on Windows mangles U+2014 (em dash) to U+FFFD (replacement char)
+  const cleanSubject = sanitizeText(subject);
+  const cleanBody = body ? sanitizeText(body) : '';
 
   const AGENT_FROM = {
     'vex': 'Vex Relay <vex@mobilemonero.com>',
@@ -6599,7 +6608,7 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
     const apiRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [to], subject, text: body }),
+      body: JSON.stringify({ from, to: [to], subject: cleanSubject, text: cleanBody, html: html || undefined }),
     });
     const data = await apiRes.json();
     
@@ -8970,7 +8979,7 @@ app.post('/api/suite/validate-token', express.json(), async (req, res) => {
       type: 'xmrt-dao-cert',
       label: 'XMRT DAO Suite',
       permissions: ['dashboard', 'governance', 'credentials', 'earn', 'mining', 'admin', 'profile', 'inbox', 'council', 'licensing', 'executives'],
-      agent: 'XMRT DAO Operator',
+      agent: 'XMRT DAO Navigator',
     });
   }
 
@@ -8983,8 +8992,13 @@ app.post('/api/suite/validate-token', express.json(), async (req, res) => {
       type: 'api-key',
       label: `${entry.name || 'Agent'} — ${entry.tier || 'explorer'} tier`,
       permissions: entry.permissions || ['dashboard', 'credentials', 'profile'],
-      agent: entry.name || 'Agent Operator',
+      agent: entry.name || 'Agent Navigator',
       tier: entry.tier || 'explorer',
+      user: {
+        uuid: entry.uuid || entry.email || 'api-user',
+        name: entry.name || 'Navigator',
+        email: entry.email || '',
+      },
     });
   }
 
@@ -8997,8 +9011,13 @@ app.post('/api/suite/validate-token', express.json(), async (req, res) => {
       type: 'cac',
       label: `CAC ${cert.tier || 'Developer'} Access`,
       permissions: cert.permissions || ['dashboard', 'credentials', 'profile'],
-      agent: cert.agent_name || 'CAC Agent Operator',
+      agent: cert.agent_name || 'CAC Agent Navigator',
       tier: cert.tier,
+      user: {
+        uuid: cert.agent_did || 'cac-user',
+        name: cert.agent_name || 'CAC Navigator',
+        email: '',
+      },
     });
   }
 
