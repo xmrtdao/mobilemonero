@@ -3,6 +3,18 @@ REM start-everything.bat — Canonical boot script for XMRT DAO Fleet
 REM Place in shell:startup folder to auto-start on boot.
 REM Boot order: postgres -> local-sb -> relay -> MCPs -> agents -> tunnel
 REM
+REM ╔══════════════════════════════════════════════════════════════════╗
+REM ║  CANONICAL WORKSPACE: DevGruGold                               ║
+REM ║  All services run from DevGruGold (the patched development     ║
+REM ║  copy). The xmrtdao workspace is a stable base that gets       ║
+REM ║  patched from DevGruGold — do NOT start services from both.    ║
+REM ║                                                                ║
+REM ║  The supervisor (relay/supervisor.mjs) auto-deduplicates       ║
+REM ║  runtimes on every health check cycle — it kills duplicate     ║
+REM ║  instances of known service scripts and keeps the oldest PID.  ║
+REM ║  But you should still only start from ONE workspace.           ║
+REM ╚══════════════════════════════════════════════════════════════════╝
+REM
 REM All services run from DevGruGold (the patched development copy).
 REM The supervisor (relay/supervisor.mjs) is the recommended entry point.
 

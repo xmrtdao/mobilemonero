@@ -4,6 +4,7 @@
     opts = opts || {};
     opts.headers = opts.headers || {};
     opts.headers['x-api-key'] = API_KEY;
+    opts.headers['x-agent-id'] = 'dashboard';
     return fetch(url, opts);
   };
 
@@ -187,83 +188,141 @@
   updateBoardTopics();
   setInterval(updateBoardTopics, 15000);
 
-  // ── Rum Quota + Agent Fleet (combined) ──
+  // dashboard.js v7.0.1 — FIX: removed createRadialGradient, shadowBlur, and glow caching to prevent canvas freeze on agent hover
+// ── Rum Quota + Agent Fleet (combined) ──
   function updateGrogQuota() {
     var seq = Date.now();
     var content = document.getElementById('rum-quota-content');
     if (!content) return;
     content.dataset.seq = seq;
     Promise.all([
-      apiFetch('/api/token-usage/summary/agents?days=7', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return [];}),
+      apiFetch('/api/rum-quota', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return null;}),
       apiFetch('/api/fleet-chat/agents', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {agents:[]};}),
-      apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {};})
+      apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {};}),
+      apiFetch('/api/agent-activity', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {agents:[]};})
     ]).then(function(results) {
       if (content.dataset.seq != seq) return;
-      var tokenData = results[0] || [];
+      var rumData = results[0];
       var fleetData = results[1] || {agents:[]};
       var trustData = results[2] || {};
+      var activityData = results[3] || {agents:[]};
       var trustAgents = trustData.agents || trustData.nodes || [];
+
+      if (!rumData) {
+        content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
+        return;
+      }
+
+      // Build activity map
+      var activityMap = {};
+      (activityData.agents || []).forEach(function(a) {
+        activityMap[a.agent_id] = a;
+      });
+
+      // Build trust map
       var trustMap = {};
       trustAgents.forEach(function(t) {
-        var name = (t.name || '').toLowerCase();
+        var name = (t.name || '').toLowerCase().trim();
         trustMap[name] = { score: t.trustScore, band: t.trustBand, status: t.status, tier: t.cacTier };
       });
+
+      // Build fleet map
       var fleetMap = {};
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = (a.name || '').toLowerCase().trim();
         fleetMap[name] = a.type || 'relay';
       });
-      var seen = {};
+
+      // Merge rum data with trust and fleet info
       var rows = [];
-      tokenData.forEach(function(t) {
-        var agent = t.agent.toLowerCase();
-        seen[agent] = true;
-        var trust = trustMap[agent] || {};
-        var type = fleetMap[agent] || 'unknown';
+      var totalCalls = rumData.total_calls_used || 0;
+      var budget = rumData.budget_calls || 15000;
+      var remaining = rumData.calls_remaining || 0;
+      var pctUsed = rumData.pct_used || '0.0';
+      var hoursUntil = rumData.hours_until_restock || 0;
+      var nextRestock = rumData.next_restock || '';
+
+      // Format hours until restock
+      var restockStr = '';
+      if (hoursUntil > 24) {
+        restockStr = Math.round(hoursUntil / 24) + 'd ' + Math.round(hoursUntil % 24) + 'h';
+      } else {
+        restockStr = Math.round(hoursUntil) + 'h';
+      }
+
+      var emojiMap = { 'eliza': '🤖', 'joe': '🏴‍☠️', 'hermes': '⚡', 'vex': '🦑', 'alice': '📧', 'system': '⚙️', 'trib': '🏛️', 'harbor': '🏠', 'postman': '📬', 'arch': '🏗️', 'builder': '🔨', 'sovereign': '👑', 'trustgraph': '📊', 'dao-gov': '🏛️', 'global-communicator': '📡', 'kimi': '🧠', 'xmrt-aidy': '🛠️', 'pfp': '📸', 'relay': '🔌', '127.0.0.1': '🖥️', 'suite-unified-chat': '💬', 'local-dev': '💻', 'anya-sharma': '👩‍💼', 'vex-user': '🦑', 'eliza-quartermaster': '🤖', 'vex-captain,-hms-speedy': '🦑', 'hermes-agent': '⚡' };
+
+      rumData.agents.forEach(function(a) {
+        var canon = a.agent.toLowerCase().trim();
+        var trust = trustMap[canon] || {};
+        var type = fleetMap[canon] || 'unknown';
         var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
         var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-        var emoji = agent === 'eliza' ? '🤖' : agent === 'joe' ? '🏴‍☠️' : agent === 'hermes' ? '⚡' : agent === 'vex' ? '🦑' : agent === 'alice' ? '📧' : agent === 'system' ? '⚙️' : agent === 'trib' ? '🏛️' : agent === 'harbor' ? '🏠' : agent === 'postman' ? '📬' : '🫡';
-        rows.push({ agent: t.agent, emoji: emoji, tokens: parseInt(t.total_tokens) || 0, cost: parseFloat(t.total_cost) || 0, calls: parseInt(t.calls) || 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
+        var emoji = emojiMap[canon] || '🫡';
+        rows.push({ agent: a.agent, emoji: emoji, calls: a.calls, tokens: a.tokens, pct: a.pct, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
+
+      // Add fleet agents with no token usage
+      var seen = {};
+      rows.forEach(function(r) { seen[r.agent.toLowerCase().trim()] = true; });
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = (a.name || '').toLowerCase().trim();
         if (!seen[name]) {
           seen[name] = true;
           var trust = trustMap[name] || {};
           var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
           var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-          var emoji = name === 'eliza' ? '🤖' : name === 'hermes' ? '⚡' : name === 'vex' ? '🦑' : name === 'alice' ? '📧' : name === 'trib' ? '🏛️' : name === 'arch' ? '🏗️' : name === 'builder' ? '🔨' : name === 'sovereign' ? '👑' : name === 'trustgraph' ? '📊' : name === 'dao' ? '🏛️' : name === 'global-communicator' ? '📡' : '🫡';
-          rows.push({ agent: a.name, emoji: emoji, tokens: 0, cost: 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
+          var emoji = emojiMap[name] || '🫡';
+          rows.push({ agent: a.name, emoji: emoji, calls: 0, tokens: 0, pct: '0.0', trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
       });
-      rows.sort(function(a, b) { return b.tokens - a.tokens; });
-      var totalTokens = rows.reduce(function(s, r){ return s + r.tokens; }, 0);
-      var totalCost = rows.reduce(function(s, r){ return s + r.cost; }, 0);
-      var html = '<div style="font-size:0.6rem;color:#6b6b80;margin-bottom:4px;">🍺 <b style="color:#a78bfa;">' + totalTokens.toLocaleString() + '</b> tokens · <b style="color:#fbbf24;">$' + totalCost.toFixed(4) + '</b> total rum · <b style="color:#4ade80;">' + rows.length + '</b> crew</div>';
+
+      rows.sort(function(a, b) { return b.calls - a.calls; });
+
+      // Header with budget info
+      var html = '<div style="font-size:0.6rem;color:#6b6b80;margin-bottom:4px;">';
+      html += '🍺 <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used · ';
+      html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
+      html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum · ';
+      html += '⏳ <b style="color:#fbbf24;">' + restockStr + '</b> till restock';
+      html += '</div>';
+
+      // Progress bar
+      var pctNum = parseFloat(pctUsed) / 100;
+      var barColor = pctNum > 0.8 ? '#f87171' : pctNum > 0.5 ? '#fbbf24' : '#4ade80';
+      html += '<div style="height:4px;background:#1e1e2e;border-radius:2px;margin-bottom:4px;overflow:hidden;">';
+      html += '<div style="height:100%;width:' + Math.min(pctNum * 100, 100) + '%;background:' + barColor + ';border-radius:2px;transition:width 1s;"></div>';
+      html += '</div>';
+
+      // Column headers
       html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#6b6b80;padding:2px 0;border-bottom:1px solid #1e1e2e;margin-bottom:2px;">';
       html += '<span style="width:16px;"></span>';
       html += '<span style="flex:1;">Crew</span>';
       html += '<span style="width:28px;text-align:center;">St</span>';
       html += '<span style="width:32px;text-align:right;">Trust</span>';
-      html += '<span style="width:50px;text-align:right;">Tokens</span>';
+      html += '<span style="width:40px;text-align:right;">Calls</span>';
       html += '<span style="width:24px;text-align:right;">%</span>';
-      html += '<span style="width:30px;text-align:right;">Calls</span>';
-      html += '<span style="width:56px;text-align:right;padding-right:4px;">Cost</span>';
+      html += '<span style="width:50px;text-align:right;">Tokens</span>';
       html += '</div>';
+
+      // Agent rows
       html += '<div style="display:flex;flex-direction:column;gap:1px;">';
       rows.forEach(function(r) {
-        var pct = totalTokens > 0 ? (r.tokens / totalTokens * 100).toFixed(0) : 0;
         var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#6b6b80;">-</span>';
         var statusDot = r.statusColor !== '#6b6b80' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
+        // Check if agent is actively working
+        var activity = activityMap[r.agent.toLowerCase().trim()];
+        var isWorking = activity && activity.status === 'working';
+        var workingIndicator = isWorking ? '<span style="color:#fbbf24;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">⚡</span>' : '';
+        var durationStr = isWorking && activity.duration_seconds ? ' (' + activity.duration_seconds + 's)' : '';
         html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.6rem;padding:1px 0;">';
         html += '<span>' + r.emoji + '</span>';
         html += '<span style="flex:1;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + r.agent + '</span>';
-        html += '<span style="width:28px;text-align:center;">' + statusDot + '</span>';
+        html += '<span style="width:28px;text-align:center;">' + (isWorking ? workingIndicator : statusDot) + '</span>';
         html += '<span style="width:32px;text-align:right;">' + trustStr + '</span>';
-        html += '<span style="color:#a78bfa;width:50px;text-align:right;font-weight:500;">' + r.tokens.toLocaleString() + '</span>';
-        html += '<span style="color:#6b6b80;width:24px;text-align:right;">' + pct + '%</span>';
-        html += '<span style="color:#6b6b80;width:30px;text-align:right;">' + (r.calls || 0) + '</span>';
-        html += '<span style="color:#fbbf24;width:56px;text-align:right;padding-right:4px;">$' + r.cost.toFixed(4) + '</span>';
+        html += '<span style="color:#a78bfa;width:40px;text-align:right;font-weight:500;">' + (r.calls || 0) + '</span>';
+        html += '<span style="color:#6b6b80;width:24px;text-align:right;">' + r.pct + '%</span>';
+        html += '<span style="color:#6b6b80;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
         html += '</div>';
       });
       html += '</div>';
@@ -275,6 +334,54 @@
   }
   updateGrogQuota();
   setInterval(updateGrogQuota, 15000);
+
+  // ── Task Pipeline ──
+  function updateTaskPipeline() {
+    var content = document.getElementById('task-pipeline-content');
+    if (!content) return;
+    apiFetch('/api/tasks/pipeline-summary', { signal: AbortSignal.timeout(25000) })
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var html = '<div style="display:flex;gap:8px;margin-bottom:4px;">';
+        html += '<span>📋 <b style="color:#60a5fa;">' + d.total + '</b> total</span>';
+        html += '</div>';
+        // By stage
+        if (d.by_stage && d.by_stage.length > 0) {
+          html += '<div style="margin-bottom:3px;">';
+          d.by_stage.forEach(function(s) {
+            var stageColors = { 'PENDING': '#6b6b80', 'DISCUSS': '#fbbf24', 'PLAN': '#60a5fa', 'EXECUTE': '#a78bfa', 'VERIFY': '#4ade80', 'COMPLETED': '#34d399', 'BLOCKED': '#f87171' };
+            var color = stageColors[s.stage] || '#6b6b80';
+            html += '<span style="display:inline-block;margin-right:6px;font-size:0.55rem;"><span style="color:' + color + ';">●</span> ' + s.stage + ' <b style="color:#e0e0e0;">' + s.count + '</b></span>';
+          });
+          html += '</div>';
+        }
+        // By assignee
+        if (d.by_assignee && d.by_assignee.length > 0) {
+          html += '<div style="border-top:1px solid #1e1e2e;padding-top:3px;margin-bottom:3px;">';
+          d.by_assignee.forEach(function(a) {
+            html += '<div style="display:flex;justify-content:space-between;font-size:0.55rem;"><span style="color:#8b8ba0;">' + (a.agent || 'unassigned') + '</span><span style="color:#e0e0e0;">' + a.count + '</span></div>';
+          });
+          html += '</div>';
+        }
+        // Recent tasks
+        if (d.recent && d.recent.length > 0) {
+          html += '<div style="border-top:1px solid #1e1e2e;padding-top:3px;">';
+          html += '<div style="font-size:0.5rem;color:#6b6b80;margin-bottom:2px;">Recent:</div>';
+          d.recent.slice(0, 5).forEach(function(t) {
+            var stageColors = { 'PENDING': '#6b6b80', 'DISCUSS': '#fbbf24', 'PLAN': '#60a5fa', 'EXECUTE': '#a78bfa', 'VERIFY': '#4ade80', 'COMPLETED': '#34d399', 'BLOCKED': '#f87171' };
+            var color = stageColors[t.stage] || '#6b6b80';
+            var progress = t.progress_percentage != null ? ' [' + t.progress_percentage + '%]' : '';
+            html += '<div style="font-size:0.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="color:' + color + ';">●</span> <span style="color:#8b8ba0;">' + (t.assignee_agent_id || '?') + '</span> <span style="color:#e0e0e0;">' + (t.title || '').slice(0, 40) + '</span>' + progress + '</div>';
+          });
+          html += '</div>';
+        }
+        content.innerHTML = html;
+      }).catch(function(){
+        content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
+      });
+  }
+  updateTaskPipeline();
+  setInterval(updateTaskPipeline, 15000);
 
   const SUPABASE_URL = '${supabaseUrl}';
   let functions = [];
@@ -584,15 +691,18 @@ loadAgentExperienceCard();
       });
       var count = 0;
       Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
+        var msgs = groups[addr];
+        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
+        html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
+        html += '<span class="value badge badge-info">' + msgs.length + '</span>';
+        html += '</div>';
+        msgs.forEach(function(m){
           count++;
           if (count > 10) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
+          html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
+          html += '<span class="label">' + (m.from||'').substring(0,28) + '</span>';
+          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,22) + '</span>';
+          html += '</div>';
         });
       });
       if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
@@ -629,7 +739,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 10) return;
+          if (count > 8) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -669,7 +779,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 10) return;
+          if (count > 8) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -807,55 +917,28 @@ loadAgentExperienceCard();
         var repoEl = document.getElementById('gh-repo-count');
         var commitEl = document.getElementById('gh-last-commit');
         var recentEl = document.getElementById('gh-recent-commits');
-        var prEl = document.getElementById('gh-recent-prs');
-        var issueEl = document.getElementById('gh-recent-issues');
 
         if (d.total_repos) {
           if (repoEl) repoEl.textContent = d.total_repos + ' repos';
         }
 
-        var NL = String.fromCharCode(10);
-
-        // Commits
         if (d.recent_commits && d.recent_commits.length > 0) {
           var last = d.recent_commits[0];
+          var NL = String.fromCharCode(10);
           var lastMsg = (last.commit && last.commit.message) ? last.commit.message.split(NL)[0].slice(0, 35) : 'recent commit';
           var lastWhen = new Date(last.commit.author.date).toLocaleDateString();
           var lastRepo = last._repo ? ' [' + last._repo + ']' : '';
           if (commitEl) commitEl.textContent = lastMsg + lastRepo + ' (' + lastWhen + ')';
 
+          // Show last 5 commits across all repos with repo tag
           if (recentEl) {
-            recentEl.innerHTML = d.recent_commits.slice(0,6).map(function(c){
-              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 24) : '?';
+            recentEl.innerHTML = d.recent_commits.slice(0,5).map(function(c){
+              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
               var dd = new Date(c.commit.author.date).toLocaleDateString();
               var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
               return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#6b6b80;">(' + dd + ')</span></div>';
             }).join('');
           }
-        }
-
-        // Pull Requests
-        if (d.recent_prs && d.recent_prs.length > 0 && prEl) {
-          prEl.innerHTML = d.recent_prs.slice(0,6).map(function(pr){
-            var state = pr.state === 'open' ? '<span style="color:#4ade80;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
-            var title = (pr.title || '?').substring(0, 28);
-            var repo = pr._repo ? '<span style="color:#fbbf24;">' + pr._repo + '</span> ' : '';
-            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
-          }).join('');
-        } else if (prEl) {
-          prEl.innerHTML = '<div class="stat"><span class="label">No PRs</span></div>';
-        }
-
-        // Issues
-        if (d.recent_issues && d.recent_issues.length > 0 && issueEl) {
-          issueEl.innerHTML = d.recent_issues.slice(0,6).map(function(issue){
-            var state = issue.state === 'open' ? '<span style="color:#f87171;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
-            var title = (issue.title || '?').substring(0, 28);
-            var repo = issue._repo ? '<span style="color:#60a5fa;">' + issue._repo + '</span> ' : '';
-            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
-          }).join('');
-        } else if (issueEl) {
-          issueEl.innerHTML = '<div class="stat"><span class="label">No issues</span></div>';
         }
       })
       .catch(function(){
@@ -996,6 +1079,16 @@ loadAgentExperienceCard();
     renderFunctions();
   }
   
+  // ── Fleet Chat Attachment Support ──
+  // Track pending file to attach to next message
+  var pendingFile = null;
+  function attachFleetFile(input) {
+    var file = input.files[0];
+    if (!file) return;
+    pendingFile = file;
+    document.getElementById('fleet-chat-attach-status').textContent = '📎 ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB) — will attach with next message';
+  }
+
   function sendFleetChat() {
     // Get or prompt for agent name (persisted in localStorage)
     var nameInput = document.getElementById('fleet-chat-name');
@@ -1028,6 +1121,36 @@ loadAgentExperienceCard();
       .then(function(d){
         document.getElementById('fleet-chat-status').textContent = '● connected';
         document.getElementById('fleet-chat-status').style.color = '#4ade80';
+        // If there's a pending file, upload it as an attachment to this message
+        if (pendingFile && d.message && d.message.id) {
+          var file = pendingFile;
+          pendingFile = null;
+          document.getElementById('fleet-chat-attach-status').textContent = '📤 Uploading ' + file.name + '...';
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            var content = e.target.result;
+            // For text files, send the content directly. For binary, send base64.
+            var payload = {
+              message_id: d.message.id,
+              agent_id: agent,
+              filename: file.name,
+              file_type: file.type || 'application/octet-stream',
+              content: content,
+              content_preview: content.slice(0, 500),
+            };
+            apiFetch('/api/fleet-chat/attach', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(payload),
+            }).then(function(r){return r.json();}).then(function(ar){
+              document.getElementById('fleet-chat-attach-status').textContent = '✅ Attached ' + file.name;
+              fetchFleetMessages();
+            }).catch(function(err){
+              document.getElementById('fleet-chat-attach-status').textContent = '❌ Upload failed: ' + err.message;
+            });
+          };
+          reader.readAsDataURL(file);
+        }
         // Remove optimistic message, let poll re-add with real data-id
         var opt = msgs.querySelector('[data-id="' + tempId + '"]');
         if (opt) opt.remove();
@@ -1059,7 +1182,28 @@ loadAgentExperienceCard();
             var div = document.createElement('div');
             div.style.marginBottom = '6px';
             div.setAttribute('data-id', m.id);
-            div.innerHTML = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
+            var msgHtml = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
+            // Check for attachments on this message
+            if (m.id) {
+              apiFetch('/api/fleet-chat/attachments/' + encodeURIComponent(m.id), { signal: AbortSignal.timeout(5000) })
+                .then(function(r){return r.json();})
+                .then(function(ad){
+                  if (ad.attachments && ad.attachments.length > 0) {
+                    var attHtml = '<div style="margin-top:4px;font-size:10px;">';
+                    ad.attachments.forEach(function(a){
+                      attHtml += '<span style="color:#a78bfa;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">📎 ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
+                    });
+                    attHtml += '</div>';
+                    var attDiv = div.querySelector('.fleet-attachments');
+                    if (!attDiv) {
+                      attDiv = document.createElement('div');
+                      attDiv.className = 'fleet-attachments';
+                      div.appendChild(attDiv);
+                    }
+                    attDiv.innerHTML = attHtml;
+                  }
+                }).catch(function(){});
+            }
             msgs.appendChild(div);
             lastFleetTs = Math.max(lastFleetTs, m.ts);
           }
@@ -1604,6 +1748,7 @@ loadAgentExperienceCard();
 
   // Effect toggles
   let effectExplode = false; // OFF by default — start unexploded, click Explode for galaxy view
+  let effectOrbit = true;    // on by default — orbital physics
   let effectLabels = true;   // on by default
   let effectTrust = true;    // on by default — show trust score arcs on agent nodes
   let effectCluster = false; // off by default — group nodes by category
@@ -1618,6 +1763,7 @@ loadAgentExperienceCard();
       // Zoom to 100% when exploded, back to 30% when unexploded
       if (effectExplode) { camZ = 1.0; } else { camZ = 0.3; }
     }
+    else if (name === 'orbit') { effectOrbit = !effectOrbit; newState = effectOrbit; }
     else if (name === 'labels') { effectLabels = !effectLabels; newState = effectLabels; }
     else if (name === 'trust') { effectTrust = !effectTrust; newState = effectTrust; }
     else if (name === 'cluster') { effectCluster = !effectCluster; newState = effectCluster; }
@@ -2102,40 +2248,19 @@ loadAgentExperienceCard();
         }
       }
 
-      // ── Outer glow (large, faint halo) ──
+      // ── Outer glow (large, faint halo) — solid fill, no gradient (faster) ──
       var isStar = n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema';
-      var glowSize = n.category === 'agent' || isStar ? r * 5 : r * 3;
-      // Use a single reusable gradient at origin, translate canvas instead
-      if (!window._galaxyGlowGrad) {
-        window._galaxyGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-        window._galaxyGlowGrad.addColorStop(0, '#e8c06020');
-        window._galaxyGlowGrad.addColorStop(0.3, '#e8c06008');
-        window._galaxyGlowGrad.addColorStop(1, 'transparent');
-      }
-      ctx.save();
-      ctx.translate(n.x, n.y);
-      ctx.scale(glowSize, glowSize);
+      var glowSize = Math.max(1, n.category === 'agent' || isStar ? r * 5 : r * 3);
       ctx.beginPath();
-      ctx.arc(0, 0, 1, 0, Math.PI * 2);
-      ctx.fillStyle = window._galaxyGlowGrad;
+      ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
+      ctx.fillStyle = warmColor + '12';
       ctx.fill();
-      ctx.restore();
 
-      // ── Inner glow (medium, visible aura) ──
-      if (!window._galaxyInnerGlowGrad) {
-        window._galaxyInnerGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-        window._galaxyInnerGlowGrad.addColorStop(0, '#e8c06060');
-        window._galaxyInnerGlowGrad.addColorStop(0.5, '#e8c06025');
-        window._galaxyInnerGlowGrad.addColorStop(1, 'transparent');
-      }
-      ctx.save();
-      ctx.translate(n.x, n.y);
-      ctx.scale(r * 2, r * 2);
+      // ── Inner glow (medium, visible aura) — solid fill ──
       ctx.beginPath();
-      ctx.arc(0, 0, 1, 0, Math.PI * 2);
-      ctx.fillStyle = window._galaxyInnerGlowGrad;
+      ctx.arc(n.x, n.y, Math.max(1, r * 2), 0, Math.PI * 2);
+      ctx.fillStyle = warmColor + '25';
       ctx.fill();
-      ctx.restore();
 
       // ── Lens flare cross for agent nodes and star nodes ──
       if (n.category === 'agent' || n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema') {
@@ -2172,43 +2297,45 @@ loadAgentExperienceCard();
       // ── Agent nodes: golden ring + score gauge ──
       if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
-        // Outer ring (glowing golden) — no shadowBlur, use stroke alpha instead
+        // Outer ring (glowing golden) — shadow only on hover/select to avoid GPU choke
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = warmColor + '15';
         ctx.fill();
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = (isSelected ? 3 : isHovered ? 2.5 : 1.5) / camZ;
-        ctx.globalAlpha = isSelected ? 0.9 : isHovered ? 0.7 : 0.5;
+        if (isSelected || isHovered) {
+          ctx.shadowColor = warmColor;
+          ctx.shadowBlur = 8 / camZ;
+        }
         ctx.stroke();
-        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 0;
 
-        // Inner filled arc showing score — no shadowBlur
+        // Inner filled arc showing score — no shadow (too expensive per frame)
         var arcEnd = -Math.PI / 2 + (score / 100) * Math.PI * 2;
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.6, -Math.PI / 2, arcEnd);
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = 3 / camZ;
-        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
         ctx.stroke();
-        ctx.globalAlpha = 1.0;
 
-        // Bright golden center dot — no shadowBlur
+        // Bright golden center dot — no shadow
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.25, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
+        ctx.globalAlpha = 0.8;
         ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
 
-        // Score label
-        if (isSelected || isHovered) {
-          ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
-          ctx.fillStyle = warmColor;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
-        }
+        // Score label — disabled: ctx.font setter is slow and causes freeze on hover
+        // if (isSelected || isHovered) {
+        //   ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
+        //   ctx.fillStyle = warmColor;
+        //   ctx.textAlign = 'center';
+        //   ctx.textBaseline = 'top';
+        //   ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
+        // }
       } else {
         // Non-agent nodes: warm glowing dot
         ctx.beginPath();
@@ -2384,25 +2511,16 @@ loadAgentExperienceCard();
       return;
     }
     const n = getNodeAtScreen(sx, sy);
-    if (n !== hoveredNode) {
-      hoveredNode = n;
-      canvas.style.cursor = n ? 'pointer' : 'grab';
-      if (n && tooltip) {
-        // Cache connection count on the node so we don't filter edges every frame
-        if (n._connCount === undefined) {
-          n._connCount = edges.filter(function(e){return e.source === n.id || e.target === n.id;}).length;
-        }
-        tooltip.style.display = 'block';
-        tooltip.style.left = (sx + 14) + 'px';
-        tooltip.style.top = (sy - 10) + 'px';
-        tooltip.textContent = n.label + ' — ' + n.category + ' (' + n._connCount + ' connections)';
-      } else if (tooltip) {
-        tooltip.style.display = 'none';
-      }
-    } else if (n && tooltip) {
-      // Same node — just update position, skip DOM text/display changes
+    hoveredNode = n;
+    canvas.style.cursor = n ? 'pointer' : 'grab';
+    if (n && tooltip) {
+      tooltip.style.display = 'block';
       tooltip.style.left = (sx + 14) + 'px';
       tooltip.style.top = (sy - 10) + 'px';
+      const connCount = edges.filter(e => e.source === n.id || e.target === n.id).length;
+      tooltip.textContent = n.label + ' — ' + n.category + ' (' + connCount + ' connections)';
+    } else if (tooltip) {
+      tooltip.style.display = 'none';
     }
   });
 
