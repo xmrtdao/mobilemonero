@@ -556,8 +556,10 @@ loadAgentExperienceCard();
       .then(function(r){ return r.json(); })
       .then(function(d){
         var msgs = d.messages || [];
-        if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
-        msgsEl.innerHTML = msgs.slice(-100).map(function(m){
+                if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
+                // Sort chronologically: oldest first, newest last (closest to input)
+                msgs.sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
+                msgsEl.innerHTML = msgs.slice(-100).map(function(m){
           var name = m.agentLabel || m.agent || 'Unknown';
           var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
           var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
