@@ -4,6 +4,7 @@
     opts = opts || {};
     opts.headers = opts.headers || {};
     opts.headers['x-api-key'] = API_KEY;
+    opts.headers['x-agent-id'] = 'dashboard';
     return fetch(url, opts);
   };
 
@@ -187,7 +188,8 @@
   updateBoardTopics();
   setInterval(updateBoardTopics, 15000);
 
-  // ── Rum Quota + Agent Fleet (combined) ──
+  // dashboard.js v7.0.1 — FIX: removed createRadialGradient, shadowBlur, and glow caching to prevent canvas freeze on agent hover
+// ── Rum Quota + Agent Fleet (combined) ──
   function updateGrogQuota() {
     var seq = Date.now();
     var content = document.getElementById('rum-quota-content');
@@ -203,36 +205,87 @@
       var fleetData = results[1] || {agents:[]};
       var trustData = results[2] || {};
       var trustAgents = trustData.agents || trustData.nodes || [];
+      
+      // Build a canonical agent name map to deduplicate across sources
+      var canonicalNames = {
+        'vex': 'vex', 'vex-user': 'vex', 'vex-captain,-hms-speedy': 'vex', 'vex (captain, hms speedy)': 'vex',
+        'eliza': 'eliza', 'eliza-quartermaster': 'eliza', 'eliza-cloud': 'eliza',
+        'hermes': 'hermes', 'hermes-agent': 'hermes', 'hermes-agent (desktop)': 'hermes',
+        'alice': 'alice', 'alice-sidecar': 'alice', 'alice (sidecar)': 'alice',
+        'trib': 'trib', 'trib (tributary governance agent)': 'trib',
+        'arch': 'arch', 'arch (architecture & routing agent)': 'arch',
+        'builder': 'builder', 'builder agent': 'builder', 'builder agent (cac tier 2)': 'builder',
+        'sovereign': 'sovereign', 'sovereign agent': 'sovereign', 'sovereign agent (cac tier 3)': 'sovereign',
+        'trustgraph': 'trustgraph', 'trustgraph (constitutional scoring engine)': 'trustgraph',
+        'dao gov': 'dao-gov', 'dao gov (governance module)': 'dao-gov',
+        'globalcommunicator': 'global-communicator', 'global-communicator': 'global-communicator',
+        'kimi': 'kimi', 'kimi-ai-agent': 'kimi',
+        'xmrt-aidy': 'xmrt-aidy',
+        'postman': 'postman',
+        'harbor': 'harbor',
+        'joe': 'joe',
+        'system': 'system',
+        'pfp': 'pfp',
+        'relay': 'relay',
+        '127.0.0.1': '127.0.0.1',
+        'suite-unified-chat': 'suite-unified-chat',
+        'local dev': 'local-dev',
+        'test': 'test',
+        'hamza': 'hamza',
+        'anya-sharma': 'anya-sharma',
+        'hermes-agent': 'hermes',
+      };
+      
+      function normalizeName(raw) {
+        var key = raw.toLowerCase().trim();
+        return canonicalNames[key] || key;
+      }
+      
       var trustMap = {};
       trustAgents.forEach(function(t) {
-        var name = (t.name || '').toLowerCase();
+        var name = normalizeName(t.name || '');
         trustMap[name] = { score: t.trustScore, band: t.trustBand, status: t.status, tier: t.cacTier };
       });
       var fleetMap = {};
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = normalizeName(a.name || '');
         fleetMap[name] = a.type || 'relay';
       });
+      
+      // Merge token data by canonical name
+      var mergedTokens = {};
+      tokenData.forEach(function(t) {
+        var canon = normalizeName(t.agent);
+        if (!mergedTokens[canon]) {
+          mergedTokens[canon] = { agent: canon, total_tokens: 0, total_cost: 0, calls: 0 };
+        }
+        mergedTokens[canon].total_tokens += parseInt(t.total_tokens) || 0;
+        mergedTokens[canon].total_cost += parseFloat(t.total_cost) || 0;
+        mergedTokens[canon].calls += parseInt(t.calls) || 0;
+      });
+      
       var seen = {};
       var rows = [];
-      tokenData.forEach(function(t) {
-        var agent = t.agent.toLowerCase();
-        seen[agent] = true;
-        var trust = trustMap[agent] || {};
-        var type = fleetMap[agent] || 'unknown';
+      Object.keys(mergedTokens).forEach(function(canon) {
+        var t = mergedTokens[canon];
+        seen[canon] = true;
+        var trust = trustMap[canon] || {};
+        var type = fleetMap[canon] || 'unknown';
         var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
         var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-        var emoji = agent === 'eliza' ? '🤖' : agent === 'joe' ? '🏴‍☠️' : agent === 'hermes' ? '⚡' : agent === 'vex' ? '🦑' : agent === 'alice' ? '📧' : agent === 'system' ? '⚙️' : agent === 'trib' ? '🏛️' : agent === 'harbor' ? '🏠' : agent === 'postman' ? '📬' : '🫡';
-        rows.push({ agent: t.agent, emoji: emoji, tokens: parseInt(t.total_tokens) || 0, cost: parseFloat(t.total_cost) || 0, calls: parseInt(t.calls) || 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
+        var emojiMap = { 'eliza': '🤖', 'joe': '🏴‍☠️', 'hermes': '⚡', 'vex': '🦑', 'alice': '📧', 'system': '⚙️', 'trib': '🏛️', 'harbor': '🏠', 'postman': '📬', 'arch': '🏗️', 'builder': '🔨', 'sovereign': '👑', 'trustgraph': '📊', 'dao-gov': '🏛️', 'global-communicator': '📡', 'kimi': '🧠', 'xmrt-aidy': '🛠️', 'pfp': '📸', 'relay': '🔌', '127.0.0.1': '🖥️', 'suite-unified-chat': '💬', 'local-dev': '💻', 'anya-sharma': '👩‍💼' };
+        var emoji = emojiMap[canon] || '🫡';
+        rows.push({ agent: canon, emoji: emoji, tokens: t.total_tokens, cost: t.total_cost, calls: t.calls, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = normalizeName(a.name || '');
         if (!seen[name]) {
           seen[name] = true;
           var trust = trustMap[name] || {};
           var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
           var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-          var emoji = name === 'eliza' ? '🤖' : name === 'hermes' ? '⚡' : name === 'vex' ? '🦑' : name === 'alice' ? '📧' : name === 'trib' ? '🏛️' : name === 'arch' ? '🏗️' : name === 'builder' ? '🔨' : name === 'sovereign' ? '👑' : name === 'trustgraph' ? '📊' : name === 'dao' ? '🏛️' : name === 'global-communicator' ? '📡' : '🫡';
+          var emojiMap = { 'eliza': '🤖', 'hermes': '⚡', 'vex': '🦑', 'alice': '📧', 'trib': '🏛️', 'arch': '🏗️', 'builder': '🔨', 'sovereign': '👑', 'trustgraph': '📊', 'dao-gov': '🏛️', 'global-communicator': '📡' };
+          var emoji = emojiMap[name] || '🫡';
           rows.push({ agent: a.name, emoji: emoji, tokens: 0, cost: 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
       });
@@ -1580,6 +1633,7 @@ loadAgentExperienceCard();
 
   // Effect toggles
   let effectExplode = false; // OFF by default — start unexploded, click Explode for galaxy view
+  let effectOrbit = true;    // on by default — orbital physics
   let effectLabels = true;   // on by default
   let effectTrust = true;    // on by default — show trust score arcs on agent nodes
   let effectCluster = false; // off by default — group nodes by category
@@ -1594,6 +1648,7 @@ loadAgentExperienceCard();
       // Zoom to 100% when exploded, back to 30% when unexploded
       if (effectExplode) { camZ = 1.0; } else { camZ = 0.3; }
     }
+    else if (name === 'orbit') { effectOrbit = !effectOrbit; newState = effectOrbit; }
     else if (name === 'labels') { effectLabels = !effectLabels; newState = effectLabels; }
     else if (name === 'trust') { effectTrust = !effectTrust; newState = effectTrust; }
     else if (name === 'cluster') { effectCluster = !effectCluster; newState = effectCluster; }
@@ -2078,31 +2133,18 @@ loadAgentExperienceCard();
         }
       }
 
-      // ── Outer glow (large, faint halo) ──
+      // ── Outer glow (large, faint halo) — solid fill, no gradient (faster) ──
       var isStar = n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema';
-      var glowSize = n.category === 'agent' || isStar ? r * 5 : r * 3;
-      // Cache gradient per node — avoids createRadialGradient every frame
-      if (!n._glowCache) {
-        n._glowCache = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowSize);
-        n._glowCache.addColorStop(0, warmColor + '20');
-        n._glowCache.addColorStop(0.3, warmColor + '08');
-        n._glowCache.addColorStop(1, 'transparent');
-      }
+      var glowSize = Math.max(1, n.category === 'agent' || isStar ? r * 5 : r * 3);
       ctx.beginPath();
       ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
-      ctx.fillStyle = n._glowCache;
+      ctx.fillStyle = warmColor + '12';
       ctx.fill();
 
-      // ── Inner glow (medium, visible aura) ──
-      if (!n._innerGlowCache) {
-        n._innerGlowCache = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 2);
-        n._innerGlowCache.addColorStop(0, warmColor + '60');
-        n._innerGlowCache.addColorStop(0.5, warmColor + '25');
-        n._innerGlowCache.addColorStop(1, 'transparent');
-      }
+      // ── Inner glow (medium, visible aura) — solid fill ──
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 2, 0, Math.PI * 2);
-      ctx.fillStyle = n._innerGlowCache;
+      ctx.arc(n.x, n.y, Math.max(1, r * 2), 0, Math.PI * 2);
+      ctx.fillStyle = warmColor + '25';
       ctx.fill();
 
       // ── Lens flare cross for agent nodes and star nodes ──
@@ -2140,48 +2182,45 @@ loadAgentExperienceCard();
       // ── Agent nodes: golden ring + score gauge ──
       if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
-        // Outer ring (glowing golden)
+        // Outer ring (glowing golden) — shadow only on hover/select to avoid GPU choke
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = warmColor + '15';
         ctx.fill();
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = (isSelected ? 3 : isHovered ? 2.5 : 1.5) / camZ;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 20 / camZ;
+        if (isSelected || isHovered) {
+          ctx.shadowColor = warmColor;
+          ctx.shadowBlur = 8 / camZ;
+        }
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // Inner filled arc showing score
+        // Inner filled arc showing score — no shadow (too expensive per frame)
         var arcEnd = -Math.PI / 2 + (score / 100) * Math.PI * 2;
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.6, -Math.PI / 2, arcEnd);
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = 3 / camZ;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 12 / camZ;
         ctx.stroke();
-        ctx.shadowBlur = 0;
 
-        // Bright golden center dot
+        // Bright golden center dot — no shadow
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.25, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.globalAlpha = 0.8;
-        ctx.shadowColor = warmColor;
-        ctx.shadowBlur = 15 / camZ;
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
 
-        // Score label
-        if (isSelected || isHovered) {
-          ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
-          ctx.fillStyle = warmColor;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
-        }
+        // Score label — disabled: ctx.font setter is slow and causes freeze on hover
+        // if (isSelected || isHovered) {
+        //   ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
+        //   ctx.fillStyle = warmColor;
+        //   ctx.textAlign = 'center';
+        //   ctx.textBaseline = 'top';
+        //   ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
+        // }
       } else {
         // Non-agent nodes: warm glowing dot
         ctx.beginPath();

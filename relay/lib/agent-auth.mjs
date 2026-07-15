@@ -18,6 +18,9 @@ export const TRUST_LEVELS = {
 export const CORE_AGENTS = new Set(['vex', 'hermes', 'eliza', 'eliza-cloud', 'alice',
   'trib', 'arch', 'builder', 'sovereign', 'trustgraph', 'dao', 'global-communicator',
   'ai-chat-local-context', 'anya-sharma',
+  // Fleet chat aliases (same agents, different name format)
+  'vex-user', 'vex-captain,-hms-speedy', 'alice-sidecar', 'eliza-quartermaster',
+  'hermes-agent', 'hermes',
 ]);
 
 // In-memory trusted agent registry (persisted to relay-data)

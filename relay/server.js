@@ -133,12 +133,80 @@ taskRunner.on('error', (data) => logActivity('task', data.id, 'FAIL', `${data.na
 
 // ── Simple log ──────────────────────────────────────────────
 let activityLog = [];
-function logActivity(type, taskId, status, detail) {
+function logActivity(type, taskId, status, detail, agentId = null) {
   const entry = { ts: new Date().toISOString(), type, taskId, status, detail: detail || '' };
   activityLog.unshift(entry);
   if (activityLog.length > 500) activityLog.length = 500;
   try { writeFileSync(LOG_FILE, JSON.stringify(activityLog, null, 2)); } catch {}
   console.log(`[${entry.ts.slice(11,19)}] ${type} | ${taskId || '-'} | ${status} | ${(detail||'').slice(0,80)}`);
+  // Also write to DB for persistent activity feed
+  logToDb(type, taskId, status, detail, {}, agentId).catch(() => {});
+}
+
+// ── Persistent DB activity feed ─────────────────────────────
+async function logToDb(activityType, title, status, description, metadata = {}, agentId = null) {
+  try {
+    await queryLocalPg(
+      `INSERT INTO public.eliza_activity_log (activity_type, title, description, status, agent_id, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [activityType, title || activityType, description || '', status || 'info', agentId, JSON.stringify(metadata)]
+    );
+  } catch (e) {
+    // Silently fail — don't crash the main flow for logging
+  }
+}
+
+// ── Log edge function invocations ───────────────────────────
+async function logEdgeFunctionCall(functionName, status, durationMs, metadata = {}) {
+  await logToDb('edge_function', `Edge Function: ${functionName}`, 
+    `${functionName} ${status} in ${durationMs}ms`,
+    status === 'success' ? 'completed' : 'failed',
+    { function_name: functionName, duration_ms: durationMs, ...metadata }
+  );
+}
+
+// ── Log relay HTTP requests ─────────────────────────────────
+async function logRelayRequest(method, path, statusCode, durationMs, agentId = 'unknown') {
+  // Only log interesting events: errors, slow requests, and key endpoints
+  const isError = statusCode >= 400;
+  const isSlow = durationMs > 5000;
+  const isKeyEndpoint = ['/tools/run', '/api/fleet-chat', '/ai-chat', '/api/suite'].some(p => path.startsWith(p));
+  if (!isError && !isSlow && !isKeyEndpoint) return;
+  
+  const activityType = isError ? 'http_error' : (isSlow ? 'slow_request' : 'api_call');
+  await logToDb(activityType, `${method} ${path}`,
+    `${method} ${path} → ${statusCode} (${durationMs}ms)`,
+    isError ? 'error' : (isSlow ? 'warning' : 'info'),
+    { method, path, status_code: statusCode, duration_ms: durationMs },
+    agentId
+  );
+}
+
+// ── Log cron job execution ──────────────────────────────────
+async function logCronExecution(jobId, jobName, status, durationMs, metadata = {}) {
+  await logToDb('cron_execution', `Cron: ${jobName}`,
+    `Job #${jobId} "${jobName}" ${status} in ${durationMs}ms`,
+    status === 'success' ? 'completed' : (status === 'failed' ? 'error' : 'info'),
+    { job_id: jobId, job_name: jobName, duration_ms: durationMs, ...metadata }
+  );
+}
+
+// ── Log email events (incoming/outgoing) ─────────────────────
+async function logEmailEvent(direction, to, subject, status, metadata = {}) {
+  await logToDb('email', `${direction} email`,
+    `${direction} → ${to}: ${subject.slice(0, 60)}`,
+    status,
+    { direction, to, subject, ...metadata }
+  );
+}
+
+// ── Log token usage ─────────────────────────────────────────
+async function logTokenUsageEvent(agent, model, inputTokens, outputTokens, cost, metadata = {}) {
+  await logToDb('token_usage', `Token usage: ${agent}`,
+    `${agent} used ${inputTokens + outputTokens} tokens (${inputTokens} in / ${outputTokens} out) on ${model}${cost ? ` — $${cost.toFixed(6)}` : ''}`,
+    'info',
+    { agent, model, input_tokens: inputTokens, output_tokens: outputTokens, estimated_cost: cost, ...metadata }
+  );
 }
 
 // ── Request counter ─────────────────────────────────────────
@@ -511,6 +579,27 @@ const toolHandlers = {
     return await checkExternalServices();
   },
 
+  'fleet_pulse': async () => {
+    try {
+      const [statusRes, healthRes, miningRes] = await Promise.allSettled([
+        getFullSnapshot(),
+        fetch('http://localhost:' + PORT + '/api/dao/health', { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ error: 'failed' })),
+        fetch('http://localhost:' + PORT + '/api/mining/stats', { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ error: 'failed' })),
+      ]);
+      const healthData = healthRes.status === 'fulfilled' ? healthRes.value : { error: 'failed' };
+      return {
+        success: true,
+        system: statusRes.status === 'fulfilled' ? statusRes.value : { error: 'failed' },
+        health_score: healthData.health || healthData.health_score || healthData.status,
+        services: healthData.services || [],
+        mining: miningRes.status === 'fulfilled' ? miningRes.value : { error: 'failed' },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
   'device-registration': async () => {
     return await handlers['device-registration']({ id: 'tool-call' });
   },
@@ -556,9 +645,32 @@ const toolHandlers = {
   'db-query': async (args) => {
     const sql = args?.sql || args?.query;
     if (!sql) return { error: 'sql query is required' };
+    // Allow SELECT, INSERT, UPDATE, DELETE — agents need to manage leads
+    const upper = sql.trim().toUpperCase();
+    if (!/^(SELECT|INSERT|UPDATE|DELETE|WITH)\b/.test(upper)) {
+      return { error: 'Only SELECT, INSERT, UPDATE, DELETE, and WITH queries are allowed' };
+    }
     try {
       const rows = await localQuery(sql);
       return { success: true, rowCount: rows.length, rows };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  'activity-log': async (args) => {
+    const { limit = 20, activity_type, status, since, agent_id } = args || {};
+    try {
+      let sql = 'SELECT id, activity_type, title, description, status, agent_id, metadata, created_at FROM public.eliza_activity_log WHERE 1=1';
+      const params = [];
+      let idx = 0;
+      if (activity_type) { idx++; sql += ` AND activity_type = $${idx}`; params.push(activity_type); }
+      if (status) { idx++; sql += ` AND status = $${idx}`; params.push(status); }
+      if (since) { idx++; sql += ` AND created_at > $${idx}`; params.push(since); }
+      if (agent_id) { idx++; sql += ` AND (metadata->>'agent' ILIKE $${idx} OR metadata->>'agent_id' ILIKE $${idx})`; params.push(`%${agent_id}%`); }
+      sql += ' ORDER BY created_at DESC LIMIT ' + Math.min(parseInt(limit) || 20, 100);
+      const rows = await localQuery(sql, params);
+      return { success: true, count: rows.length, entries: rows };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -575,8 +687,35 @@ const toolHandlers = {
     }
   },
 
+  'agent-rpc': async (args) => {
+    const { target_agent, action, params, timeout = 30000 } = args || {};
+    if (!target_agent || !action) return { error: 'target_agent and action are required' };
+    try {
+      // Route a programmatic request to another agent via fleet chat
+      const rpcId = `rpc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const rpcMessage = `@${target_agent} [RPC:${rpcId}] Action: ${action}. Params: ${JSON.stringify(params || {})}. Please execute and report results back with RPC:${rpcId}.`;
+      
+      // Send via fleet chat
+      const entry = addFleetMessage('system', rpcMessage, target_agent);
+      publishToMesh('fleet-broadcast', { agent: 'system', message: rpcMessage, channel: target_agent, ts: entry.ts }).catch(() => {});
+      
+      // Route to the target agent
+      const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
+      
+      // Wait for response with timeout
+      const result = await Promise.race([
+        routePromise,
+        new Promise(r => setTimeout(() => r({ timeout: true, rpcId }), timeout))
+      ]);
+      
+      return { success: true, rpcId, target_agent, action, result };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
   'shared-context': async (args) => {
-    const { action = 'read', key, value, description } = args || {};
+    const { action = 'read', key, value, description, search_term, agent_id, topic } = args || {};
     try {
       if (action === 'read') {
         if (key) {
@@ -602,7 +741,32 @@ const toolHandlers = {
         }
         return { success: true, key, action: 'written' };
       }
-      return { error: `unknown action: ${action}. Use 'read' or 'write'` };
+      if (action === 'search') {
+        // Associative recall — search by value content or description
+        const term = search_term || key || '';
+        const rows = await localQuery(
+          "SELECT * FROM public.shared_context WHERE value::text ILIKE $1 OR description ILIKE $1 OR context_key ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
+          [`%${term}%`]
+        );
+        return { success: true, results: rows, count: rows.length };
+      }
+      if (action === 'recall_by_agent') {
+        // Recall memories saved by a specific agent
+        const rows = await localQuery(
+          "SELECT * FROM public.shared_context WHERE last_updated_by = $1 ORDER BY updated_at DESC LIMIT 20",
+          [agent_id || 'eliza']
+        );
+        return { success: true, results: rows, count: rows.length };
+      }
+      if (action === 'recall_by_topic') {
+        // Recall memories by topic tag in description
+        const rows = await localQuery(
+          "SELECT * FROM public.shared_context WHERE description ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
+          [`%[${topic}]%`]
+        );
+        return { success: true, results: rows, count: rows.length };
+      }
+      return { error: `unknown action: ${action}. Use 'read', 'write', 'search', 'recall_by_agent', or 'recall_by_topic'` };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -629,14 +793,17 @@ const toolHandlers = {
     const payload = args?.args || args?.payload || {};
     const url = `${SUPABASE_URL}/functions/v1/${fn}`;
     try {
+      const efStart = Date.now();
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(15000),
       });
-      const duration = `${Date.now() - (globalThis.__efStart || Date.now())}ms`;
+      const duration = Date.now() - efStart;
       const data = await res.json().catch(() => ({ raw: 'non-json response' }));
+      // Log edge function call to activity feed
+      logEdgeFunctionCall(fn, res.ok ? 'success' : 'failed', duration, { status: res.status }).catch(() => {});
       return {
         success: res.ok,
         function: fn,
@@ -644,20 +811,19 @@ const toolHandlers = {
         data,
       };
     } catch (err) {
+      logEdgeFunctionCall(fn, 'failed', Date.now() - (globalThis.__efStart || Date.now()), { error: err.message }).catch(() => {});
       return { success: false, function: fn, error: err.message };
     }
   },
 
   // ── Specific Edge Function Tools ─────────────────────────
   'ef:system-status': async () => {
+    // Local replacement: read from /api/dao/health instead of dead cloud edge function
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/system-status`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(10000),
-      });
-      return { success: true, status: res.status, data: await res.json() };
+      const res = await fetch(`http://localhost:${PORT}/api/dao/health`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return { success: false, error: 'HTTP ' + res.status };
+      const data = await res.json();
+      return { success: true, data };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -728,13 +894,50 @@ const toolHandlers = {
     const action = args?.action || 'check_status';
     const data = args?.data || args?.args || {};
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-manager`, {
+      // Map common action aliases to correct names
+      const actionMap = {
+        'search': 'search_knowledge',
+        'store': 'store_knowledge',
+        'upsert': 'upsert_knowledge',
+        'list': 'list_knowledge',
+        'delete': 'delete_knowledge',
+        'check': 'check_status',
+      };
+      const mappedAction = actionMap[action] || action;
+      
+      // For search_knowledge, use local REST API directly (faster, no cloud dependency)
+      if (mappedAction === 'search_knowledge') {
+        const searchTerm = data.search_term || data.query || data.term || '';
+        const limit = Math.min(parseInt(data.limit || '10', 10), 50);
+        const restUrl = `http://127.0.0.1:54321/rest/v1/knowledge_entities`;
+        const headers = { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' };
+        let url = `${restUrl}?select=*&order=created_at.desc&limit=${limit}`;
+        if (searchTerm) {
+          const encoded = encodeURIComponent(searchTerm);
+          url += `&or=(name.ilike.*${encoded}*,entity->>description.ilike.*${encoded}*,entity->>content.ilike.*${encoded}*,entity->>name.ilike.*${encoded}*)`;
+        }
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+        if (!res.ok) return { success: true, status: res.status, data: { ok: false, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` } };
+        const knowledge = await res.json();
+        return { success: true, status: 200, data: { ok: true, results: knowledge, count: knowledge.length } };
+      }
+      
+      // For other actions, try local edge function first, fall back to cloud
+      const res = await fetch(`http://127.0.0.1:54321/functions/v1/knowledge-manager`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, data }),
+        headers: { 'Authorization': 'Bearer local-anon-key', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: mappedAction, data }),
         signal: AbortSignal.timeout(10000),
       });
-      return { success: true, status: res.status, data: await res.json() };
+      if (res.ok) return { success: true, status: res.status, data: await res.json() };
+      // Fall back to cloud
+      const cloudRes = await fetch(`${SUPABASE_URL}/functions/v1/knowledge-manager`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: mappedAction, data }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return { success: true, status: cloudRes.status, data: await cloudRes.json() };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -911,6 +1114,20 @@ const toolHandlers = {
     } catch (err) { return { success: false, error: err.message }; }
   },
 
+  'ef:explore-curiosity': async (args) => {
+    const { key_phrase, conversation_summary, depth = 2 } = args || {};
+    if (!key_phrase) return { error: 'key_phrase is required' };
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/explore-curiosity`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key_phrase, conversation_summary, depth }),
+        signal: AbortSignal.timeout(30000),
+      });
+      return { success: true, status: res.status, data: await res.json() };
+    } catch (err) { return { success: false, error: err.message }; }
+  },
+
   'ef:opportunity-scanner': async () => {
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/opportunity-scanner`, {
@@ -961,15 +1178,27 @@ const toolHandlers = {
 
   // ── Edge Functions needing specific payloads (400 fixable) ──
   'ef:knowledge-search': async (args) => {
-    const query = args?.query || 'test';
+    const query = args?.query || args?.search_term || 'test';
+    const limit = Math.min(parseInt(args?.limit || '10', 10), 50);
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/search-knowledge`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ search_term: query }),
-        signal: AbortSignal.timeout(10000),
-      });
-      return { success: true, status: res.status, data: await res.json() };
+      // Use local REST API directly (faster, no cloud dependency)
+      const restUrl = `http://127.0.0.1:54321/rest/v1/knowledge_entities`;
+      const headers = { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' };
+      let url = `${restUrl}?select=*&order=created_at.desc&limit=${limit}`;
+      if (query) {
+        const encoded = encodeURIComponent(query);
+        url += `&or=(name.ilike.*${encoded}*,entity->>description.ilike.*${encoded}*,entity->>content.ilike.*${encoded}*,entity->>name.ilike.*${encoded}*)`;
+      }
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+      if (!res.ok) return { success: true, status: res.status, data: { ok: false, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` } };
+      const knowledge = await res.json();
+      // Return compact results: just name + short description
+      const compact = knowledge.map((k) => ({
+        name: k.name || '?',
+        description: ((k.entity?.description || '').slice(0, 120) + ((k.entity?.description || '').length > 120 ? '...' : '')),
+        type: k.entity?.type || 'general',
+      }));
+      return { success: true, status: 200, data: { ok: true, count: knowledge.length, results: compact } };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -988,15 +1217,12 @@ const toolHandlers = {
   },
 
   'ef:cron-proxy': async (args) => {
-    const path = args?.path || 'system-status';
+    // Local replacement: read from /cron/status instead of dead cloud edge function
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/cron-proxy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, method: 'POST', body: {} }),
-        signal: AbortSignal.timeout(10000),
-      });
-      return { success: true, status: res.status, data: await res.json() };
+      const res = await fetch(`http://localhost:${PORT}/cron/status`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return { success: false, error: 'HTTP ' + res.status };
+      const data = await res.json();
+      return { success: true, data };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -1062,11 +1288,27 @@ const toolHandlers = {
   'ef:task-orchestrator': async (args) => {
     const action = args?.action || 'list_tasks';
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/task-orchestrator`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...args }),
-        signal: AbortSignal.timeout(15000),
+      // Use local relay API instead of cloud edge function
+      if (action === 'create_task') {
+        const res = await fetch(`http://127.0.0.1:${PORT}/api/suite/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: args.title || 'Untitled Task',
+            description: args.description || '',
+            stage: args.stage || 'PENDING',
+            status: args.status || 'PENDING',
+            priority: args.priority || 0,
+            category: args.category || null,
+            assignee_agent_id: args.assignee_agent_id || null,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        return { success: true, status: res.status, data: await res.json() };
+      }
+      // List tasks
+      const res = await fetch(`http://127.0.0.1:${PORT}/api/suite/tasks?limit=${args.limit || 20}`, {
+        signal: AbortSignal.timeout(10000),
       });
       return { success: true, status: res.status, data: await res.json() };
     } catch (err) { return { success: false, error: err.message }; }
@@ -1399,7 +1641,7 @@ const toolHandlers = {
     const result = { domains: {} };
     const targets = domain === 'all' ? ['pfp', 'mobilemonero', '31harbor'] : [domain];
     for (const key of targets) {
-      const emails = (inbox[key] || []).slice(-limit).reverse();
+      const emails = (inbox[key] || []).slice(0, limit);
       result.domains[key] = {
         total: inbox[key]?.length || 0,
         unread: (inbox[key] || []).filter(e => !e.read).length,
@@ -1411,6 +1653,78 @@ const toolHandlers = {
       };
     }
     return { success: true, ...result };
+  },
+
+  // ── Sent Email Log (suite_email_activity table) ──
+  'sent-emails': async (args) => {
+    const limit = Math.min(args?.limit || 10, 50);
+    const search = args?.search || '';
+    try {
+      let sql = 'SELECT id, email_from, email_to, subject, status, sent_at, created_at FROM app.suite_email_activity';
+      const params = [];
+      if (search) {
+        sql += ' WHERE email_to ILIKE $1 OR email_from ILIKE $1 OR subject ILIKE $1';
+        params.push('%' + search + '%');
+      }
+      sql += ' ORDER BY sent_at DESC NULLS LAST LIMIT $' + (params.length + 1);
+      params.push(limit);
+      const rows = await localQuery(sql, params);
+      return { success: true, rowCount: rows.length, rows };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  // ── PFP Lead Management ──
+  'pfp-leads': async (args) => {
+    const action = args?.action || 'list'; // list, search, add, update
+    try {
+      if (action === 'list') {
+        const limit = Math.min(args?.limit || 20, 100);
+        const rows = await localQuery(
+          'SELECT id, contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes, created_at, updated_at FROM pfp_leads ORDER BY created_at DESC LIMIT $1',
+          [limit]
+        );
+        return { success: true, rowCount: rows.length, rows };
+      }
+      if (action === 'search') {
+        const term = args?.search || args?.term || '';
+        if (!term) return { error: 'search term required' };
+        const rows = await localQuery(
+          `SELECT id, contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes, created_at, updated_at FROM pfp_leads WHERE contact_name ILIKE $1 OR contact_email ILIKE $1 OR notes ILIKE $1 OR event_type ILIKE $1 ORDER BY created_at DESC LIMIT 20`,
+          ['%' + term + '%']
+        );
+        return { success: true, rowCount: rows.length, rows };
+      }
+      if (action === 'add') {
+        const { contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes } = args;
+        if (!contact_name) return { error: 'contact_name is required' };
+        const result = await localQuery(
+          `INSERT INTO pfp_leads (contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, contact_name, contact_email, status, event_date`,
+          [contact_name, contact_email || null, event_type || null, event_date || null, venue_name || null, venue_address || null, status || 'NEW', source || 'manual', notes || null]
+        );
+        return { success: true, lead: result[0] };
+      }
+      if (action === 'update') {
+        const { id, ...fields } = args;
+        if (!id) return { error: 'id is required' };
+        const allowed = ['contact_name','contact_email','event_type','event_date','venue_name','venue_address','status','source','notes','lead_rating'];
+        const sets = []; const params = []; let idx = 0;
+        for (const [k, v] of Object.entries(fields)) {
+          if (allowed.includes(k)) { idx++; params.push(v); sets.push(`${k} = $${idx}`); }
+        }
+        if (sets.length === 0) return { error: 'no valid fields to update' };
+        params.push(id);
+        const result = await localQuery(
+          `UPDATE pfp_leads SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${idx + 1} RETURNING id, contact_name, contact_email, status, event_date`,
+          params
+        );
+        return { success: true, lead: result[0] };
+      }
+      return { error: 'unknown action: ' + action };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   },
 
   // ── Resend Send Email (agent sends email via fleet-chat endpoint) ──
@@ -1444,7 +1758,7 @@ async function defaultHandler(task) {
 // cascade, conversation memory, and tool execution). The old
 // /functions/v1/eliza-relay endpoint is a deprecated stub that just
 // proxies to /ollama/chat with gemma3:1b — we skip it entirely.
-async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null, sessionId = null) {
+async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = null, sessionId = null, historyMessages = null) {
   if (!SUPABASE_KEY) return logActivity('eliza', '-', 'SKIP', 'No SUPABASE_KEY set');
   // Use stable sessionId when provided (e.g. from fleet chat), otherwise fall back to relayTag
   const tag = sessionId || relayTag || `eliza-dev-${Date.now().toString(36)}`;
@@ -1453,15 +1767,19 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
     logActivity('eliza', tag, 'SEND', message.slice(0, 80));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
+    const body = {
+      userQuery: message,
+      senderName: senderName,
+      session_id: tag,
+    };
+    // Pass conversation history as messages array so ai-chat sees context
+    if (historyMessages && historyMessages.length > 0) {
+      body.messages = historyMessages;
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userQuery: message,
-        senderName: senderName,
-        // session_id keeps ai-chat's memory keyed per-tag for tools/dispatch flows
-        session_id: tag,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -1655,6 +1973,21 @@ app.use((req, res, next) => {
     console.warn(`[AUTH] Invalid x-api-key from ${ip}: ${req.method} ${req.path}`);
     return res.status(403).json({ error: 'Invalid API key' });
   }
+  next();
+});
+
+// ── Request logging middleware (captures status, duration, agent for activity feed) ──
+app.use((req, res, next) => {
+  const start = Date.now();
+  const agentId = req.headers['x-agent-id'] || req.headers['x-agent'] || 'unknown';
+  const originalEnd = res.end;
+  res.end = function(...args) {
+    const duration = Date.now() - start;
+    const statusCode = res.statusCode;
+    // Log interesting requests to activity feed with agent attribution
+    logRelayRequest(req.method, req.path, statusCode, duration, agentId).catch(() => {});
+    return originalEnd.apply(this, args);
+  };
   next();
 });
 
@@ -2193,7 +2526,7 @@ app.post('/api/suite/tasks', async (req, res) => {
     const { title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id } = req.body;
     if (!title) return res.status(400).json({ error: 'title required' });
     const r = await queryLocalPg(
-      `INSERT INTO app.tasks (title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id) VALUES (gen_random_uuid()::text, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [title, description||null, stage||'PENDING', status||'PENDING', priority||0, category||null, assignee_agent_id||null, blocking_reason||null, auto_advance_threshold_hours||null, progress_percentage||0, organization_id||null, created_by_user_id||null]
     );
     res.status(201).json(r.rows[0]);
@@ -2375,6 +2708,12 @@ app.use('/radar', express.static(join(__dirname, 'public')));
 app.use('/static', express.static(join(__dirname, 'public')));
 app.use('/spatial', express.static(join(__dirname, 'spatial')));
 app.use('/discovercostarica', express.static(join(__dirname, 'static', 'discovercostarica')));
+
+// ── robots.txt ──
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.sendFile(join(PUBLIC_DIR, 'robots.txt'));
+});
 
 // Fallback: parse body as JSON for requests without Content-Type
 app.use((req, res, next) => {
@@ -2649,6 +2988,10 @@ app.get('/', (req, res, next) => {
   if (host.includes('agency.31harbor.com')) {
     return res.redirect(301, '/harbor/');
   }
+  // cuttlefish.mobilemonero.com → Cuttlefish Claws SPA
+  if (host.includes('cuttlefish.mobilemonero.com') || host.includes('cuttlefish.')) {
+    return res.redirect(301, '/cuttlefishclaws/');
+  }
   // suite.mobilemonero.com → Suite SPA landing with auth widget
   if (host.includes('suite.mobilemonero.com') || host.includes('suite.')) {
     return res.redirect(301, '/suite/');
@@ -2771,40 +3114,41 @@ app.get('/', (req, res) => {
       --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-secondary); padding: 0.75rem; }
+    body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-secondary); padding: 0.5rem; }
     @media (min-width: 640px) { body { padding: 1.5rem; } }
-    h1 { color: var(--accent-orange); font-size: 1.2rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-weight: 800; letter-spacing: -0.5px; }
+    h1 { color: var(--accent-orange); font-size: 1rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-weight: 800; letter-spacing: -0.5px; }
     @media (min-width: 640px) { h1 { font-size: 1.6rem; gap: 0.75rem; } }
-    h1 span { font-size: 0.75rem; color: var(--text-dim); font-weight: 400; letter-spacing: 0; }
+    h1 span { font-size: 0.65rem; color: var(--text-dim); font-weight: 400; letter-spacing: 0; }
     @media (min-width: 640px) { h1 span { font-size: 0.9rem; } }
-    .subtitle { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1rem; }
+    .subtitle { color: var(--text-muted); font-size: 0.7rem; margin-bottom: 0.75rem; line-height: 1.4; }
     @media (min-width: 640px) { .subtitle { font-size: 0.9rem; margin-bottom: 1.5rem; } }
     .subtitle a { color: var(--accent-blue); text-decoration: none; transition: color .15s; }
     .subtitle a:hover { color: var(--accent-orange); text-decoration: underline; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-bottom: 1.5rem; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 0.5rem; margin-bottom: 1rem; }
     @media (min-width: 480px) { .grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; } }
     @media (min-width: 768px) { .grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; } }
     @media (min-width: 1200px) { .grid { grid-template-columns: repeat(4, 1fr); gap: 1rem; } }
     .grid > .full { grid-column: 1 / -1; }
-    .side-by-side { display: flex; flex-wrap: wrap; gap: 12px; grid-column: 1 / -1; }
-    .side-by-side > * { flex: 1; min-width: 280px; }
+    .side-by-side { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
+    @media (min-width: 640px) { .side-by-side { gap: 12px; } }
+    .side-by-side > * { flex: 1; min-width: 260px; }
     /* RSSI signal strength colors */
     .rssi-strong { color: #4ade80; }
     .rssi-fair { color: #fbbf24; }
     .rssi-weak { color: #f87171; }
     .rssi-poor { color: #ef4444; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; transition: border-color .2s, transform .15s; }
-    @media (min-width: 640px) { .card { padding: 1rem; } }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; transition: border-color .2s, transform .15s; }
+    @media (min-width: 640px) { .card { border-radius: 10px; padding: 1rem; } }
     .card:hover { border-color: var(--accent-orange-glow); }
-    .card h3 { color: var(--accent-orange); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.5rem; font-weight: 700; }
+    .card h3 { color: var(--accent-orange); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; font-weight: 700; }
     @media (min-width: 640px) { .card h3 { font-size: 0.8rem; margin-bottom: 0.6rem; } }
-    .stat { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.75rem; gap: 0.5rem; }
-    @media (min-width: 640px) { .stat { padding: 0.3rem 0; font-size: 0.85rem; } }
+    .stat { display: flex; justify-content: space-between; padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.65rem; gap: 0.3rem; }
+    @media (min-width: 640px) { .stat { padding: 0.3rem 0; font-size: 0.85rem; gap: 0.5rem; } }
     .stat:last-child { border-bottom: none; }
     .label { color: var(--text-muted); flex-shrink: 0; }
     .value { color: var(--text-primary); font-family: var(--font-mono); text-align: right; word-break: break-all; min-width: 0; }
-    .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.65rem; font-weight: 600; }
-    @media (min-width: 640px) { .badge { font-size: 0.7rem; } }
+    .badge { display: inline-block; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; }
+    @media (min-width: 640px) { .badge { font-size: 0.7rem; padding: 0.1rem 0.4rem; } }
     .badge-ok { background: rgba(74,222,128,0.12); color: var(--accent-teal); }
     .badge-warn { background: rgba(251,191,36,0.12); color: var(--accent-yellow); }
     .badge-err { background: rgba(248,113,113,0.12); color: var(--accent-red); }
@@ -2812,78 +3156,98 @@ app.get('/', (req, res) => {
 
     @media (min-width: 640px) { .chat-card { grid-column: 1 / -1; } }
 
-    .board-topics { max-height: 300px; overflow-y: auto; margin-bottom: 6px; }
-    .board-topic { padding: 8px; border-radius: 6px; background: #0d0d15; margin-bottom: 4px; cursor: pointer; transition: background .15s; border: 1px solid transparent; }
+    .board-topics { max-height: 200px; overflow-y: auto; margin-bottom: 6px; }
+    @media (min-width: 640px) { .board-topics { max-height: 300px; } }
+    .board-topic { padding: 6px; border-radius: 6px; background: #0d0d15; margin-bottom: 4px; cursor: pointer; transition: background .15s; border: 1px solid transparent; }
+    @media (min-width: 640px) { .board-topic { padding: 8px; } }
     .board-topic:hover { background: #1a1a2a; border-color: rgba(255,107,53,0.2); }
     .board-topic.active { border-color: var(--accent-orange); background: #1a1a2a; }
-    .board-topic-title { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+    .board-topic-title { color: var(--text-primary); font-size: 12px; font-weight: 600; }
+    @media (min-width: 640px) { .board-topic-title { font-size: 13px; } }
     .board-topic-title > span { display: inline-block; }
-    .board-topic-meta { color: #6b6b80; font-size: 10px; margin-top: 2px; }
-    .board-filter { padding: 2px 10px; border-radius: 10px; font-size: 10px; cursor: pointer; color: #6b6b80; border: 1px solid #2a2a3a; background: transparent; transition: all .15s; }
+    .board-topic-meta { color: #6b6b80; font-size: 9px; margin-top: 2px; }
+    @media (min-width: 640px) { .board-topic-meta { font-size: 10px; } }
+    .board-filter { padding: 2px 8px; border-radius: 10px; font-size: 9px; cursor: pointer; color: #6b6b80; border: 1px solid #2a2a3a; background: transparent; transition: all .15s; }
+    @media (min-width: 640px) { .board-filter { font-size: 10px; padding: 2px 10px; } }
     .board-filter:hover { color: var(--text-secondary); border-color: #3a3a5a; }
     .board-filter.active { color: var(--accent-orange); border-color: var(--accent-orange); background: rgba(255,107,53,0.1); }
-    .board-posts { max-height: 250px; overflow-y: auto; margin-bottom: 6px; }
-    .board-post { padding: 6px 8px; border-radius: 6px; background: #0d0d15; margin-bottom: 4px; }
-    .board-post-header { color: #6b6b80; font-size: 10px; display: flex; gap: 8px; }
-    .board-post-body { color: var(--text-secondary); font-size: 12px; margin-top: 2px; line-height: 1.4; }
-    .board-post-body p { margin: 0 0 6px 0; }
+    .board-posts { max-height: 200px; overflow-y: auto; margin-bottom: 6px; }
+    @media (min-width: 640px) { .board-posts { max-height: 250px; } }
+    .board-post { padding: 4px 6px; border-radius: 6px; background: #0d0d15; margin-bottom: 4px; }
+    @media (min-width: 640px) { .board-post { padding: 6px 8px; } }
+    .board-post-header { color: #6b6b80; font-size: 9px; display: flex; gap: 6px; flex-wrap: wrap; }
+    @media (min-width: 640px) { .board-post-header { font-size: 10px; gap: 8px; } }
+    .board-post-body { color: var(--text-secondary); font-size: 11px; margin-top: 2px; line-height: 1.4; }
+    @media (min-width: 640px) { .board-post-body { font-size: 12px; } }
+    .board-post-body p { margin: 0 0 4px 0; }
     .board-post-body p:last-child { margin-bottom: 0; }
-    .board-post-body h1, .board-post-body h2, .board-post-body h3, .board-post-body h4 { color: var(--text-primary); margin: 8px 0 4px 0; font-weight: 600; }
-    .board-post-body h1 { font-size: 14px; }
-    .board-post-body h2 { font-size: 13px; }
-    .board-post-body h3 { font-size: 12px; }
-    .board-post-body h4 { font-size: 12px; color: var(--text-secondary); }
-    .board-post-body ul, .board-post-body ol { margin: 4px 0 6px 0; padding-left: 18px; }
+    .board-post-body h1, .board-post-body h2, .board-post-body h3, .board-post-body h4 { color: var(--text-primary); margin: 6px 0 3px 0; font-weight: 600; }
+    .board-post-body h1 { font-size: 13px; }
+    .board-post-body h2 { font-size: 12px; }
+    .board-post-body h3 { font-size: 11px; }
+    .board-post-body h4 { font-size: 11px; color: var(--text-secondary); }
+    .board-post-body ul, .board-post-body ol { margin: 3px 0 4px 0; padding-left: 16px; }
     .board-post-body li { margin: 2px 0; }
-    .board-post-body code { background: #1a1a25; color: #e0e0f0; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 11px; }
-    .board-post-body pre { background: #0a0a12; color: #c0c0d0; padding: 6px 8px; border-radius: 4px; overflow-x: auto; margin: 4px 0; }
+    .board-post-body code { background: #1a1a25; color: #e0e0f0; padding: 1px 3px; border-radius: 3px; font-family: monospace; font-size: 10px; }
+    @media (min-width: 640px) { .board-post-body code { font-size: 11px; padding: 1px 4px; } }
+    .board-post-body pre { background: #0a0a12; color: #c0c0d0; padding: 4px 6px; border-radius: 4px; overflow-x: auto; margin: 4px 0; }
+    @media (min-width: 640px) { .board-post-body pre { padding: 6px 8px; } }
     .board-post-body pre code { background: transparent; padding: 0; }
-    .board-post-body blockquote { border-left: 3px solid var(--accent-orange); padding-left: 8px; margin: 4px 0; color: var(--text-secondary); font-style: italic; }
-    .board-post-body hr { border: none; border-top: 1px solid #2a2a3a; margin: 8px 0; }
-    .board-post-body table { border-collapse: collapse; margin: 4px 0; font-size: 11px; width: 100%; }
-    .board-post-body th, .board-post-body td { border: 1px solid #2a2a3a; padding: 3px 6px; text-align: left; }
+    .board-post-body blockquote { border-left: 3px solid var(--accent-orange); padding-left: 6px; margin: 4px 0; color: var(--text-secondary); font-style: italic; }
+    @media (min-width: 640px) { .board-post-body blockquote { padding-left: 8px; } }
+    .board-post-body hr { border: none; border-top: 1px solid #2a2a3a; margin: 6px 0; }
+    .board-post-body table { border-collapse: collapse; margin: 4px 0; font-size: 10px; width: 100%; }
+    @media (min-width: 640px) { .board-post-body table { font-size: 11px; } }
+    .board-post-body th, .board-post-body td { border: 1px solid #2a2a3a; padding: 2px 4px; text-align: left; }
+    @media (min-width: 640px) { .board-post-body th, .board-post-body td { padding: 3px 6px; } }
     .board-post-body th { background: #1a1a25; color: var(--text-primary); font-weight: 600; }
     .board-post-body a { color: var(--accent-teal); text-decoration: underline; }
     .board-post-body strong { color: var(--text-primary); font-weight: 600; }
     .board-post-body em { color: var(--text-primary); font-style: italic; }
     .board-post-body br { line-height: 1.4; }
     .board-post-body del { color: #6b6b80; }
-    .fleet-msg-body { color: #e0e0f0; font-size: 12px; line-height: 1.4; }
-    .fleet-msg-body p { margin: 0 0 4px 0; }
+    .fleet-msg-body { color: #e0e0f0; font-size: 11px; line-height: 1.4; }
+    @media (min-width: 640px) { .fleet-msg-body { font-size: 12px; } }
+    .fleet-msg-body p { margin: 0 0 3px 0; }
     .fleet-msg-body p:last-child { margin-bottom: 0; }
-    .fleet-msg-body h1, .fleet-msg-body h2, .fleet-msg-body h3 { color: #ffffff; margin: 6px 0 3px 0; font-weight: 600; }
-    .fleet-msg-body h1 { font-size: 13px; }
-    .fleet-msg-body h2 { font-size: 12px; }
-    .fleet-msg-body h3 { font-size: 12px; color: #c0c0d0; }
-    .fleet-msg-body ul, .fleet-msg-body ol { margin: 3px 0 4px 0; padding-left: 16px; }
+    .fleet-msg-body h1, .fleet-msg-body h2, .fleet-msg-body h3 { color: #ffffff; margin: 4px 0 2px 0; font-weight: 600; }
+    .fleet-msg-body h1 { font-size: 12px; }
+    .fleet-msg-body h2 { font-size: 11px; }
+    .fleet-msg-body h3 { font-size: 11px; color: #c0c0d0; }
+    .fleet-msg-body ul, .fleet-msg-body ol { margin: 2px 0 3px 0; padding-left: 14px; }
     .fleet-msg-body li { margin: 1px 0; }
-    .fleet-msg-body code { background: rgba(255,255,255,0.08); padding: 0 3px; border-radius: 2px; font-family: monospace; font-size: 11px; }
-    .fleet-msg-body pre { background: rgba(0,0,0,0.3); padding: 4px 6px; border-radius: 3px; margin: 3px 0; overflow-x: auto; }
+    .fleet-msg-body code { background: rgba(255,255,255,0.08); padding: 0 2px; border-radius: 2px; font-family: monospace; font-size: 10px; }
+    .fleet-msg-body pre { background: rgba(0,0,0,0.3); padding: 3px 4px; border-radius: 3px; margin: 2px 0; overflow-x: auto; }
     .fleet-msg-body pre code { background: transparent; padding: 0; }
     .fleet-msg-body strong { color: #ffffff; font-weight: 600; }
     .fleet-msg-body a { color: #4ade80; text-decoration: underline; }
     .fleet-msg-body br { line-height: 1.4; }
-    .board-agent-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; }
+    .board-agent-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 8px; font-weight: 600; }
+    @media (min-width: 640px) { .board-agent-badge { font-size: 9px; padding: 1px 6px; } }
     .board-agent-vex { background: rgba(255,107,53,0.15); color: var(--accent-orange); }
     .board-agent-eliza { background: rgba(74,222,128,0.15); color: var(--accent-teal); }
     .board-agent-hermes { background: rgba(167,139,250,0.15); color: var(--accent-purple); }
     .board-agent-alice { background: rgba(96,165,250,0.15); color: var(--accent-blue); }
     .board-agent-kimi { background: rgba(251,191,36,0.15); color: var(--accent-yellow); }
     .board-input-wrap { display: flex; gap: 4px; }
-    .board-input-wrap input { min-width: 0; width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid #2a2a3a; background: #1a1a2a; color: var(--text-primary); font-size: 12px; outline: none; }
+    .board-input-wrap input { min-width: 0; width: 100%; padding: 5px 8px; border-radius: 6px; border: 1px solid #2a2a3a; background: #1a1a2a; color: var(--text-primary); font-size: 11px; outline: none; }
+    @media (min-width: 640px) { .board-input-wrap input { padding: 6px 10px; font-size: 12px; } }
     .board-input-wrap input:focus { border-color: var(--accent-orange); }
-    .board-tabs { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
-    .board-tab { padding: 4px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; background: #1a1a2a; color: #8b8ba0; border: 1px solid transparent; transition: all .15s; }
+    .board-tabs { display: flex; gap: 3px; margin-bottom: 6px; flex-wrap: wrap; }
+    @media (min-width: 640px) { .board-tabs { gap: 4px; } }
+    .board-tab { padding: 3px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; background: #1a1a2a; color: #8b8ba0; border: 1px solid transparent; transition: all .15s; }
+    @media (min-width: 640px) { .board-tab { padding: 4px 12px; font-size: 11px; } }
     .board-tab:hover { border-color: rgba(255,107,53,0.3); color: var(--text-primary); }
     .board-tab.active { background: rgba(255,107,53,0.15); color: var(--accent-orange); border-color: var(--accent-orange); }
     .board-new-topic { display: flex; gap: 4px; margin-bottom: 6px; }
-    .board-new-topic input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #2a2a3a; background: #1a1a2a; color: var(--text-primary); font-size: 12px; outline: none; }
+    .board-new-topic input { flex: 1; padding: 5px 8px; border-radius: 6px; border: 1px solid #2a2a3a; background: #1a1a2a; color: var(--text-primary); font-size: 11px; outline: none; }
+    @media (min-width: 640px) { .board-new-topic input { padding: 6px 10px; font-size: 12px; } }
     .board-new-topic input:focus { border-color: var(--accent-orange); }
 
     /* Pirate Flag Logo */
-    .pirate-flag { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+    .pirate-flag { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+    @media (min-width: 640px) { .pirate-flag { width: 52px; height: 52px; border-radius: 8px; } }
     .pirate-flag img { width: 100%; height: 100%; object-fit: cover; }
-    @media (min-width: 640px) { .pirate-flag { width: 52px; height: 52px; } }
     .pirate-flag svg { width: 100%; height: 100%; display: block; }
 
     /* Chat card */
@@ -2892,56 +3256,80 @@ app.get('/', (req, res) => {
     .chat-input-wrap input { min-width: 0; width: 100%; }
 
     /* Search & Filter */
-    .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; align-items: center; }
+    .controls { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; align-items: center; }
     @media (min-width: 640px) { .controls { gap: 0.75rem; margin-bottom: 1rem; } }
-    .controls input { flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: #0d0d15; color: var(--text-primary); font-size: 0.85rem; outline: none; transition: border-color .15s; }
-    @media (min-width: 640px) { .controls input { min-width: 200px; padding: 0.6rem 1rem; font-size: 0.9rem; } }
+    .controls input { flex: 1; min-width: 0; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: #0d0d15; color: var(--text-primary); font-size: 0.75rem; outline: none; transition: border-color .15s; }
+    @media (min-width: 640px) { .controls input { min-width: 200px; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 8px; } }
     .controls input:focus { border-color: var(--accent-orange); box-shadow: 0 0 0 3px var(--accent-orange-glow); }
-    .controls select { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: #0d0d15; color: var(--text-primary); font-size: 0.8rem; outline: none; cursor: pointer; transition: border-color .15s; }
-    @media (min-width: 640px) { .controls select { padding: 0.6rem 1rem; font-size: 0.85rem; } }
+    .controls select { padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: #0d0d15; color: var(--text-primary); font-size: 0.7rem; outline: none; cursor: pointer; transition: border-color .15s; }
+    @media (min-width: 640px) { .controls select { padding: 0.6rem 1rem; font-size: 0.85rem; border-radius: 8px; } }
     .controls select:focus { border-color: var(--accent-orange); }
-    .count { color: var(--text-dim); font-size: 0.8rem; white-space: nowrap; }
+    .count { color: var(--text-dim); font-size: 0.7rem; white-space: nowrap; }
     @media (min-width: 640px) { .count { font-size: 0.85rem; } }
 
     /* Table */
-    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); -webkit-overflow-scrolling: touch; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); -webkit-overflow-scrolling: touch; }
     @media (min-width: 640px) { .table-wrap { border-radius: 10px; } }
-    table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.65rem; }
     @media (min-width: 640px) { table { font-size: 0.82rem; } }
-    th { text-align: left; padding: 0.4rem 0.5rem; background: var(--bg-card-hover); color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.65rem; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; }
+    th { text-align: left; padding: 0.3rem 0.4rem; background: var(--bg-card-hover); color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.6rem; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; }
     @media (min-width: 640px) { th { padding: 0.6rem 0.8rem; font-size: 0.72rem; } }
     th:hover { color: var(--text-secondary); }
-    td { padding: 0.5rem 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: top; }
+    td { padding: 0.3rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: top; }
+    @media (min-width: 640px) { td { padding: 0.5rem 0.8rem; } }
     tr:hover td { background: rgba(255,255,255,0.02); }
     .fn-name { color: var(--accent-blue); font-family: var(--font-mono); font-weight: 500; }
-    .fn-method { display: inline-block; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.7rem; font-weight: 700; margin-right: 0.25rem; }
+    .fn-method { display: inline-block; padding: 0.1rem 0.25rem; border-radius: 3px; font-size: 0.6rem; font-weight: 700; margin-right: 0.2rem; }
+    @media (min-width: 640px) { .fn-method { font-size: 0.7rem; padding: 0.1rem 0.35rem; margin-right: 0.25rem; } }
     .method-GET { background: rgba(96,165,250,0.12); color: var(--accent-blue); }
     .method-POST { background: rgba(74,222,128,0.12); color: var(--accent-teal); }
     .method-PATCH { background: rgba(251,191,36,0.12); color: var(--accent-yellow); }
     .method-DELETE { background: rgba(248,113,113,0.12); color: var(--accent-red); }
-    .tag-workflow { background: rgba(251,191,36,0.12); color: var(--accent-yellow); font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; white-space: nowrap; }
-    .tag-simple { background: rgba(96,165,250,0.12); color: var(--accent-blue); font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; white-space: nowrap; }
-    .fn-inputs { color: #6b6b80; font-size: 0.75rem; font-family: 'SF Mono', monospace; }
-    .fn-desc { color: #a0a0b0; font-size: 0.8rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag-workflow { background: rgba(251,191,36,0.12); color: var(--accent-yellow); font-size: 0.6rem; padding: 0.1rem 0.25rem; border-radius: 3px; white-space: nowrap; }
+    @media (min-width: 640px) { .tag-workflow { font-size: 0.65rem; padding: 0.1rem 0.35rem; } }
+    .tag-simple { background: rgba(96,165,250,0.12); color: var(--accent-blue); font-size: 0.6rem; padding: 0.1rem 0.25rem; border-radius: 3px; white-space: nowrap; }
+    @media (min-width: 640px) { .tag-simple { font-size: 0.65rem; padding: 0.1rem 0.35rem; } }
+    .fn-inputs { color: #6b6b80; font-size: 0.65rem; font-family: 'SF Mono', monospace; }
+    @media (min-width: 640px) { .fn-inputs { font-size: 0.75rem; } }
+    .fn-desc { color: #a0a0b0; font-size: 0.7rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (min-width: 480px) { .fn-desc { max-width: 180px; } }
     @media (min-width: 768px) { .fn-desc { max-width: 350px; } }
-    .footer { margin-top: 1.5rem; text-align: center; color: #4a4a5a; font-size: 0.78rem; }
-    .loading { text-align: center; padding: 3rem; color: #6b6b80; }
-    .endpoint-url { color: #6b6b80; font-size: 0.7rem; font-family: 'SF Mono', monospace; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .footer { margin-top: 1rem; text-align: center; color: #4a4a5a; font-size: 0.7rem; }
+    @media (min-width: 640px) { .footer { margin-top: 1.5rem; font-size: 0.78rem; } }
+    .loading { text-align: center; padding: 2rem; color: #6b6b80; }
+    @media (min-width: 640px) { .loading { padding: 3rem; } }
+    .endpoint-url { color: #6b6b80; font-size: 0.6rem; font-family: 'SF Mono', monospace; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (min-width: 480px) { .endpoint-url { max-width: 120px; font-size: 0.65rem; } }
+    @media (min-width: 640px) { .endpoint-url { max-width: 200px; font-size: 0.7rem; } }
     .endpoint-url span { color: #a0a0b0; }
     .fn-method-cell { white-space: nowrap; }
-    @media (max-width: 768px) {
-      body { padding: 0.5rem; }
-      .grid { grid-template-columns: 1fr; }
-      table { font-size: 0.65rem; }
-      th { padding: 0.3rem 0.4rem; font-size: 0.6rem; }
-      td { padding: 0.3rem 0.4rem; }
-      .fn-desc { max-width: 120px; }
-      .endpoint-url { max-width: 100px; }
-    }
+    /* Mobile-first: hide less important columns on small screens */
     @media (max-width: 480px) {
       .fn-desc { display: none; }
-      .endpoint-url { max-width: 80px; }
+      .endpoint-url { max-width: 60px; }
+      .fn-inputs { display: none; }
     }
+    @media (max-width: 640px) {
+      .hide-mobile { display: none; }
+    }
+    /* Quarterdeck responsive layout */
+    .quarterdeck-mid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
+    @media (min-width: 640px) { .quarterdeck-mid { grid-template-columns: 1.5fr 2fr 1fr; gap: 10px; } }
+    .quarterdeck-bottom { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
+    @media (min-width: 640px) { .quarterdeck-bottom { grid-template-columns: 1.5fr 1fr 1fr; gap: 10px; } }
+    /* Responsive sub-grids for sections below the knowledge graph */
+    .subgrid-3 { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    @media (min-width: 480px) { .subgrid-3 { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 768px) { .subgrid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; } }
+    .subgrid-2 { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    @media (min-width: 480px) { .subgrid-2 { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 768px) { .subgrid-2 { grid-template-columns: 1fr 2fr; gap: 12px; } }
+    .subgrid-4 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (min-width: 480px) { .subgrid-4 { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 768px) { .subgrid-4 { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
+    .subgrid-3-inbox { display: grid; grid-template-columns: 1fr; gap: 6px; }
+    @media (min-width: 480px) { .subgrid-3-inbox { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 768px) { .subgrid-3-inbox { grid-template-columns: 1fr 1fr 1fr; gap: 8px; } }
   
     canvas#mesh-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
     body { position: relative; z-index: 0; }
@@ -2996,7 +3384,7 @@ app.get('/', (req, res) => {
   </div>
 
   <!-- Middle row: Quartermaster's Watch + Training & Security + Ship's Log -->
-  <div style="display:grid;grid-template-columns:1.5fr 2fr 1fr;gap:10px;margin-bottom:10px;">
+  <div class="quarterdeck-mid">
     <!-- Quartermaster's Watch -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
       <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Quartermaster's Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
@@ -3054,7 +3442,7 @@ app.get('/', (req, res) => {
   </div>
 
   <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
-  <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+  <div class="quarterdeck-bottom">
     <!-- Ship's Articles (bulletin board) -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
       <h4 style="color:#ff6b35;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Resolutions &amp; Progress</span></h4>
@@ -3088,7 +3476,7 @@ app.get('/', (req, res) => {
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— ecosystem map with live trust scores</span>
   </h3>
   <div style="position:relative;">
-    <canvas id="obsidian-graph-canvas" style="width:100%;height:calc(100vh - 300px);min-height:340px;border-radius:6px;background:#08080e;cursor:grab;touch-action:none;"></canvas>
+    <canvas id="obsidian-graph-canvas" style="width:100%;height:50vh;min-height:240px;max-height:500px;border-radius:6px;background:#08080e;cursor:grab;touch-action:none;"></canvas>
     <div id="graph-tooltip" style="display:none;position:absolute;background:#1a1a2a;border:1px solid #3a3a5a;border-radius:6px;padding:6px 10px;font-size:11px;color:#e0e0f0;pointer-events:none;white-space:nowrap;z-index:100;"></div>
   </div>
   <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">
@@ -3128,7 +3516,7 @@ app.get('/', (req, res) => {
     💰 Plunder & Mining
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Pool Stats · Leaderboard · Heartbeat</span>
   </h3>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+  <div class="subgrid-3">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📒 Plunder Ledger</div>
       <div class="stat"><span class="label">Pool Hashrate</span><span class="value" id="pool-hash">checking...</span></div>
@@ -3161,7 +3549,7 @@ app.get('/', (req, res) => {
     📯 Campaigns & Leads
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— PFP Campaign · PFP Leads · 31 Harbor</span>
   </h3>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+  <div class="subgrid-3">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📸 PFP Campaign</div>
       <div class="stat"><span class="label">Contact Pool</span><span class="value" id="pfp-pool">${poolSize}</span></div>
@@ -3197,7 +3585,7 @@ app.get('/', (req, res) => {
     📡 Ship's Intelligence
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · GitHub Activity · Incoming Mail</span>
   </h3>
-  <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
+  <div class="subgrid-2">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
       <div id="university-status">
@@ -3219,7 +3607,7 @@ app.get('/', (req, res) => {
     <div style="display:flex;flex-direction:column;gap:8px;">
       <div style="background:#0d0d15;border-radius:6px;padding:8px;">
         <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📬 Incoming Mail</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div class="subgrid-3-inbox">
           <div>
             <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
             <div id="pfp-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
@@ -3256,7 +3644,7 @@ app.get('/', (req, res) => {
     🏴‍☠️ DAO & Ecosystem
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
   </h3>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
+  <div class="subgrid-4">
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
       <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
@@ -4077,6 +4465,38 @@ app.post('/api/xmrt-university/ingest', express.json({ limit: '64kb' }), async (
   res.json({ success: true, cert: stored, verify: verified });
 });
 
+// GET /api/agent/cert — Retrieve an agent's own JWT certificate
+// Agents can call this to get their JWT token for Cloudflare Access auth
+app.get('/api/agent/cert', async (req, res) => {
+  trackRequest('GET /api/agent/cert');
+  const agentId = req.query.agent_id || req.headers['x-agent-id'];
+  if (!agentId) return res.status(400).json({ error: 'agent_id required (query or x-agent-id header)' });
+  try {
+    // Query local-sb for the agent's certification
+    const certRes = await fetch('http://127.0.0.1:54321/rest/v1/agent_certifications?agent_id=eq.' + agentId + '&revoked=eq.false&order=issued_at.desc&limit=1', {
+      headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!certRes.ok) return res.status(502).json({ error: 'DB query failed' });
+    const certs = await certRes.json();
+    if (!certs || certs.length === 0) return res.status(404).json({ error: 'No valid certificate found for ' + agentId });
+    const cert = certs[0];
+    res.json({
+      success: true,
+      agent_id: cert.agent_id,
+      agent_name: cert.agent_name,
+      certificate_id: cert.certificate_id,
+      tier: cert.tier,
+      permissions: cert.permissions,
+      jwt_token: cert.jwt_hash,
+      issued_at: cert.issued_at,
+      expires_at: cert.expires_at,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // -- Local Edge Function Runtime --
 app.all('/api/v1/functions/:name', async (req, res) => {
   const func = localFunctions.find(f => f.name === req.params.name);
@@ -4772,10 +5192,13 @@ function getToolDescription(name) {
     'vex-vision': 'Capture and describe images from 4 sources: screenshot (screen:true), webcam (default), local file (file:"/path"), or URL (url:"https://..."). Uses kimi-k2.6:cloud vision model by default (zero local RAM). Fallback: moondream.',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
+    'sent-emails': 'Search sent email history from suite_email_activity table. Use search param to find by email address or subject. Columns: id, email_from, email_to, subject, status, sent_at.',
+    'pfp-leads': 'Manage PFP leads. Actions: list (all leads), search (by name/email/notes), add (create new lead), update (modify existing). Columns: contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes.',
     'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor)',
     'db-query': 'Run a raw SQL query against the local Postgres database (read-only; use SELECT only)',
     'db-rest': 'Query any database table via the local-sb REST API using path and optional method/body',
-    'shared-context': 'Read or write shared context memory visible to all agents (action: read|write, key, value)',
+    'shared-context': 'Read or write shared context memory visible to all agents (action: read|write|search|recall_by_agent|recall_by_topic, key, value, search_term, agent_id, topic)',
+    'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',
     'fleet-chat': 'Send a message to the fleet chat as an agent (vex|eliza|hermes) on a channel (fleet|all|vex|eliza|hermes)',
@@ -4797,6 +5220,7 @@ function getToolDescription(name) {
     'ef:function-actions': 'Get available actions for edge functions',
     'ef:search-functions': 'Search for edge functions by query string',
     'ef:ecosystem-health': 'Check ecosystem health via cloud edge function',
+    'ef:explore-curiosity': '🧪 Explore a topic with curiosity-driven research. Provide a key_phrase and optional conversation_summary. Returns knowledge base results, web search, system context, and follow-up suggestions.',
     'ef:ecosystem-monitor': 'Monitor ecosystem metrics via cloud edge function',
     'ef:frontend-health': 'Check frontend application health via cloud edge function',
     'ef:usage-monitor': 'Monitor system usage metrics via cloud edge function',
@@ -4849,7 +5273,10 @@ app.post('/tools/run', async (req, res) => {
   const toolLevel = getToolLevel(tool);
   
   // For CORE-level tools, require service token or JWT auth (not just agent name claim)
-  if (toolLevel === 'core' && !req.cfAccess && !req.headers['x-api-key']) {
+  // But if the agent is already authenticated via x-agent-id and is a known CORE agent,
+  // skip the additional x-api-key check (the fleet chat tool execution path already authed them)
+  const isCoreAgent = CORE_AGENTS.has(agentId.toLowerCase().trim());
+  if (toolLevel === 'core' && !req.cfAccess && !req.headers['x-api-key'] && !isCoreAgent) {
     return res.status(403).json({
       error: 'CORE-level tools require Cloudflare Access authentication (service token or JWT). Set CF-Access-Client-Id + CF-Access-Client-Secret headers or x-api-key header.',
       agent: agentId,
@@ -4876,11 +5303,21 @@ app.post('/tools/run', async (req, res) => {
   // The task runner is for background cron jobs, not synchronous agent requests.
   // Agent-side retry in executeAgentToolCall handles transient failures.
   let result;
+  const startTime = Date.now();
   try {
     result = await handler(args);
   } catch (e) {
     result = { error: e.message || 'Unknown error' };
   }
+  const duration = Date.now() - startTime;
+  
+  // Log tool execution to activity feed
+  logToDb('tool_execution', `Tool: ${tool}`,
+    `${agentId} called ${tool} — ${result.error ? 'failed: ' + result.error.slice(0, 100) : 'success'} (${duration}ms)`,
+    result.error ? 'error' : 'completed',
+    { tool, agent: agentId, duration_ms: duration, has_error: !!result.error },
+    agentId
+  ).catch(() => {});
 
   res.json({ ...result, _authorized: true, _agent: agentId });
 });
@@ -5635,13 +6072,26 @@ async function gatherFleetContext() {
     }
   };
 
-  const [health, monitor, ollama, recentMsgs, supervisor, cloudElizaData] = await Promise.all([
+  const [health, monitor, ollama, recentMsgs, supervisor, cloudElizaData, cronStatus, knowledgeCount] = await Promise.all([
     fetchJson('/health', 2000),
     fetchJson('/monitor', 12000),
     fetchJson('/ollama/health', 3000),
     fetchJson('/api/fleet-chat/messages?limit=20', 3000),
     fetchJson('/api/supervisor/status', 2000).catch(() => null),
     cloudElizaFetch(),
+    fetchJson('/cron/status', 3000).catch(() => null),
+    // Knowledge base health: check if entities exist via local-sb REST API
+    (async () => {
+      try {
+        const r = await fetch('http://127.0.0.1:54321/rest/v1/knowledge_entities?select=id&limit=1', {
+          signal: AbortSignal.timeout(3000),
+          headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' },
+        });
+        if (!r.ok) return { status: 'error', count: 0 };
+        const data = await r.json();
+        return { status: 'ok', count: Array.isArray(data) ? data.length : 0 };
+      } catch (e) { return { status: 'unreachable', count: 0, error: e.message }; }
+    })(),
   ]);
 
   // Normalize cloud Eliza data
@@ -5734,6 +6184,18 @@ async function gatherFleetContext() {
       localSbUp: (supervisor?.services?.['local-sb']?.uptimeSec || 0) > 0,
       tunnelUp: (supervisor?.services?.tunnel?.uptimeSec || 0) > 0,
     } : null,
+    cron: cronStatus ? {
+      totalJobs: cronStatus.totalJobs || 0,
+      totalExecutions: cronStatus.totalExecutions || 0,
+      totalErrors: cronStatus.totalErrors || 0,
+      recentJobs: cronStatus.recentJobs || 0,
+      staleJobs: cronStatus.staleJobs || 0,
+      status: cronStatus.totalErrors > 0 ? 'has_errors' : 'running',
+    } : { status: 'unavailable' },
+    knowledgeBase: knowledgeCount ? {
+      status: knowledgeCount.status || 'unknown',
+      entityCount: knowledgeCount.count || 0,
+    } : { status: 'unreachable' },
     recentFleetChat: recent,
     sharedContext, // agents can read this to answer questions about shared memory
     cloudEliza: cloudElizaTools || { status: 'unreachable', note: 'Cloud edge function did not respond within 5s timeout or no SUPABASE_KEY set. Its tools are NOT available in this block.' },
@@ -6005,6 +6467,32 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       if (r.ok) {
         const d = await r.json();
         let reply = (d.response || '').trim();
+        // Log token usage for Rum Quota
+        try {
+          const inputTokens = d.prompt_eval_count || 0;
+          const outputTokens = d.eval_count || 0;
+          const totalTokens = inputTokens + outputTokens;
+          const costPer1KTokens = 0.00015; // Ollama local is free, but track for consistency
+          const estimatedCost = (totalTokens / 1000) * costPer1KTokens;
+          await fetch('http://localhost:' + PORT + '/api/token-usage/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              project: 'xmrt-dao',
+              agent: agentName,
+              model: model,
+              provider: 'ollama',
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              estimated_cost_usd: estimatedCost,
+              source: 'fleet-chat',
+              endpoint: 'routeToLocalOllamaAgent',
+              status: 'success',
+              session_id: sessionId,
+            }),
+            signal: AbortSignal.timeout(3000),
+          });
+        } catch (e) { console.error('[' + agentName + '-token-log] error:', e.message); }
         // Defensive: strip sign-off patterns
         reply = reply.replace(signOffPattern, '').replace(/\s+o7\s*$/i, '');
         if (reply && reply.length > 0) {
@@ -6012,7 +6500,19 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
           const toolResult = await executeAgentToolCall(agentName, reply, entry);
           if (toolResult.executed) {
             // Re-query with tool result for final answer
-            const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + JSON.stringify(toolResult.result || toolResult.error).slice(0, 1500) + '\n\nNow give your final answer (1-2 sentences):';
+            const resultData = toolResult.result || toolResult.error;
+            // Build a compact summary: count + first result names, then truncated full data
+            let summary = '';
+            if (resultData?.count !== undefined) {
+              summary = `[IMPORTANT: Total results = ${resultData.count}. `;
+              if (Array.isArray(resultData.results)) {
+                const names = resultData.results.slice(0, 5).map(r => r?.name || '?').join(', ');
+                summary += `Names: ${names}. `;
+              }
+              summary += `The data below may be truncated but the total count is ${resultData.count}.] `;
+            }
+            const resultStr = JSON.stringify(resultData).slice(0, 3000);
+            const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + summary + resultStr + '\n\nNow give your final answer (1-2 sentences):';
             try {
               const sR = await fetch('http://localhost:11434/api/generate', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6059,13 +6559,14 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
     return null;
   }
 
-    // Route to Eliza via eliza-relay with conversation memory
-  // Trigger on: direct channel, 'all' channel, or any message mentioning @Eliza
-  const mentionsEliza = /@eliza/i.test(entry.message) || entry.channel === 'eliza';
+  // Route to Eliza via eliza-relay with conversation memory
+  // Trigger on: direct channel, 'eliza' channel, or message STARTING with @eliza (not just containing it)
+  const startsWithEliza = entry.message.trim().toLowerCase().startsWith('@eliza');
+  const mentionsEliza = entry.channel === 'eliza' || entry.channel === 'all' || startsWithEliza;
   if (entry.channel === 'all' || entry.channel === 'eliza' || mentionsEliza) {
     try {
       // Load conversation history from local memory
-      const sessionId = 'eliza-fleet-' + entry.agent;
+      const sessionId = 'eliza-fleet'; // Single stable session for all fleet messages so ai-chat never sees a "first engagement"
       let contextHistory = '';
       try {
         const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + sessionId + '&limit=20', {
@@ -6161,11 +6662,24 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       // Build the full prompt with grounding + tool results
       const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\nIf you need information NOT in the grounding block, output a single line `TOOL_CALL: {"tool":"<name>","args":{...}}` on its own line. I will execute the tool, then come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
 
-      // Primary path: ai-chat edge function. Deepseek fallback is used when
-      // ai-chat is unreachable.
+      // Build messages array with conversation history so ai-chat sees context
+      const historyMessages = [];
+      if (contextHistory) {
+        // Parse contextHistory back into message objects
+        const lines = contextHistory.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          const match = line.match(/^\[([^\]]+)\]\s(.+)$/);
+          if (match) {
+            historyMessages.push({ role: 'user', content: match[2] });
+          }
+        }
+      }
+      historyMessages.push({ role: 'user', content: entry.message });
+
+      // Primary path: ai-chat edge function. Pass messages array so ai-chat sees history.
       let elizaRes = null;
       try {
-        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId);
+        elizaRes = await relayToElizaCloud(fullPrompt, entry.agentLabel, 'fleet-' + entry.id, sessionId, historyMessages);
         console.log('[routeFleetMessage] ai-chat reply:', JSON.stringify(elizaRes).slice(0, 200));
       } catch (e) {
         console.log('[routeFleetMessage] ai-chat error:', e.message);
@@ -8465,10 +8979,18 @@ app.post('/resend/31harbor/inbox/read', (req, res) => {
 
 // ── Cron Status Endpoint ──
 app.get('/cron/status', (req, res) => {
-  const statePath = join(__dirname, '..', 'relay-data', 'cron-engine-state.json');
+  const statePath = join(__dirname, '..', 'relay-data', 'cron-engine-v2-state.json');
   try {
     if (existsSync(statePath)) {
       const state = JSON.parse(readFileSync(statePath, 'utf8'));
+      // Convert minute timestamps to milliseconds for agent consumption
+      if (state.lastRun) {
+        for (const [jobId, ts] of Object.entries(state.lastRun)) {
+          if (typeof ts === 'number' && ts < 10000000000) {
+            state.lastRun[jobId] = ts * 60000;
+          }
+        }
+      }
       state.status = 'running';
       state.relay_uptime = process.uptime();
       res.json(state);
@@ -8870,6 +9392,8 @@ app.post('/api/token-usage/log', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW()) RETURNING id`,
       [project, agent||'unknown', model||'unknown', provider||null, input_tokens||0, output_tokens||0, cache_read_tokens||0, cache_write_tokens||0, reasoning_tokens||0, estimated_cost_usd||null, source||null, endpoint||null, status||'success', session_id||null]
     );
+    // Log token usage to activity feed
+    logTokenUsageEvent(agent || 'unknown', model || 'unknown', input_tokens || 0, output_tokens || 0, estimated_cost_usd || 0, { project }).catch(() => {});
     res.json({ success: true, id: r.rows[0].id });
   } catch (e) {
     res.status(500).json({ error: e.message });
