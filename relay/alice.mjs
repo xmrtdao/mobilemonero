@@ -58,7 +58,7 @@ const RESEND_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_XMRT_KEY = process.env.RESEND_XMRT_API_KEY || '';
 const MUAPI_KEY = process.env.MUAPI_API_KEY || '';
 const RELAY_PORT = 8080;
-const ALICE_ID = 'alice-sidecar';
+const ALICE_ID = 'alice-daemon';
 const ALICE_NAME = 'Alice';
 
 // ── State ─────────────────────────────────────────────────
@@ -80,7 +80,7 @@ async function readSharedContext(key) {
   try {
     const res = await fetchJSON(`http://localhost:${RELAY_PORT}/tools/run`, {
       method: 'POST', timeout: 5000,
-      headers: { 'x-agent-id': 'alice-sidecar' },
+      headers: { 'x-agent-id': 'alice-daemon' },
       body: { tool: 'shared-context', args: { action: 'read', key } },
     });
     return res?.context?.value || null;
@@ -91,7 +91,7 @@ async function writeSharedContext(key, value, description) {
   try {
     await fetchJSON(`http://localhost:${RELAY_PORT}/tools/run`, {
       method: 'POST', timeout: 5000,
-      headers: { 'x-agent-id': 'alice-sidecar' },
+      headers: { 'x-agent-id': 'alice-daemon' },
       body: { tool: 'shared-context', args: { action: 'write', key, value, description } },
     });
   } catch {}
@@ -438,7 +438,7 @@ async function checkFleetMentions() {
     const now = Date.now();
     for (const m of msgs) {
       // Check for @alice mentions in recent messages (last 5 min)
-      if (m.ts > now - 300000 && (m.message.toLowerCase().includes('@alice') || m.message.toLowerCase().includes('@alice-sidecar'))) {
+      if (m.ts > now - 300000 && (m.message.toLowerCase().includes('@alice-daemon'))) {
         if (!m.answered) {
           log('[FLEETCHAT] Mentioned by ' + m.agent + ': ' + m.message.slice(0, 80));
           
@@ -450,37 +450,41 @@ async function checkFleetMentions() {
               const msgs = data.messages || [];
               
               const lower = m.message.toLowerCase();
-              let dataReply = null;
+                            let dataReply = null;
               
-              if (lower.includes('muapi') || lower.includes('balance') || lower.includes('credit')) {
-                dataReply = '@' + m.agent + ' MUAPI balance is low (under ). Needs topup.';
-              } else if (lower.includes('service') || lower.includes('monitor') || lower.includes('health')) {
-                const s = loadState().lastServices || [];
-                const ok = s.filter(x => x.status === 'ok').length;
-                dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
-              } else if (lower.includes('task') || lower.includes('autopilot') || lower.includes('cycle')) {
-                // Read cycle definition from shared_context (not local state)
-                let cycleDef = 'undefined';
-                let lastRun = 'never';
-                try {
-                  const ctxRes = await fetch('http://localhost:' + RELAY_PORT + '/tools/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-agent-id': 'alice-sidecar' },
-                    body: JSON.stringify({ tool: 'shared-context', args: { action: 'read', key: 'alice-autopilot-cycle' } }),
-                    signal: AbortSignal.timeout(5000),
-                  });
-                  if (ctxRes.ok) {
-                    const ctxData = await ctxRes.json();
-                    const ctx = ctxData?.context?.value;
-                    if (ctx) {
-                      try { const parsed = JSON.parse(ctx); cycleDef = parsed.cycle || parsed.interval + 'ms'; } catch { cycleDef = ctx.slice(0, 80); }
-                    }
-                  }
-                } catch {}
-                const st = loadState();
-                lastRun = st.lastRun || 'never';
-                dataReply = '@' + m.agent + ' Autopilot cycle: ' + cycleDef + '. Last run: ' + lastRun;
-              }
+                            if (lower.includes('muapi') || lower.includes('balance') || lower.includes('credit')) {
+                                            dataReply = '@' + m.agent + ' MUAPI balance is low (under). Needs topup.';
+                                          } else if (lower.includes('task') || lower.includes('autopilot') || lower.includes('cycle')) {
+                                            // Read cycle definition from shared_context (not local state)
+                                            let cycleDef = 'undefined';
+                                            let lastRun = 'never';
+                                            try {
+                                              const ctxData = await fetchJSON('http://localhost:' + RELAY_PORT + '/tools/run', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json', 'x-agent-id': 'alice-daemon' },
+                                                body: { tool: 'shared-context', args: { action: 'read', key: 'alice-autopilot-cycle' } },
+                                                timeout: 5000,
+                                              });
+                                              const ctx = ctxData?.context?.value;
+                                              if (ctx) {
+                                                try { const parsed = JSON.parse(ctx); cycleDef = parsed.cycle || parsed.interval + 'ms'; } catch { cycleDef = ctx.slice(0, 80); }
+                                              } else {
+                                                log('[FLEETCHAT] shared-context returned no value: ' + JSON.stringify(ctxData).slice(0, 100));
+                                              }
+                                            } catch (e) {
+                                              log('[FLEETCHAT] shared-context error: ' + (e.message || e));
+                                            }
+                                            dataReply = '@' + m.agent + ' Daemon is running. Cycle: ' + cycleDef + '. Last run: ' + lastRun;
+                                          } else if (lower.includes('service') || lower.includes('monitor') || lower.includes('health')) {
+                                            const s = loadState().lastServices || [];
+                                            const ok = s.filter(x => x.status === 'ok').length;
+                                            dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
+                                          } else {
+                                            // Unknown query — do NOT fall back to generic health response.
+                                            // Stay silent and let the AI agent handle it.
+                                            log('[FLEETCHAT] No matching keyword for: ' + lower.slice(0, 60) + ' — staying silent');
+                                            return;
+                                          }
               
               if (dataReply) await postToFleetChat(dataReply);
             } catch (e) { log('[FLEETCHAT] Supplement error: ' + e.message); }
@@ -585,7 +589,7 @@ async function daemonLoop() {
 
       for (const t of transitions) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'synthesizer',
           memory_type: 'event',
           scope: `service:${t.service}`,
@@ -601,7 +605,7 @@ async function daemonLoop() {
       const bad = services.filter(s => s.status !== 'ok');
       if (bad.length > 0) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'observer',
           memory_type: 'observation',
           scope: 'fleet',
@@ -616,7 +620,7 @@ async function daemonLoop() {
       const lastEmail2 = prevState.lastEmailParse;
       if (lastEmail2) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'observer',
           memory_type: 'observation',
           scope: 'fleet',
@@ -648,7 +652,7 @@ async function daemonLoop() {
             activity_type: 'service_check',
             title: activityMsg,
             status: badServices.length > 0 ? 'warning' : 'info',
-            agent_id: 'alice-sidecar',
+            agent_id: 'alice-daemon',
           },
         });
       } catch (e) { log('[ACTIVITY] Error: ' + e.message); }

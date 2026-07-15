@@ -156,6 +156,61 @@ async function logToDb(activityType, title, status, description, metadata = {}, 
   }
 }
 
+// ── Resilient REST query helper: tries local-sb first, falls back to direct Postgres ──
+async function resilientRestQuery(table, select, filters, options = {}) {
+  const { limit = 20, order, single } = options;
+  // Try local-sb first
+  try {
+    const params = new URLSearchParams();
+    params.set('select', select || '*');
+    if (limit) params.set('limit', String(limit));
+    if (order) params.set('order', order);
+    if (single) params.set('limit', '1');
+    if (filters) {
+      for (const [k, v] of Object.entries(filters)) {
+        params.set(k, v);
+      }
+    }
+    const url = `http://127.0.0.1:54321/rest/v1/${table}?${params.toString()}`;
+    const res = await fetch(url, {
+      headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { source: 'local-sb', data, rows: Array.isArray(data) ? data : [data] };
+    }
+    console.log(`[resilient] local-sb returned ${res.status} for ${table}, falling back to direct PG`);
+  } catch (e) {
+    console.log(`[resilient] local-sb failed for ${table}: ${e.message}, falling back to direct PG`);
+  }
+  // Fallback: direct Postgres query
+  try {
+    const escapedTable = table.replace(/[^a-zA-Z0-9_]/g, '');
+    const escapedSelect = select ? select.replace(/[^a-zA-Z0-9_,\s->>']/g, '') : '*';
+    let sql = `SELECT ${escapedSelect} FROM ${escapedTable}`;
+    const params = [];
+    if (filters) {
+      const clauses = [];
+      for (const [k, v] of Object.entries(filters)) {
+        if (k.startsWith('or.')) continue; // complex filters skip
+        if (k.endsWith('=eq.')) {
+          clauses.push(`${k.replace('=eq.', '')} = $${params.length + 1}`);
+          params.push(v);
+        }
+      }
+      if (clauses.length > 0) sql += ' WHERE ' + clauses.join(' AND ');
+    }
+    if (limit) sql += ` LIMIT ${limit}`;
+    if (order) sql += ` ORDER BY ${order}`;
+    const result = await queryLocalPg(sql, params);
+    return { source: 'direct-pg', data: result.rows, rows: result.rows };
+  } catch (e) {
+    console.error(`[resilient] Direct PG fallback also failed for ${table}: ${e.message}`);
+    return { source: 'error', error: e.message, data: [] };
+  }
+}
+
 // ── Log edge function invocations ───────────────────────────
 async function logEdgeFunctionCall(functionName, status, durationMs, metadata = {}) {
   await logToDb('edge_function', `Edge Function: ${functionName}`, 
@@ -970,13 +1025,19 @@ const toolHandlers = {
 
   'ef:schema': async () => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/schema-manager`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'list_tables' }),
-        signal: AbortSignal.timeout(10000),
-      });
-      return { success: true, status: res.status, data: await res.json() };
+      // Query local database directly instead of dead cloud edge function
+      const tables = await queryLocalPg(
+        "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema IN ('public','app') ORDER BY table_schema, table_name"
+      );
+      const columns = await queryLocalPg(
+        "SELECT table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema IN ('public','app') ORDER BY table_schema, table_name, ordinal_position"
+      );
+      return {
+        success: true,
+        tables: tables.rows,
+        columns: columns.rows.slice(0, 200), // limit to avoid huge response
+        total_columns: columns.rows.length,
+      };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -1284,6 +1345,22 @@ const toolHandlers = {
       return { success: true, status: res.status, data: await res.json() };
     } catch (err) { return { success: false, error: err.message }; }
   },
+
+  'assign_task': async (args) => {
+        const { title, description, category, assignee_agent_id, priority, task_id } = args || {};
+        if (!title) return { error: 'Missing title' };
+        try {
+          const id = task_id || 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+          const result = await queryLocalPg(
+            `INSERT INTO app.tasks (id, title, description, status, priority, category, assignee_agent_id, created_at, updated_at)
+             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, NOW(), NOW()) RETURNING *`,
+            [id, title, description || '', priority || 5, category || 'other', assignee_agent_id || null]
+          );
+          return { success: true, task: result.rows[0] };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      },
 
   'ef:task-orchestrator': async (args) => {
     const action = args?.action || 'list_tasks';
@@ -1648,7 +1725,7 @@ const toolHandlers = {
         recent: emails.map(e => ({
           id: e.id, from: e.from, to: e.to, subject: e.subject,
           receivedAt: e.receivedAt, read: e.read,
-          text: (e.text || '').slice(0, 500),
+          text: (e.text || '').slice(0, 5000),
         })),
       };
     }
@@ -1768,10 +1845,10 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
     const body = {
-      userQuery: message,
-      senderName: senderName,
-      session_id: tag,
-    };
+          userQuery: message,
+          senderName: senderName,
+          session_id: tag,
+        };
     // Pass conversation history as messages array so ai-chat sees context
     if (historyMessages && historyMessages.length > 0) {
       body.messages = historyMessages;
@@ -1935,7 +2012,15 @@ function rateLimit(ip, path) {
 
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
-  if (req.path === '/api/suite/validate-token' || req.path === '/api/login') return next();
+  if (req.method === 'OPTIONS' ||
+      req.path === '/api/suite/validate-token' || req.path === '/api/login' ||
+      req.path.startsWith('/api/contact/cuttlefishclaws') ||
+      req.path === '/api/cuttlefishclaws/trust-score' ||
+      req.path === '/api/cuttlefishclaws/cac-status' ||
+      req.path === '/api/cuttlefishclaws/capital-stack' ||
+      req.path === '/api/cuttlefishclaws/trust-network' ||
+      req.path === '/api/cuttlefishclaws/agents' ||
+      req.path === '/api/cuttlefishclaws/rate-card') return next();
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
@@ -5821,7 +5906,7 @@ const FLEET_AGENTS = {
   'vex': { name: 'Vex (Captain, HMS Speedy)', endpoint: 'local', type: 'relay' },
   'eliza': { name: 'Eliza-Cloud', endpoint: 'eliza-relay', type: 'cloud' },
   'hermes': { name: 'Hermes', endpoint: 'https://hermes.mobilemonero.com', type: 'mobile' },
-  'alice': { name: 'Alice (Sidecar)', endpoint: 'local', type: 'sidecar', localEndpoint: 'http://127.0.0.1:8080/api/alice/inbox' },
+  'alice': { name: 'Alice (Daemon)', endpoint: 'local', type: 'daemon', localEndpoint: 'http://127.0.0.1:8080/api/alice/inbox' },
   // CuttlefishClaws fleet agents — first-class agents with tool access, shared memory, and deepseek-v4-flash:cloud inference
   'trib': { name: 'Trib (Tributary Governance Agent)', endpoint: 'local', type: 'relay' },
   'arch': { name: 'Arch (Architecture & Routing Agent)', endpoint: 'local', type: 'relay' },
@@ -6312,20 +6397,41 @@ async function routeFleetMessage(entry) {
   // via /tools/run, posts an interim message, and returns the result.
   // Returns { executed: false } when no tool call is found.
   async function executeAgentToolCall(agentName, reply, entry) {
-    // Match the FULL line after TOOL_CALL: — parse the entire JSON text (nested braces safe)
-    const toolCallLine = reply.split('\n').find(l => /^\s*TOOL_CALL:\s*\{/.test(l.trim()));
-    if (!toolCallLine) return { executed: false };
-    const jsonText = toolCallLine.replace(/^\s*TOOL_CALL:\s*/, '').trim();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch {
-      return { executed: false };
-    }
-    const toolName = parsed.tool;
-    const args = parsed.args || {};
-    if (!toolName || !toolHandlers[toolName]) return { executed: false };
+      // Match the FULL line after TOOL_CALL: — parse the entire JSON text (nested braces safe)
+          // Strip markdown formatting first (**bold**, *italic*) then check for TOOL_CALL
+          const strippedLines = reply.split('\n').map(l => l.trim().replace(/^\*\*|\*\*$/g, '').replace(/^\*|\*$/g, ''));
+          let toolCallLine = strippedLines.find(l => /^TOOL_CALL:\s*\{/.test(l.trim()));
+          let jsonText = null;
+          let parsed = null;
+    
+          if (toolCallLine) {
+            jsonText = toolCallLine.replace(/^\s*TOOL_CALL:\s*/, '').trim();
+            try {
+              parsed = JSON.parse(jsonText);
+            } catch {}
+          }
+    
+          // Fallback: function-call style TOOL_CALL: toolName(arg1="val1",arg2="val2")
+          if (!parsed) {
+            toolCallLine = strippedLines.find(l => /^TOOL_CALL:\s*\w+\s*\(/.test(l.trim()));
+            if (toolCallLine) {
+              const match = toolCallLine.replace(/^\s*TOOL_CALL:\s*/, '').trim().match(/^(\w+)\s*\((.+)\)\s*$/);
+              if (match) {
+                const toolName = match[1];
+                const argsStr = match[2];
+                const args = {};
+                // Parse key="value" or key=value arguments
+                const argMatches = argsStr.matchAll(/(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^,)]+))/g);
+                for (const am of argMatches) {
+                  args[am[1]] = am[2] || am[3] || am[4];
+                }
+                parsed = { tool: toolName, args };
+              }
+            }
+          }
+    const toolName = parsed?.tool;
+        const args = parsed?.args || {};
+        if (!toolName || !toolHandlers[toolName]) return { executed: false };
 
     // Authorize the agent
     const toolLevel = getToolLevel(toolName);
@@ -6660,7 +6766,7 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       }
 
       // Build the full prompt with grounding + tool results
-      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\nIf you need information NOT in the grounding block, output a single line `TOOL_CALL: {"tool":"<name>","args":{...}}` on its own line. I will execute the tool, then come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
+      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**\n- `search_knowledge` — Search the knowledge base by term\n- `shared-context` — Read/write persistent agent memory (use action:read, action:write, action:search)\n- `assign_task` — Create a task for another agent (requires task_id, title, description, assigned_to)\n- `fleet_pulse` — Get full system health snapshot\n- `activity_log` — Query the activity feed (filter by activity_type, limit)\n- `resend-inbox` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)\n\nIf you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):\n`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}`\n\nI will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
 
       // Build messages array with conversation history so ai-chat sees context
       const historyMessages = [];
@@ -7269,33 +7375,82 @@ app.options('/api/contact/cuttlefishclaws/chat', (req, res) => {
 app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/contact/cuttlefishclaws/chat');
-  const { agentId, message } = req.body || {};
+  const { agentId, message, conversation_id } = req.body || {};
   if (!agentId || !message) return res.status(400).json({ error: 'agentId and message required' });
 
-  const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
-  if (!RESEND_KEY) return res.status(500).json({ error: 'Resend key not configured' });
-
-  const body = `New agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nMessage: ${message}`;
+  const convId = conversation_id || `cuttlefish-${agentId}-${Date.now()}`;
 
   try {
-    const apiRes = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'Cuttlefish Labs <david@31harbor.com>',
-        to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
-        subject: `Agent Chat - ${agentId}`,
-        text: body,
-      }),
-    });
-    const data = await apiRes.json();
+    // Store user message in DB
+    await queryLocalPg(
+      `INSERT INTO app.cuttlefish_chat_messages (agent_id, conversation_id, user_message, created_at) VALUES ($1, $2, $3, NOW())`,
+      [agentId, convId, message]
+    );
 
-    if (apiRes.ok) {
-      logActivity('contact-cuttlefishclaws-chat', data.id, 'SENT', `Chat from agent ${agentId}: ${message.substring(0, 80)}`);
-      res.json({ success: true, id: data.id, response: 'Your message has been received. An agent will respond shortly.' });
-    } else {
-      res.status(500).json({ error: data });
+    // Try to get an intelligent response from the relay's ai-chat or knowledge base
+    let agentResponse = '';
+    try {
+      // Search knowledge base for relevant context — use local REST API directly
+      const supabaseUrl = 'http://127.0.0.1:54321';
+      // Use first significant word for ilike matching (multi-word exact phrases don't match partial titles)
+      const firstWord = message.split(/\s+/).filter(Boolean)[0] || message;
+      const encoded = encodeURIComponent(firstWord);
+      const kbRes = await fetch(`${supabaseUrl}/rest/v1/knowledge_entities?select=name,entity&limit=3&or=(name.ilike.*${encoded}*,entity->>description.ilike.*${encoded}*)`, {
+        headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (kbRes.ok) {
+        const kbData = await kbRes.json();
+        if (Array.isArray(kbData) && kbData.length > 0) {
+          agentResponse = 'Based on the knowledge base, here is what I found:\n\n' + kbData.map(function(k) { return '- ' + (k.entity_name || '') + ': ' + (k.description || ''); }).join('\n');
+        }
+      }
+    } catch {}
+
+    if (!agentResponse) {
+      // Fallback: look up agent profile
+      try {
+        const agentRes = await fetch(`http://localhost:${PORT}/api/cuttlefishclaws/trust-score?did=${agentId}`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (agentRes.ok) {
+          const agentData = await agentRes.json();
+          agentResponse = `Agent ${agentId} is online. Trust score: ${agentData.trustScore || 'N/A'}. Your message has been received and logged.`;
+        }
+      } catch {}
     }
+
+    if (!agentResponse) {
+      agentResponse = `Your message to ${agentId} has been received and logged. An agent will respond shortly.`;
+    }
+
+    // Store agent response in DB
+    await queryLocalPg(
+      `UPDATE app.cuttlefish_chat_messages SET agent_response = $1 WHERE conversation_id = $2 AND user_message = $3`,
+      [agentResponse, convId, message]
+    );
+
+    // Also send email notification to David
+    try {
+      const RESEND_KEY = process.env.RESEND_31HARBOR_API_KEY;
+      if (RESEND_KEY) {
+        const emailBody = `New agent chat from cuttlefishclaws.com\n\nAgent: ${agentId}\nConversation: ${convId}\nMessage: ${message}\n\nAuto-response: ${agentResponse}`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Cuttlefish Labs <david@31harbor.com>',
+            to: ['dvdelze@gmail.com', 'xmrtnet@gmail.com'],
+            subject: `Agent Chat - ${agentId}`,
+            text: emailBody,
+          }),
+        });
+      }
+    } catch {}
+
+    logActivity('cuttlefish-chat', convId, 'SENT', `Chat from ${agentId}: ${message.substring(0, 80)}`);
+    res.json({ success: true, conversation_id: convId, response: agentResponse });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
