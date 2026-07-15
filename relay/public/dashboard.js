@@ -336,50 +336,64 @@
   setInterval(updateGrogQuota, 15000);
 
   // ── Task Pipeline ──
-  function updateTaskPipeline() {
-    var content = document.getElementById('task-pipeline-content');
-    if (!content) return;
-    apiFetch('/api/tasks/pipeline-summary', { signal: AbortSignal.timeout(25000) })
-      .then(function(r){return r.json();})
-      .then(function(d){
-        var html = '<div style="display:flex;gap:8px;margin-bottom:4px;">';
-        html += '<span>📋 <b style="color:#60a5fa;">' + d.total + '</b> total</span>';
-        html += '</div>';
-        // By stage
-        if (d.by_stage && d.by_stage.length > 0) {
-          html += '<div style="margin-bottom:3px;">';
-          d.by_stage.forEach(function(s) {
-            var stageColors = { 'PENDING': '#6b6b80', 'DISCUSS': '#fbbf24', 'PLAN': '#60a5fa', 'EXECUTE': '#a78bfa', 'VERIFY': '#4ade80', 'COMPLETED': '#34d399', 'BLOCKED': '#f87171' };
-            var color = stageColors[s.stage] || '#6b6b80';
-            html += '<span style="display:inline-block;margin-right:6px;font-size:0.55rem;"><span style="color:' + color + ';">●</span> ' + s.stage + ' <b style="color:#e0e0e0;">' + s.count + '</b></span>';
+  // ── Kanban Task Board ──
+    function updateTaskPipeline() {
+      var content = document.getElementById('task-pipeline-content');
+      if (!content) return;
+      apiFetch('/api/tasks/pipeline-summary', { signal: AbortSignal.timeout(25000) })
+        .then(function(r){return r.json();})
+        .then(function(d){
+          var tasks = d.tasks || d.recent || [];
+          var stages = ['PENDING','DISCUSS','PLAN','EXECUTE','VERIFY','INTEGRATE','COMPLETED'];
+          var stageColors = {'PENDING':'#6b6b80','DISCUSS':'#fbbf24','PLAN':'#60a5fa','EXECUTE':'#a78bfa','VERIFY':'#4ade80','INTEGRATE':'#34d399','COMPLETED':'#2dd4bf'};
+          var catColors = {'code':'#3b82f6','infrastructure':'#f97316','research':'#a855f7','documentation':'#06b6d4','testing':'#10b981','bug':'#ef4444','feature':'#8b5cf6','design':'#ec4899'};
+          // Organize tasks into stage buckets
+          var buckets = {};
+          stages.forEach(function(s){ buckets[s] = []; });
+          tasks.forEach(function(t) {
+            var stage = t.stage || 'PENDING';
+            if (stage === 'COMPLETED' || stage === 'DONE') stage = 'COMPLETED';
+            if (!buckets[stage]) buckets[stage] = [];
+            buckets[stage].push(t);
+          });
+          // Render
+          var html = '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-height:180px;">';
+          stages.forEach(function(stage) {
+            var col = buckets[stage] || [];
+            var color = stageColors[stage] || '#6b6b80';
+            html += '<div style="min-width:170px;max-width:170px;background:#0d0d18;border-radius:6px;border:1px solid #1a1a2a;padding:6px;flex-shrink:0;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #1e1e2e;">';
+            html += '<span style="color:'+color+';font-weight:600;font-size:0.6rem;text-transform:uppercase;">'+stage+'</span>';
+            html += '<span style="background:'+color+';color:#000;border-radius:8px;padding:0 5px;font-size:0.5rem;font-weight:700;">'+col.length+'</span>';
+            html += '</div>';
+            col.forEach(function(t) {
+              var pct = t.progress_percentage != null ? t.progress_percentage : 0;
+              var pctCls = pct >= 80 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#6b6b80';
+              var cat = t.category || '';
+              var catColor = catColors[cat.toLowerCase()] || '';
+              var assignee = t.assignee_agent_id || '';
+              var title = (t.title || '').slice(0, 45);
+              // Card
+              html += '<div style="background:#12121f;border-radius:4px;padding:5px;margin-bottom:4px;border:1px solid #1a1a2e;border-left:2px solid '+color+';">';
+              if (catColor) html += '<span style="display:inline-block;background:'+catColor+';color:#000;border-radius:3px;padding:0 4px;font-size:0.45rem;font-weight:600;margin-bottom:2px;">'+cat+'</span>';
+              html += '<div style="color:#d0d0e0;font-size:0.55rem;margin:1px 0;word-break:break-word;">'+title+'</div>';
+              // Progress bar
+              html += '<div style="height:3px;background:#1e1e2e;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
+              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#6b6b80;">';
+              if (assignee) html += '<span>👤 '+assignee.slice(0,8)+'</span>';
+              else html += '<span></span>';
+              html += '<span>'+pct+'%</span>';
+              html += '</div></div>';
+            });
+            if (!col.length) html += '<div style="color:#3a3a4a;font-size:0.5rem;text-align:center;padding:10px 0;">— empty —</div>';
+            html += '</div>';
           });
           html += '</div>';
-        }
-        // By assignee
-        if (d.by_assignee && d.by_assignee.length > 0) {
-          html += '<div style="border-top:1px solid #1e1e2e;padding-top:3px;margin-bottom:3px;">';
-          d.by_assignee.forEach(function(a) {
-            html += '<div style="display:flex;justify-content:space-between;font-size:0.55rem;"><span style="color:#8b8ba0;">' + (a.agent || 'unassigned') + '</span><span style="color:#e0e0e0;">' + a.count + '</span></div>';
-          });
-          html += '</div>';
-        }
-        // Recent tasks
-        if (d.recent && d.recent.length > 0) {
-          html += '<div style="border-top:1px solid #1e1e2e;padding-top:3px;">';
-          html += '<div style="font-size:0.5rem;color:#6b6b80;margin-bottom:2px;">Recent:</div>';
-          d.recent.slice(0, 5).forEach(function(t) {
-            var stageColors = { 'PENDING': '#6b6b80', 'DISCUSS': '#fbbf24', 'PLAN': '#60a5fa', 'EXECUTE': '#a78bfa', 'VERIFY': '#4ade80', 'COMPLETED': '#34d399', 'BLOCKED': '#f87171' };
-            var color = stageColors[t.stage] || '#6b6b80';
-            var progress = t.progress_percentage != null ? ' [' + t.progress_percentage + '%]' : '';
-            html += '<div style="font-size:0.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="color:' + color + ';">●</span> <span style="color:#8b8ba0;">' + (t.assignee_agent_id || '?') + '</span> <span style="color:#e0e0e0;">' + (t.title || '').slice(0, 40) + '</span>' + progress + '</div>';
-          });
-          html += '</div>';
-        }
-        content.innerHTML = html;
-      }).catch(function(){
-        content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
-      });
-  }
+          content.innerHTML = html;
+        }).catch(function(){
+          content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
+        });
+    }
   updateTaskPipeline();
   setInterval(updateTaskPipeline, 15000);
 
