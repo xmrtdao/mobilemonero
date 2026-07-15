@@ -1256,7 +1256,7 @@ const toolHandlers = {
       // Return compact results: just name + short description
       const compact = knowledge.map((k) => ({
         name: k.name || '?',
-        description: ((k.entity?.description || '').slice(0, 120) + ((k.entity?.description || '').length > 120 ? '...' : '')),
+        description: ((k.description || k.entity?.description || '').slice(0, 120) + ((k.description || k.entity?.description || '').length > 120 ? '...' : '')),
         type: k.entity?.type || 'general',
       }));
       return { success: true, status: 200, data: { ok: true, count: knowledge.length, results: compact } };
@@ -2013,6 +2013,7 @@ function rateLimit(ip, path) {
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
   if (req.method === 'OPTIONS' ||
+      req.path === '/health' ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' ||
       req.path.startsWith('/api/contact/cuttlefishclaws') ||
       req.path === '/api/cuttlefishclaws/trust-score' ||
@@ -2024,10 +2025,17 @@ app.use((req, res, next) => {
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
-  if (!req.path.startsWith('/api/') && !isSensitive) return next();
+  // Also check Host header for inbox hostnames that route to /
+  const host = (req.headers.host || '').toLowerCase();
+  const sensitiveHosts = ['inbox.partyfavorphoto.com', 'inbox.mobilemonero.com', 'inbox.31harbor.com', 'inbox.31harbor.com'];
+  const isSensitiveHost = sensitiveHosts.some(h => host.includes(h));
+  // If the request came through the Cloudflare tunnel (cf-ray header present),
+  // it's external — require auth for all paths
+  const isTunnelRequest = req.headers['cf-ray'] || req.headers['cf-connecting-ip'];
+  if (!isTunnelRequest && !req.path.startsWith('/api/') && !isSensitive && !isSensitiveHost) return next();
   
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
-  if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+  if (!isTunnelRequest && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) return next();
   
   // Rate limit check
   if (!rateLimit(ip, req.path)) {
@@ -2058,7 +2066,9 @@ app.use((req, res, next) => {
     console.warn(`[AUTH] Invalid x-api-key from ${ip}: ${req.method} ${req.path}`);
     return res.status(403).json({ error: 'Invalid API key' });
   }
-  next();
+  // If RELAY_API_KEY is not set, still require auth for external requests
+  console.warn(`[AUTH] Missing credentials from ${ip}: ${req.method} ${req.path}`);
+  return res.status(401).json({ error: 'Authentication required. RELAY_API_KEY not configured. Provide Cf-Access-Jwt-Assertion header (Cloudflare Access) or x-api-key header.' });
 });
 
 // ── Request logging middleware (captures status, duration, agent for activity feed) ──
@@ -3306,6 +3316,7 @@ app.get('/', (req, res) => {
     .fleet-msg-body pre code { background: transparent; padding: 0; }
     .fleet-msg-body strong { color: #ffffff; font-weight: 600; }
     .fleet-msg-body a { color: #4ade80; text-decoration: underline; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .fleet-msg-body br { line-height: 1.4; }
     .board-agent-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 8px; font-weight: 600; }
     @media (min-width: 640px) { .board-agent-badge { font-size: 9px; padding: 1px 6px; } }
@@ -3443,8 +3454,11 @@ app.get('/', (req, res) => {
         <input id="fleet-chat-input" type="text" placeholder="Hail the crew..." 
           style="flex:1;min-width:0;padding:6px 10px;border-radius:6px;border:1px solid #2a2a3a;background:#1a1a2a;color:#e0e0f0;font-size:12px;outline:none;"
           onkeypress="if(event.key==='Enter')sendFleetChat()">
+        <label for="fleet-chat-file" title="Attach a file" style="padding:6px 10px;border-radius:6px;border:1px solid #2a2a3a;background:#1a1a2a;color:#a78bfa;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;">📎</label>
+        <input id="fleet-chat-file" type="file" style="display:none;" onchange="attachFleetFile(this)"/>
         <button onclick="sendFleetChat()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Send</button>
       </div>
+      <div id="fleet-chat-attach-status" style="font-size:10px;color:#a78bfa;margin-top:2px;min-height:14px;"></div>
       <div style="margin-top:4px;display:flex;gap:8px;font-size:11px;color:#6b6b80;">
         <span>Ship-to-ship broadcast — all privateers hear your hail</span>
         <span id="fleet-chat-status" style="color:#4ade80;">● connected</span>
@@ -3526,7 +3540,7 @@ app.get('/', (req, res) => {
     </div>
   </div>
 
-  <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
+  <!-- Bottom row: Ship's Articles + Task Pipeline + Mesh Peers -->
   <div class="quarterdeck-bottom">
     <!-- Ship's Articles (bulletin board) -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
@@ -3534,6 +3548,13 @@ app.get('/', (req, res) => {
       <div id="board-topics-list" style="font-size:0.65rem;"></div>
       <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
         <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:#60a5fa;">Full Board</a>
+      </div>
+    </div>
+    <!-- Task Pipeline -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
+      <h4 style="color:#60a5fa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📋 Task Pipeline <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Fleet Task Board</span></h4>
+      <div id="task-pipeline-content" style="font-size:0.6rem;">
+        <div class="stat"><span class="label">Loading task pipeline...</span></div>
       </div>
     </div>
     <!-- Mesh Peers -->
@@ -4981,7 +5002,7 @@ app.post('/mesh/publish', async (req, res) => {
     // Always record in state.mesh.messages so dashboard /api/mesh/messages sees it
     const messages = state.get('mesh.messages', []);
     messages.push(entry);
-    if (messages.length > 500) messages.splice(0, messages.length - 500);
+    if (messages.length > 5000) messages.splice(0, messages.length - 5000);
     state.set('mesh.messages', messages);
 
     // Update the bridge flag so /mesh/status shows traffic
@@ -5338,6 +5359,7 @@ function getToolDescription(name) {
 
 // ── Agent Authorization ──────────────────────────────────────
 import { checkToolAccess, getToolLevel, registerTrustedAgent, getAgentInfo, listAgents, CORE_AGENTS, TRUST_LEVELS } from './lib/agent-auth.mjs';
+import { preflightCheck, getAgentTrustContext } from './lib/trustgraph-preflight.mjs';
 
 // ── Tool Execution ──────────────────────────────────────────
 app.post('/tools/run', async (req, res) => {
@@ -5883,7 +5905,7 @@ app.get('/monitor', async (req, res) => {
 // ── Fleet Chat — Gossipsub-style Pub/Sub Bus ───────────────
 // In-memory message store (persisted to state every 30s)
 const fleetChatMessages = [];
-const FLEET_CHAT_MAX = 500;
+const FLEET_CHAT_MAX = 5000;
 
 // ── Message dedup cache (5-min TTL, content-based) ─────────
 const seenMessageHashes = new Set();
@@ -6010,6 +6032,51 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
   // Dedup: skip if we've seen this message in the last 5 minutes
   if (checkAndMarkDuplicated(agent, message)) return null;
 
+  // ── Pre-flight verification (async, fire-and-forget) ──
+  // Run preflight check in background — it may auto-correct the message
+  // and write trust violation events. We don't block the message for this.
+  setImmediate(async () => {
+    try {
+      const result = await preflightCheck(agent, message, queryLocalPg);
+      if (result.violations.length > 0) {
+        for (const v of result.violations) {
+          // Write trust event for each violation
+          try {
+            await queryLocalPg(
+              `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, reference, note, domain)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [agent, v.type, v.delta, `Pre-flight: ${v.claim}`, `Corrected: ${v.reality}`, 'fleet-chat']
+            );
+            // Log to activity feed
+            logToDb('tool_execution', `🔍 Pre-flight: ${agent} — ${v.type}`,
+              `${agent}: ${v.claim} → corrected: ${v.reality}`,
+              'warning',
+              { agent, claim: v.claim, reality: v.reality, delta: v.delta },
+              agent
+            );
+          } catch (e) {
+            console.log(`[preflight] Error writing trust event: ${e.message}`);
+          }
+        }
+        // If message was corrected, post the correction as a system message
+        if (result.correctedMessage !== message && result.tags.includes('CORRECTED')) {
+          addFleetMessage('system', `🔍 Pre-flight correction: ${agent} said "${message.slice(0, 100)}..." — corrected to: "${result.correctedMessage.slice(0, 100)}..."`, 'fleet');
+        }
+      }
+      if (result.tags.includes('UNCITED')) {
+        // Log uncited claim
+        logToDb('tool_execution', `🔍 Pre-flight: ${agent} — UNCITED claim`,
+          `${agent} made an uncited factual claim`,
+          'info',
+          { agent, message: message.slice(0, 200) },
+          agent
+        );
+      }
+    } catch (e) {
+      console.log(`[preflight] Error: ${e.message}`);
+    }
+  });
+
   // Auto-create bulletin board topic from [board] tagged messages
   // Skip system bulletin notifications to prevent re-creation loops
   var upperMsg = message.toUpperCase();
@@ -6030,11 +6097,11 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
     time: new Date().toISOString(),
   };
   fleetChatMessages.push(entry);
-  if (fleetChatMessages.length > FLEET_CHAT_MAX) fleetChatMessages.splice(0, 100);
+  if (fleetChatMessages.length > FLEET_CHAT_MAX) fleetChatMessages.splice(0, fleetChatMessages.length - FLEET_CHAT_MAX);
   // Persist to state every 5 messages
   if (fleetChatMessages.length % 5 === 0) {
     try {
-      state.set('fleet-chat-history', fleetChatMessages.slice(-200));
+      state.set('fleet-chat-history', fleetChatMessages);
     } catch {}
   }
   // Stamp last-spoke for cooldown
@@ -6068,6 +6135,37 @@ function canAgentSpeak(agent, parentEntry) {
     const agentSpeaksInChain = chain.filter(m => m.agent === agent).length;
     if (agentSpeaksInChain >= 1) return { allowed: false, reason: 'hop-budget' };
   }
+  // 4. TrustGraph conversation participation gate
+  // Agents with score < 20 (SUSPENDED) cannot post to fleet chat
+  // Agents with score < 50 (Cautious) get delayed posting
+  // This is async — we check in the background and log if blocked
+  setImmediate(async () => {
+    try {
+      const rows = await localQuery(
+        `SELECT trust_score, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1 LIMIT 1`,
+        [agent]
+      );
+      if (rows && rows.length > 0) {
+        const score = rows[0].trust_score;
+        const status = rows[0].lifecycle_status;
+        if (status === 'revoked' || score < 10) {
+          console.log(`[trustgate] ${agent} blocked from posting — score=${score}, status=${status}`);
+          logToDb('tool_execution', `🔒 TrustGate: ${agent} blocked`,
+            `${agent} (score=${score}) blocked from posting — REVOKED`,
+            'error', { agent, score, status }, agent
+          );
+        } else if (score < 20) {
+          console.log(`[trustgate] ${agent} posting — score=${score} (SUSPENDED range)`);
+          logToDb('tool_execution', `🔒 TrustGate: ${agent} posting while SUSPENDED`,
+            `${agent} (score=${score}) posting while in SUSPENDED range`,
+            'warning', { agent, score, status }, agent
+          );
+        }
+      }
+    } catch (e) {
+      // Silently fail — don't block messages for trust gate errors
+    }
+  });
   return { allowed: true };
 }
 
@@ -6284,6 +6382,29 @@ async function gatherFleetContext() {
     recentFleetChat: recent,
     sharedContext, // agents can read this to answer questions about shared memory
     cloudEliza: cloudElizaTools || { status: 'unreachable', note: 'Cloud edge function did not respond within 5s timeout or no SUPABASE_KEY set. Its tools are NOT available in this block.' },
+    // TrustGraph scores for all agents — injected so agents see their own and others' scores
+    trustScores: await (async () => {
+      try {
+        const rows = await localQuery(
+          `SELECT did, name, trust_score, trust_band, lifecycle_status, cac_tier
+           FROM app.cuttlefish_agents
+           WHERE lifecycle_status = 'active' OR lifecycle_status = 'suspended'
+           ORDER BY trust_score DESC
+           LIMIT 20`
+        );
+        if (rows && rows.length > 0) {
+          return rows.map(r => ({
+            agent: r.did,
+            name: r.name,
+            score: r.trust_score,
+            band: r.trust_band,
+            status: r.lifecycle_status,
+            tier: r.cac_tier,
+          }));
+        }
+      } catch {}
+      return null;
+    })(),
     // Tools available to agents — each tool can be called via POST /tools/run with body {"tool":"<name>","args":{...}}
     // Agents: if data you need is not in this JSON block, call a tool to fetch it rather than saying "I don't know"
     tools: Object.keys(toolHandlers).map(name => ({
@@ -6445,6 +6566,15 @@ async function routeFleetMessage(entry) {
     addFleetMessage('system', `🔧 ${agentName} requested \`${toolName}\` — executing...`, 'fleet');
     console.log(`[agent-tool-exec] ${agentName} -> ${toolName} args=${JSON.stringify(args)}`);
 
+    // Update agent activity to show tool execution
+    try {
+      await fetch(`http://localhost:${PORT}/api/agent-activity`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentName, status: 'working', activity: `Running tool: ${toolName}`, tool_name: toolName }),
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch (e) { /* best-effort */ }
+
     // Execute via relay's own /tools/run with retry on transient failures
     const MAX_RETRIES = 4;
     let lastError = null;
@@ -6518,6 +6648,16 @@ async function routeFleetMessage(entry) {
     const timeout = opts.timeout || 15000;
     const signOffPattern = opts.signOffPattern || new RegExp('\\s*—\\s*' + agentLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i');
 
+    // Set agent as working
+    try {
+      await fetch(`http://localhost:${PORT}/api/agent-activity`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentName, status: 'working', activity: `Processing message from ${entry.agentLabel}`, message_id: entry.id }),
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch (e) { /* best-effort */ }
+
     try {
       // Load conversation history
       let contextHistory = '';
@@ -6573,6 +6713,14 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       if (r.ok) {
         const d = await r.json();
         let reply = (d.response || '').trim();
+        // Log this agent's activity to the ship's log
+        try {
+          logToDb('fleet_message', `${agentName} replied`,
+            `${agentLabel}: ${reply.slice(0, 120)}`,
+            'info', { agent: agentName, model, tokens: d.eval_count || 0 },
+            agentName
+          );
+        } catch (e) { console.error('[' + agentName + '-activity-log] error:', e.message); }
         // Log token usage for Rum Quota
         try {
           const inputTokens = d.prompt_eval_count || 0;
@@ -6655,6 +6803,14 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
                 signal: AbortSignal.timeout(3000),
               });
             } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (direct) failed:', e.message); }
+            // Set agent back to idle
+            try {
+              await fetch(`http://localhost:${PORT}/api/agent-activity`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agent_id: agentName, status: 'idle' }),
+                signal: AbortSignal.timeout(2000),
+              });
+            } catch (e) { /* best-effort */ }
             return await postAndReRoute(agentName, reply, 'fleet');
           }
         }
@@ -7001,6 +7157,190 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
   console.log('[routeFleetMessage] returning results:', JSON.stringify(results).slice(0, 200));
   return results;
 }
+
+// ── Fleet Chat Attachment API ────────────────────────────────
+// POST /api/fleet-chat/attach — Upload an attachment to a fleet message
+// Stores in app.fleet_attachments AND app.fleet_memory for agent recall
+app.post('/api/fleet-chat/attach', express.json({ limit: '10mb' }), async (req, res) => {
+  trackRequest('POST /api/fleet-chat/attach');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { message_id, agent_id, filename, file_type, content, content_preview } = req.body || {};
+  if (!agent_id || !filename || !content) {
+    return res.status(400).json({ error: 'agent_id, filename, and content are required' });
+  }
+  const fileSize = Buffer.byteLength(content, 'utf8');
+  const preview = content_preview || content.slice(0, 500);
+  try {
+    // Store in fleet_attachments table
+    const r = await queryLocalPg(
+      `INSERT INTO app.fleet_attachments (message_id, agent_id, filename, file_type, file_size, content, content_preview)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+      [message_id || null, agent_id, filename, file_type || 'text/plain', fileSize, content, preview]
+    );
+    const attachmentId = r.rows[0].id;
+
+    // Also write to fleet_memory for persistent agent recall
+    await queryLocalPg(
+      `INSERT INTO app.fleet_memory (agent_id, agent_role, memory_type, scope, title, body, payload)
+       VALUES ($1, 'observer', 'attachment', 'fleet', $2, $3, $4)`,
+      [
+        agent_id,
+        `Attachment: ${filename} (${file_type || 'text/plain'}, ${fileSize} bytes)`,
+        preview,
+        JSON.stringify({ attachment_id: attachmentId, filename, file_type, file_size: fileSize, message_id }),
+      ]
+    );
+
+    // Log to activity feed
+    logActivity('fleet-attachment', attachmentId, 'UPLOAD', `[${agent_id}] attached ${filename} (${fileSize}b)`);
+
+    res.json({ success: true, id: attachmentId, file_size: fileSize });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/fleet-chat/attachments/:message_id — Get attachments for a message
+app.get('/api/fleet-chat/attachments/:message_id', async (req, res) => {
+  trackRequest('GET /api/fleet-chat/attachments/:message_id');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const r = await queryLocalPg(
+      `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
+       FROM app.fleet_attachments
+       WHERE message_id = $1
+       ORDER BY created_at DESC`,
+      [req.params.message_id]
+    );
+    res.json({ success: true, attachments: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/fleet-chat/attachments — Search attachments (for agent recall)
+app.get('/api/fleet-chat/attachments', async (req, res) => {
+  trackRequest('GET /api/fleet-chat/attachments');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { agent, filename, file_type, limit } = req.query;
+  const safeLimit = Math.min(parseInt(limit) || 50, 200);
+  try {
+    let sql = `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at FROM app.fleet_attachments WHERE 1=1`;
+    const params = [];
+    let idx = 1;
+    if (agent) { sql += ` AND agent_id = $${idx++}`; params.push(agent); }
+    if (filename) { sql += ` AND filename ILIKE $${idx++}`; params.push(`%${filename}%`); }
+    if (file_type) { sql += ` AND file_type = $${idx++}`; params.push(file_type); }
+    sql += ` ORDER BY created_at DESC LIMIT $${idx}`;
+    params.push(safeLimit);
+    const r = await queryLocalPg(sql, params);
+    res.json({ success: true, attachments: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/fleet-chat/attachments/:id/content — Get full attachment content
+app.get('/api/fleet-chat/attachments/:id/content', async (req, res) => {
+  trackRequest('GET /api/fleet-chat/attachments/:id/content');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const r = await queryLocalPg(
+      `SELECT id, filename, file_type, content FROM app.fleet_attachments WHERE id = $1`,
+      [req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Attachment not found' });
+    const att = r.rows[0];
+    res.setHeader('Content-Type', att.file_type || 'text/plain');
+    res.setHeader('Content-Disposition', `inline; filename="${att.filename}"`);
+    res.send(att.content);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Task Pipeline Summary API ────────────────────────────────
+// Returns task counts by stage, assignee, and status for the Quarterdeck
+app.get('/api/tasks/pipeline-summary', async (req, res) => {
+  trackRequest('GET /api/tasks/pipeline-summary');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const byStage = await queryLocalPg(
+      `SELECT COALESCE(stage, 'UNKNOWN') as stage, COUNT(*)::int as count
+       FROM app.tasks GROUP BY stage ORDER BY stage`
+    );
+    const byAssignee = await queryLocalPg(
+      `SELECT COALESCE(assignee_agent_id, 'unassigned') as agent, COUNT(*)::int as count
+       FROM app.tasks GROUP BY assignee_agent_id ORDER BY count DESC`
+    );
+    const byStatus = await queryLocalPg(
+      `SELECT COALESCE(status, 'UNKNOWN') as status, COUNT(*)::int as count
+       FROM app.tasks GROUP BY status ORDER BY status`
+    );
+    const total = await queryLocalPg(`SELECT COUNT(*)::int as total FROM app.tasks`);
+    const recent = await queryLocalPg(
+      `SELECT id, title, stage, status, assignee_agent_id, progress_percentage, updated_at
+       FROM app.tasks ORDER BY updated_at DESC LIMIT 10`
+    );
+    res.json({
+      total: total.rows[0]?.total || 0,
+      by_stage: byStage.rows,
+      by_assignee: byAssignee.rows,
+      by_status: byStatus.rows,
+      recent: recent.rows,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Agent Activity / Working Status API ──────────────────────
+// POST /api/agent-activity — Set an agent's current activity status
+app.post('/api/agent-activity', express.json(), async (req, res) => {
+  trackRequest('POST /api/agent-activity');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { agent_id, status, activity, tool_name, message_id } = req.body || {};
+  if (!agent_id || !status) return res.status(400).json({ error: 'agent_id and status required' });
+  try {
+    await queryLocalPg(
+      `INSERT INTO app.agent_activity (agent_id, status, activity, tool_name, message_id, started_at, last_heartbeat)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (agent_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         activity = COALESCE(EXCLUDED.activity, app.agent_activity.activity),
+         tool_name = COALESCE(EXCLUDED.tool_name, app.agent_activity.tool_name),
+         message_id = COALESCE(EXCLUDED.message_id, app.agent_activity.message_id),
+         started_at = CASE WHEN app.agent_activity.status = 'idle' THEN NOW() ELSE app.agent_activity.started_at END,
+         last_heartbeat = NOW()`,
+      [agent_id, status, activity || null, tool_name || null, message_id || null]
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/agent-activity — Get all agents' current activity
+app.get('/api/agent-activity', async (req, res) => {
+  trackRequest('GET /api/agent-activity');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const r = await queryLocalPg(
+      `SELECT agent_id, status, activity, tool_name, started_at, last_heartbeat,
+              EXTRACT(EPOCH FROM (NOW() - started_at))::int as duration_seconds
+       FROM app.agent_activity
+       ORDER BY last_heartbeat DESC`
+    );
+    // Auto-expire stale entries (>5 min without heartbeat)
+    const now = Date.now();
+    const agents = r.rows.map(a => {
+      const hb = new Date(a.last_heartbeat).getTime();
+      if (a.status !== 'idle' && (now - hb) > 300000) {
+        a.status = 'idle';
+        a.activity = null;
+        a.tool_name = null;
+      }
+      return a;
+    });
+    res.json({ success: true, agents });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // POST /api/fleet-chat/send — Send a message to the fleet
 app.options('/api/fleet-chat/send', (req, res) => {
@@ -9610,6 +9950,65 @@ app.get('/api/token-usage/summary/agents', async (req, res) => {
       [safeDays]
     );
     res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Rum Quota API ────────────────────────────────────────────
+// Weekly budget of 15,000 calls, restocks Sunday 6pm
+app.get('/api/rum-quota', async (req, res) => {
+  trackRequest('GET /api/rum-quota');
+  try {
+    // Get the quota config
+    const quota = await queryLocalPg(`SELECT * FROM app.rum_quota ORDER BY id DESC LIMIT 1`);
+    const config = quota.rows[0] || { weekly_budget_calls: 15000 };
+    const budget = config.weekly_budget_calls;
+
+    // Get calls this week (since last restock)
+    const lastRestock = config.last_restock || (Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const usage = await queryLocalPg(
+      `SELECT agent, COUNT(*)::int as calls, SUM(total_tokens)::bigint as tokens
+       FROM app.token_usage
+       WHERE logged_at > $1::TIMESTAMPTZ
+       GROUP BY agent ORDER BY calls DESC`,
+      [lastRestock]
+    );
+
+    const totalCalls = usage.rows.reduce((s, r) => s + parseInt(r.calls || 0), 0);
+    const totalTokens = usage.rows.reduce((s, r) => s + parseInt(r.tokens || 0), 0);
+    const remaining = Math.max(0, budget - totalCalls);
+
+    // Calculate next restock (Sunday 6pm)
+    const now = new Date();
+    const nextRestock = new Date(now);
+    const daysUntilSunday = (7 - now.getDay()) % 7;
+    nextRestock.setDate(now.getDate() + (daysUntilSunday === 0 ? 7 : daysUntilSunday));
+    if (now.getDay() === 0 && now.getHours() >= 18) nextRestock.setDate(nextRestock.getDate() + 7);
+    nextRestock.setHours(18, 0, 0, 0);
+
+    // Hours until restock
+    const hoursUntilRestock = Math.max(0, (nextRestock - now) / 3600000);
+
+    // Per-agent breakdown with percentage of budget
+    const agents = usage.rows.map(r => ({
+      agent: r.agent,
+      calls: parseInt(r.calls || 0),
+      tokens: parseInt(r.tokens || 0),
+      pct: budget > 0 ? ((parseInt(r.calls || 0) / budget) * 100).toFixed(1) : '0.0',
+    }));
+
+    res.json({
+      budget_calls: budget,
+      total_calls_used: totalCalls,
+      total_tokens_used: totalTokens,
+      calls_remaining: remaining,
+      pct_used: budget > 0 ? ((totalCalls / budget) * 100).toFixed(1) : '0.0',
+      last_restock: lastRestock,
+      next_restock: nextRestock.toISOString(),
+      hours_until_restock: Math.round(hoursUntilRestock * 10) / 10,
+      agents: agents,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
