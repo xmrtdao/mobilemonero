@@ -548,6 +548,33 @@ async function loadAgentExperienceCard() {
 setInterval(loadAgentExperienceCard, 60000);
 loadAgentExperienceCard();
 
+  // ── Fleet Chat Message Feed ──
+  function loadFleetChat() {
+    var msgsEl = document.getElementById('fleet-chat-msgs');
+    if (!msgsEl) return;
+    apiFetch('/api/fleet-chat/messages?limit=50&channel=all', { signal: AbortSignal.timeout(8000) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var msgs = d.messages || [];
+        if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
+        msgsEl.innerHTML = msgs.slice(-100).map(function(m){
+          var name = m.agentLabel || m.agent || 'Unknown';
+          var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
+          var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          var cls = 'color:#a0a0b0;';
+          if (m.agent === 'hermes') cls = 'color:#ff6b35;font-weight:500;';
+          else if (m.agent === 'eliza') cls = 'color:#a78bfa;font-weight:500;';
+          else if (m.agent === 'vex') cls = 'color:#4ade80;font-weight:500;';
+          else if (m.agent === 'alice') cls = 'color:#60a5fa;font-weight:500;';
+          return '<div style="margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a2a;"><span style="'+cls+'font-size:11px;">'+name+'</span> <span style="color:#6b6b80;font-size:10px;float:right;">'+time+'</span><br/><span style="color:#c0c0d0;font-size:12px;word-break:break-word;">'+body+'</span></div>';
+        }).join('');
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+      })
+      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
+  }
+  setInterval(loadFleetChat, 3000);
+  loadFleetChat();
+
   setInterval(loadFleetAgents, 15000);
 
   // Load mesh peers from peer connector
