@@ -3540,7 +3540,15 @@ app.get('/', (req, res) => {
     </div>
   </div>
 
-  <!-- Bottom row: Ship's Articles + Task Pipeline + Mesh Peers -->
+    <!-- Full-width kanban task board row -->
+    <div style="grid-column:1/-1;margin-bottom:10px;">
+      <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:340px;overflow:hidden;">
+        <h4 style="color:#60a5fa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📋 Task Pipeline <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Fleet Task Board</span></h4>
+        <div id="task-pipeline-content" style="height:290px;overflow-y:auto;font-size:0.55rem;"></div>
+      </div>
+    </div>
+
+    <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
   <div class="quarterdeck-bottom">
     <!-- Ship's Articles (bulletin board) -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
@@ -3550,12 +3558,7 @@ app.get('/', (req, res) => {
         <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:#60a5fa;">Full Board</a>
       </div>
     </div>
-    <!-- Task Pipeline kanban -->
-        <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:260px;overflow:hidden;">
-          <h4 style="color:#60a5fa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📋 Task Pipeline <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Fleet Task Board</span></h4>
-          <div id="task-pipeline-content" style="height:210px;overflow-y:auto;font-size:0.55rem;"></div>
-        </div>
-    <!-- Mesh Peers -->
+        <!-- Mesh Peers -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
       <h4 style="color:#4ade80;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🌐 Mesh Peers <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Gossipsub Network</span></h4>
       <div id="qds-mesh-peers" style="font-size:0.6rem;max-height:80px;overflow-y:auto;">
