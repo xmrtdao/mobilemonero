@@ -1819,10 +1819,72 @@ const toolHandlers = {
       });
       return await res.json();
     } catch (err) { return { success: false, error: err.message }; }
-  },
-};
+      },
 
-async function defaultHandler(task) {
+      'recall_context': async (args) => {
+        const agentId = args?.agent_id || args?.agentId || args?.user_id || '';
+        const topic = args?.topic || args?.query || args?.q || '';
+        const limit = Math.min(parseInt(args?.limit || '15', 10), 50);
+        try {
+          const results = { memories: [], knowledge: [], context: [] };
+          if (topic) {
+            const memRows = await queryLocalPg(
+              `SELECT agent_id, memory_type, title, body, payload, created_at
+               FROM app.fleet_memory
+               WHERE to_tsvector('english', title || ' ' || body) @@ plainto_tsquery('english', $1)
+                 AND ($2 = '' OR agent_id = $2)
+               ORDER BY created_at DESC LIMIT $3`,
+              [topic, agentId, limit]
+            );
+            results.memories = (memRows.rows || []).map(r => ({
+              agent: r.agent_id, type: r.memory_type, title: r.title,
+              body: (r.body||'').slice(0,500), time: r.created_at
+            }));
+          }
+          if (topic) {
+            const enc = encodeURIComponent(topic);
+            const restUrl = `http://127.0.0.1:54321/rest/v1/knowledge_entities?select=name,entity,created_at&order=created_at.desc&limit=${limit}&or=(name.ilike.*${enc}*,entity->>description.ilike.*${enc}*,entity->>content.ilike.*${enc}*)`;
+            const kRes = await fetch(restUrl, { headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' }, signal: AbortSignal.timeout(5000) });
+            if (kRes.ok) {
+              const kData = await kRes.json();
+              results.knowledge = (Array.isArray(kData) ? kData : []).map(r => ({
+                name: r.name, entity: typeof r.entity === 'string' ? JSON.parse(r.entity) : r.entity, time: r.created_at
+              }));
+            }
+          }
+          if (topic) {
+            const ctxRows = await queryLocalPg(
+              `SELECT context_key, context_type, value, description, last_updated_by, updated_at
+               FROM public.shared_context
+               WHERE to_tsvector('english', context_key || ' ' || COALESCE(description,'')) @@ plainto_tsquery('english', $1)
+               ORDER BY updated_at DESC LIMIT $2`,
+              [topic, limit]
+            );
+            results.context = (ctxRows.rows || []).map(r => ({
+              key: r.context_key, type: r.context_type,
+              value: typeof r.value === 'string' ? r.value.slice(0,500) : r.value,
+              description: r.description, updated_by: r.last_updated_by, time: r.updated_at
+            }));
+          }
+          if (!topic && agentId) {
+            const recentRows = await queryLocalPg(
+              `SELECT agent_id, memory_type, title, body, created_at
+               FROM app.fleet_memory WHERE agent_id = $1
+               ORDER BY created_at DESC LIMIT $2`,
+              [agentId, limit]
+            );
+            results.memories = (recentRows.rows || []).map(r => ({
+              agent: r.agent_id, type: r.memory_type, title: r.title,
+              body: (r.body||'').slice(0,500), time: r.created_at
+            }));
+          }
+          return { success: true, agent_id: agentId || null, topic: topic || null, results };
+        } catch (err) { return { success: false, error: err.message }; }
+      },
+
+    };
+
+    async function defaultHandler(task) {
   logActivity('handler', task.id, 'FALLBACK', `No specific handler for "${task.title}"`);
   return {
     status: 'unhandled',
@@ -5305,6 +5367,7 @@ function getToolDescription(name) {
     'db-query': 'Run a raw SQL query against the local Postgres database (read-only; use SELECT only)',
     'db-rest': 'Query any database table via the local-sb REST API using path and optional method/body',
     'shared-context': 'Read or write shared context memory visible to all agents (action: read|write|search|recall_by_agent|recall_by_topic, key, value, search_term, agent_id, topic)',
+    'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',

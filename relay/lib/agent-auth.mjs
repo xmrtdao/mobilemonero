@@ -214,6 +214,7 @@ export const TOOL_SECURITY = {
   'db-query': TRUST_LEVELS.TRUSTED,
   'db-rest': TRUST_LEVELS.TRUSTED,
   'shared-context': TRUST_LEVELS.TRUSTED,
+  'recall_context': TRUST_LEVELS.TRUSTED,
   'agent-profile': TRUST_LEVELS.TRUSTED,
 
   // ── PUBLIC (anyone) ──
