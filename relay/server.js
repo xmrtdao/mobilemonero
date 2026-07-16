@@ -1822,8 +1822,8 @@ const toolHandlers = {
       },
 
       'recall_context': async (args) => {
-        const agentId = args?.agent_id || args?.agentId || args?.user_id || '';
-        const topic = args?.topic || args?.query || args?.q || '';
+              const agentId = args?.agent_id || args?.agentId || args?.user_id || '';
+              const topic = args?.topic || args?.query || args?.q || '';
         const limit = Math.min(parseInt(args?.limit || '15', 10), 50);
         try {
           const results = { memories: [], knowledge: [], context: [] };
@@ -1880,11 +1880,95 @@ const toolHandlers = {
           }
           return { success: true, agent_id: agentId || null, topic: topic || null, results };
         } catch (err) { return { success: false, error: err.message }; }
-      },
+              },
 
-    };
+              'knowledge-dedup': async (args) => {
+                      const dryRun = args?.dry_run !== false;
+                      const minSimilarity = args?.min_similarity || 0.4;
+                      try {
+                        await queryLocalPg('SET statement_timeout TO 10000');
+                                                const dups = await queryLocalPg(
+                                            `SELECT a.id as id_a, b.id as id_b, a.name as name_a, b.name as name_b,
+                            similarity(a.name, b.name) as sim
+                     FROM app.knowledge_entities a
+                     JOIN app.knowledge_entities b ON a.id < b.id
+                       AND similarity(a.name, b.name) > $1
+                     ORDER BY sim DESC`,
+                    [minSimilarity]
+                  );
+                  const groups = [];
+                  const seen = new Set();
+                  (dups.rows || []).forEach(function(r) {
+                    if (seen.has(r.id_a) || seen.has(r.id_b)) return;
+                    seen.add(r.id_a); seen.add(r.id_b);
+                    groups.push({ id_a: r.id_a, id_b: r.id_b, name_a: r.name_a, name_b: r.name_b, similarity: Math.round(r.sim * 100) + '%' });
+                  });
+                  if (dryRun) {
+                    return { success: true, dry_run: true, duplicate_groups: groups, total: groups.length };
+                  }
+                  // Merge duplicates: keep the one with more content, delete the other
+                  let merged = 0, deleted = 0;
+                  for (const g of groups) {
+                    const a = await queryLocalPg(`SELECT name, entity FROM app.knowledge_entities WHERE id = $1`, [g.id_a]);
+                    const b = await queryLocalPg(`SELECT name, entity FROM app.knowledge_entities WHERE id = $1`, [g.id_b]);
+                    const rowA = a.rows[0], rowB = b.rows[0];
+                    if (!rowA || !rowB) continue;
+                    const lenA = JSON.stringify(rowA.entity).length;
+                    const lenB = JSON.stringify(rowB.entity).length;
+                    const keepId = lenA >= lenB ? g.id_a : g.id_b;
+                    const delId = lenA >= lenB ? g.id_b : g.id_a;
+                    await queryLocalPg(`DELETE FROM app.knowledge_entities WHERE id = $1`, [delId]);
+                    deleted++;
+                    merged++;
+                  }
+                  return { success: true, dry_run: false, groups_merged: groups.length, deleted, merged };
+                } catch (err) { return { success: false, error: err.message }; }
+                              },
 
-    async function defaultHandler(task) {
+                              'task-dedup': async (args) => {
+                                const dryRun = args?.dry_run !== false;
+                                try {
+                                  await queryLocalPg('SET statement_timeout TO 10000');
+                                  const dups = await queryLocalPg(
+                                    `SELECT a.id as id_a, b.id as id_b, a.title as title_a, b.title as title_b,
+                                            a.status as status_a, b.status as status_b,
+                                            a.progress_percentage as pct_a, b.progress_percentage as pct_b
+                                     FROM app.tasks a
+                                     JOIN app.tasks b ON a.id < b.id
+                                       AND (a.title = b.title OR similarity(a.title, b.title) > 0.6)
+                                     ORDER BY a.title`
+                                  );
+                                  const groups = [];
+                                  const seen = new Set();
+                                  (dups.rows || []).forEach(function(r) {
+                                    if (seen.has(r.id_a) || seen.has(r.id_b)) return;
+                                    seen.add(r.id_a); seen.add(r.id_b);
+                                    groups.push({
+                                      id_a: r.id_a, id_b: r.id_b, title_a: r.title_a, title_b: r.title_b,
+                                      status_a: r.status_a, status_b: r.status_b,
+                                      pct_a: r.pct_a, pct_b: r.pct_b
+                                    });
+                                  });
+                                  if (dryRun) {
+                                    return { success: true, dry_run: true, duplicate_groups: groups, total: groups.length };
+                                  }
+                                  let merged = 0, deleted = 0;
+                                  for (const g of groups) {
+                                    const progressA = g.pct_a || 0;
+                                    const progressB = g.pct_b || 0;
+                                    const keepId = progressA >= progressB ? g.id_a : g.id_b;
+                                    const delId = progressA >= progressB ? g.id_b : g.id_a;
+                                    await queryLocalPg(`DELETE FROM app.tasks WHERE id = $1`, [delId]);
+                                    deleted++;
+                                    merged++;
+                                  }
+                                  return { success: true, dry_run: false, groups_merged: groups.length, deleted, merged };
+                                } catch (err) { return { success: false, error: err.message }; }
+                              },
+
+                            };
+
+                            async function defaultHandler(task) {
   logActivity('handler', task.id, 'FALLBACK', `No specific handler for "${task.title}"`);
   return {
     status: 'unhandled',
@@ -3217,7 +3301,7 @@ app.get('/', (req, res) => {
     if (existsSync(HARBOR_SENT)) harborSent = JSON.parse(readFileSync(HARBOR_SENT, 'utf8'));
     if (existsSync(HARBOR_CONTACTS)) harborContacts = JSON.parse(readFileSync(HARBOR_CONTACTS, 'utf8'));
     if (existsSync(HARBOR_LOG)) {
-      const logLines = readFileSync(HARBOR_LOG, 'utf8').trim().split('\n').filter(Boolean);
+      const logLines = readFileSync(HARBOR_LOG, 'utf8').trim().split('\n    \x27task-dedup\x27: \x27Find and merge duplicate tasks by exact title match or trigram similarity. Dry-run by default (dry_run:true). Set dry_run:false to merge. Keeps the task with the most progress.\x27,\n    \n').filter(Boolean);
       if (logLines.length > 0) {
         const lastLine = logLines[logLines.length - 1];
         const tsMatch = lastLine.match(/\[(.*?)\]/);
@@ -7004,7 +7088,7 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       }
 
       // Build the full prompt with grounding + tool results
-      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**\n- `search_knowledge` — Search the knowledge base by term\n- `shared-context` — Read/write persistent agent memory (use action:read, action:write, action:search)\n- `assign_task` — Create a task for another agent (requires task_id, title, description, assigned_to)\n- `fleet_pulse` — Get full system health snapshot\n- `activity_log` — Query the activity feed (filter by activity_type, limit)\n- `resend-inbox` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)\n\nIf you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):\n`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}`\n\nI will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
+      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**\n- `search_knowledge` — Search the knowledge base by term\n- `shared-context` — Read/write persistent agent memory (use action:read, action:write, action:search)\n- `assign_task` — Create a task for another agent (requires task_id, title, description, assigned_to)\n- `fleet_pulse` — Get full system health snapshot\n- `activity_log` — Query the activity feed (filter by activity_type, limit)\n- `resend-inbox` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)\n\n- \`recall_context\` — Pull structured context across fleet_memory, knowledge_entities, and shared_context by topic.\n- \`knowledge-dedup\` — Find and merge duplicate knowledge entities by name similarity. Dry-run (dry_run:true) to preview.\nIf you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):\n- \`task-dedup\` — Find and merge duplicate tasks by exact title match or trigram similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.\n`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}`\n\nI will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
 
       // Build messages array with conversation history so ai-chat sees context
       const historyMessages = [];
