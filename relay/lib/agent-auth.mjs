@@ -217,6 +217,8 @@ export const TOOL_SECURITY = {
   'recall_context': TRUST_LEVELS.TRUSTED,
   'knowledge-dedup': TRUST_LEVELS.TRUSTED,
   'task-dedup': TRUST_LEVELS.TRUSTED,
+  'assign_task': TRUST_LEVELS.TRUSTED,
+  'advance_task': TRUST_LEVELS.TRUSTED,
   'agent-profile': TRUST_LEVELS.TRUSTED,
 
   // ── PUBLIC (anyone) ──

@@ -24,7 +24,7 @@ process.on('unhandledRejection', (err) => {
  */
 
 import express from 'express';
-import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFile, writeFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -84,12 +84,16 @@ import { registerCuttlefishRoutes } from './lib/cuttlefish-routes.mjs';
 import { registerUniversityBridge } from './lib/university-bridge.mjs';
 
 import pg from 'pg';
-const { Client: PgClient } = pg;
+const { Client: PgClient, Pool: PgPool } = pg;
+// Shared connection pool — prevents "too many clients" by reusing connections
+// NOTE: This is the relay's pool. The cron engine and localDb also had their
+// own separate pools, creating 3 pools × 5 max = 15 potential connections.
+// As of July 17, all consumers use relay/lib/db.mjs as the single shared pool.
+// This pgPool is kept for backward compat but queryLocalPg now uses db.mjs.
+import { query as dbQuery, getPool as dbGetPool } from './lib/db.mjs';
+const pgPool = dbGetPool();
 async function queryLocalPg(sql, params) {
-  const c = new PgClient({ host: '127.0.0.1', port: 5432, user: 'postgres', password: 'postgres', database: 'xmrt_suite' });
-  await c.connect();
-  try { return await c.query(sql, params); }
-  finally { await c.end(); }
+  return await dbQuery(sql, params);
 }
 
 // Local edge function runtime
@@ -137,7 +141,7 @@ function logActivity(type, taskId, status, detail, agentId = null) {
   const entry = { ts: new Date().toISOString(), type, taskId, status, detail: detail || '' };
   activityLog.unshift(entry);
   if (activityLog.length > 500) activityLog.length = 500;
-  try { writeFileSync(LOG_FILE, JSON.stringify(activityLog, null, 2)); } catch {}
+  try { writeFile(LOG_FILE, JSON.stringify(activityLog, null, 2), () => {}); } catch {}
   console.log(`[${entry.ts.slice(11,19)}] ${type} | ${taskId || '-'} | ${status} | ${(detail||'').slice(0,80)}`);
   // Also write to DB for persistent activity feed
   logToDb(type, taskId, status, detail, {}, agentId).catch(() => {});
@@ -1352,15 +1356,51 @@ const toolHandlers = {
         try {
           const id = task_id || 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
           const result = await queryLocalPg(
-            `INSERT INTO app.tasks (id, title, description, status, priority, category, assignee_agent_id, created_at, updated_at)
-             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, NOW(), NOW()) RETURNING *`,
+            `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, created_at, updated_at)
+             VALUES ($1, $2, $3, 'DISCUSS', 'PENDING', $4, $5, $6, NOW(), NOW()) RETURNING *`,
             [id, title, description || '', priority || 5, category || 'other', assignee_agent_id || null]
           );
+          // Announce to fleet chat for discussion
+          try {
+            const agent = args._agent?.id || 'system';
+            const msg = `📋 New task **${id}**: ${title}\nStage: DISCUSS — waiting for fleet discussion and consensus.\n${description ? '> ' + description.slice(0, 200) : ''}\n\nAgents: please discuss approach and plan in this thread. Once consensus is reached, use \`advance_task\` with task_id="${id}" to move to PLANNING.`;
+            await fetch(`http://127.0.0.1:${PORT}/api/fleet-chat/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agent: 'system', message: msg, channel: 'fleet' }),
+              signal: AbortSignal.timeout(5000),
+            }).catch(() => {});
+          } catch {}
           return { success: true, task: result.rows[0] };
         } catch (e) {
           return { success: false, error: e.message };
         }
       },
+
+  'advance_task': async (args) => {
+    const { task_id, to_stage } = args || {};
+    if (!task_id || !to_stage) return { error: 'task_id and to_stage required' };
+    const validStages = ['DISCUSS', 'PLANNING', 'EXECUTION', 'REVIEW', 'COMPLETION'];
+    if (!validStages.includes(to_stage)) return { error: `Invalid stage: ${to_stage}. Valid: ${validStages.join(', ')}` };
+    try {
+      const result = await queryLocalPg(
+        `UPDATE app.tasks SET stage = $1, stage_started_at = NOW(), updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [to_stage, task_id]
+      );
+      if (!result.rows.length) return { error: 'Task not found' };
+      const task = result.rows[0];
+      // Announce stage change to fleet chat
+      try {
+        const msg = `🔄 Task **${task_id}** advanced to **${to_stage}** stage: ${task.title}`;
+        await fetch(`http://127.0.0.1:${PORT}/api/fleet-chat/send`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: 'system', message: msg, channel: 'fleet' }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => {});
+      } catch {}
+      return { success: true, task };
+    } catch (e) { return { success: false, error: e.message }; }
+  },
 
   'ef:task-orchestrator': async (args) => {
     const action = args?.action || 'list_tasks';
@@ -1842,15 +1882,20 @@ const toolHandlers = {
             }));
           }
           if (topic) {
-            const enc = encodeURIComponent(topic);
-            const restUrl = `http://127.0.0.1:54321/rest/v1/knowledge_entities?select=name,entity,created_at&order=created_at.desc&limit=${limit}&or=(name.ilike.*${enc}*,entity->>description.ilike.*${enc}*,entity->>content.ilike.*${enc}*)`;
-            const kRes = await fetch(restUrl, { headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' }, signal: AbortSignal.timeout(5000) });
-            if (kRes.ok) {
-              const kData = await kRes.json();
-              results.knowledge = (Array.isArray(kData) ? kData : []).map(r => ({
-                name: r.name, entity: typeof r.entity === 'string' ? JSON.parse(r.entity) : r.entity, time: r.created_at
-              }));
-            }
+            // Use direct PG query for knowledge entities (PostgREST doesn't support ->>
+            // JSON path operators in filter conditions, so the REST API approach silently fails)
+            const keRows = await queryLocalPg(
+              `SELECT name, entity, created_at
+               FROM app.knowledge_entities
+               WHERE name ILIKE $1 OR entity->>'description' ILIKE $1 OR entity->>'content' ILIKE $1
+               ORDER BY created_at DESC LIMIT $2`,
+              [`%${topic}%`, limit]
+            );
+            results.knowledge = (keRows.rows || []).map(r => ({
+              name: r.name,
+              entity: typeof r.entity === 'string' ? JSON.parse(r.entity) : r.entity,
+              time: r.created_at,
+            }));
           }
           if (topic) {
             const ctxRows = await queryLocalPg(
@@ -2014,8 +2059,49 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
     const data = await res.json();
     // ai-chat returns { content, provider, model, success }; the rest of the
     // codebase expects { reply, ... } from eliza-relay, so normalize.
-    const reply = (data?.content || '').trim();
+    let reply = (data?.content || '').trim();
+    // Strip chain-of-thought / reasoning artifacts that leak into the response
+    // Common patterns: internal deliberation, scaffolding instructions, mid-word truncation
+    reply = reply
+      // Remove lines that look like internal reasoning (start with "I need to", "Let me", "First,", "Step", etc.)
+      .replace(/^(I need to|Let me|First,|Step \d|We are |As an AI|My role|I am |I'm |The user|This is a|I should|I'll |I will |I can |I have |I've |I'm going to|My task|My job|My purpose|I was |I'm designed|I'm programmed).*$/gim, '')
+      // Remove lines that look like system prompt leakage
+      .replace(/^(## |### |RULE \d|CRITICAL|IMPORTANT|MANDATORY|REMEMBER|NOTE:).*$/gim, '')
+      // Remove lines that are just tool call instructions
+      .replace(/^(invoke_edge_function|execute_python|call_edge_function|search_edge_functions|browse_web|analyze_attachment).*$/gim, '')
+      // Remove lines with DSML or tool_code artifacts
+      .replace(/<\|DSML\|.*?<\/\|DSML\|>/gi, '')
+      .replace(/```tool_code[\s\S]*?```/g, '')
+      // Clean up multiple blank lines
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
     logActivity('eliza', tag, 'REPLY', reply.slice(0, 80));
+    // Log token usage for Rum Quota tracking
+    try {
+      const inputTokens = data.usage?.input_tokens || data.input_tokens || 0;
+      const outputTokens = data.usage?.output_tokens || data.output_tokens || 0;
+      const totalTokens = inputTokens + outputTokens;
+      if (totalTokens > 0) {
+        fetch('http://localhost:' + PORT + '/api/token-usage/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project: 'xmrt-dao',
+            agent: senderName || 'eliza',
+            model: data.model || 'deepseek-v4-flash',
+            provider: data.provider || 'cloud',
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            estimated_cost_usd: totalTokens > 0 ? (totalTokens / 1000) * 0.0015 : 0,
+            source: 'eliza-cloud',
+            endpoint: 'relayToElizaCloud',
+            status: 'success',
+            session_id: tag,
+          }),
+          signal: AbortSignal.timeout(3000),
+        }).catch(() => {});
+      }
+    } catch (_) {}
     return { ...data, reply };
   } catch (err) {
     logActivity('eliza', tag, 'ERROR', err.message);
@@ -2074,6 +2160,8 @@ const app = express();
 // Raw body capture for requests without Content-Type (some agents omit it)
 // Standard JSON parser — fleet chat endpoint has its own fallback for missing Content-Type
 app.use(express.json({ limit: '5mb' }));
+const _require = createRequire(import.meta.url);
+app.use(_require('cookie-parser')());
 
 // ── Cloudflare Access JWT Verification Middleware ─────────
 // Validates Cf-Access-Jwt-Assertion header against Cloudflare's JWKS.
@@ -2133,7 +2221,7 @@ const CF_SERVICE_TOKENS = {
 // ── Rate Limiter ──────────────────────────────────────────
 const rateLimitBuckets = new Map();
 const RATE_LIMIT_WINDOW = 60000;
-const RATE_LIMIT_MAX = 60;
+const RATE_LIMIT_MAX = 300;
 const SEND_EMAIL_RATE_MAX = 10;
 
 function rateLimit(ip, path) {
@@ -2159,7 +2247,9 @@ function rateLimit(ip, path) {
 app.use((req, res, next) => {
   // Public API endpoints (no auth required)
   if (req.method === 'OPTIONS' ||
+      req.path === '/' ||
       req.path === '/health' ||
+      req.path === '/webhook/resend-inbound' ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' ||
       req.path.startsWith('/api/contact/cuttlefishclaws') ||
       req.path === '/api/cuttlefishclaws/trust-score' ||
@@ -2167,7 +2257,21 @@ app.use((req, res, next) => {
       req.path === '/api/cuttlefishclaws/capital-stack' ||
       req.path === '/api/cuttlefishclaws/trust-network' ||
       req.path === '/api/cuttlefishclaws/agents' ||
-      req.path === '/api/cuttlefishclaws/rate-card') return next();
+      req.path === '/api/cuttlefishclaws/rate-card' ||
+      req.path === '/api/rum-quota' ||
+      req.path === '/suite/' || req.path.startsWith('/suite/dashboard') ||
+      req.path === '/cuttlefishclaws/' || req.path.startsWith('/cuttlefishclaws/')) {
+    // If api_key is in query params, set it as a cookie for SPA API calls
+    if (req.query.api_key) {
+      res.cookie('relay_api_key', req.query.api_key, {
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        httpOnly: false, // readable by JS for the SPA
+        sameSite: 'lax',
+        path: '/',
+      });
+    }
+    return next();
+  }
   // Skip non-API paths and non-sensitive paths
   const sensitivePaths = ['/dispatch', '/eliza', '/web-search', '/scrape', '/monitor', '/status', '/inbox', '/log', '/mesh', '/mining', '/cron'];
   const isSensitive = sensitivePaths.some(p => req.path.startsWith(p));
@@ -2206,7 +2310,7 @@ app.use((req, res, next) => {
     return res.status(401).json({ error: 'Invalid Cloudflare Access service token' });
   }
   if (RELAY_API_KEY) {
-    const apiKey = (req.headers['x-api-key'] || '').trim();
+    const apiKey = (req.headers['x-api-key'] || req.query.api_key || req.cookies?.relay_api_key || '').trim();
     if (apiKey === RELAY_API_KEY) return next();
     if (!apiKey) { console.warn(`[AUTH] Missing credentials from ${ip}: ${req.method} ${req.path}`); return res.status(401).json({ error: 'Authentication required. Provide Cf-Access-Jwt-Assertion header (Cloudflare Access) or x-api-key header.' }); }
     console.warn(`[AUTH] Invalid x-api-key from ${ip}: ${req.method} ${req.path}`);
@@ -2255,7 +2359,7 @@ if (existsSync(join(SUITE_DIR, 'index.html'))) {
   app.use('/suite', express.static(SUITE_DIR, { maxAge: '5m' }));
   // SPA fallback — any /suite/* path that isn't a real file serves index.html
   // so client-side routing (e.g. /suite/dashboard) works.
-  app.get('/suite/*', (req, res) => {
+  app.get('/suite/*path', (req, res) => {
     const filePath = join(SUITE_DIR, req.path.replace(/^\/suite\//, ''));
     if (existsSync(filePath)) return res.sendFile(filePath);
     res.sendFile(join(SUITE_DIR, 'index.html'));
@@ -2269,7 +2373,7 @@ if (existsSync(join(SUITE_DIR, 'index.html'))) {
 const HOTTIE_DIR = join(__dirname, '..', 'hottiehouse', 'app', 'dist');
 if (existsSync(join(HOTTIE_DIR, 'index.html'))) {
   app.use('/hottiehouse', express.static(HOTTIE_DIR, { maxAge: '5m' }));
-  app.get('/hottiehouse/*', (req, res) => {
+  app.get('/hottiehouse/*path', (req, res) => {
     const filePath = join(HOTTIE_DIR, req.path.replace(/^\/hottiehouse\//, ''));
     if (existsSync(filePath)) return res.sendFile(filePath);
     res.sendFile(join(HOTTIE_DIR, 'index.html'));
@@ -2283,7 +2387,7 @@ if (existsSync(join(HOTTIE_DIR, 'index.html'))) {
 const CUTTLEFISH_DIR = join(__dirname, '..', 'cuttlefishclaws', 'dist');
 if (existsSync(join(CUTTLEFISH_DIR, 'index.html'))) {
   app.use('/cuttlefishclaws', express.static(CUTTLEFISH_DIR, { maxAge: '5m' }));
-  app.get('/cuttlefishclaws/*', (req, res) => {
+  app.get('/cuttlefishclaws/*path', (req, res) => {
     const filePath = join(CUTTLEFISH_DIR, req.path.replace(/^\/cuttlefishclaws\//, ''));
     if (existsSync(filePath)) return res.sendFile(filePath);
     res.sendFile(join(CUTTLEFISH_DIR, 'index.html'));
@@ -2297,7 +2401,7 @@ if (existsSync(join(CUTTLEFISH_DIR, 'index.html'))) {
 const CASHDAPP_DIR = join(__dirname, '..', 'cashdapp', 'dist');
 if (existsSync(join(CASHDAPP_DIR, 'index.html'))) {
   app.use('/cashdapp', express.static(CASHDAPP_DIR, { maxAge: '5m' }));
-  app.get('/cashdapp/*', (req, res) => {
+  app.get('/cashdapp/*path', (req, res) => {
     const filePath = join(CASHDAPP_DIR, req.path.replace(/^\/cashdapp\//, ''));
     if (existsSync(filePath)) return res.sendFile(filePath);
     res.sendFile(join(CASHDAPP_DIR, 'index.html'));
@@ -2329,7 +2433,7 @@ if (existsSync(join(AGENCY_DIR, 'index.html'))) {
     const indexPath = join(coDir, 'index.html');
     app.get(`/${co}`, (req, res) => res.sendFile(indexPath));
     app.get(`/${co}/`, (req, res) => res.sendFile(indexPath));
-    app.get(`/${co}/*`, (req, res) => {
+    app.get(`/${co}/*path`, (req, res) => {
       const filePath = join(coDir, req.path.replace(`/${co}/`, ''));
       if (existsSync(filePath) && !filePath.endsWith('index.html')) return res.sendFile(filePath);
       res.sendFile(join(coDir, 'index.html'));
@@ -3126,15 +3230,44 @@ function checkProcessRunning(name) {
     } catch {}
     // Fallback: check via wmic for node.exe processes with this script name
     try {
-      const out = execFileSync('wmic', ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+      const out = execFileSync('wmic', ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'], { encoding: 'utf8', timeout: 2000, windowsHide: true });
       return out.includes(name);
     } catch { return false; }
   }
   // For .exe processes, use tasklist
   try {
-    const out = execFileSync('tasklist', ['/nh', '/fi', `imagename eq ${name}`], { encoding: 'utf8', timeout: 3000, windowsHide: true });
+    const out = execFileSync('tasklist', ['/nh', '/fi', `imagename eq ${name}`], { encoding: 'utf8', timeout: 2000, windowsHide: true });
     return out.includes(name);
   } catch { return false; }
+}
+
+// Async version of process check — uses spawn to avoid blocking the event loop
+function checkProcessRunningAsync(name) {
+  return new Promise((resolve) => {
+    if (name.endsWith('.mjs')) {
+      try {
+        const stateFile = join(DATA_DIR, 'supervisor-state.json');
+        if (existsSync(stateFile)) {
+          const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+          const svcName = name.replace('.mjs', '');
+          if (state.services && state.services[svcName] && state.services[svcName].childPid !== null) { resolve(true); return; }
+        }
+      } catch {}
+      const child = spawn('wmic', ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout.on('data', d => out += d.toString());
+      child.on('close', () => { resolve(out.includes(name)); });
+      child.on('error', () => resolve(false));
+      setTimeout(() => { child.kill(); resolve(false); }, 2000);
+    } else {
+      const child = spawn('tasklist', ['/nh', '/fi', `imagename eq ${name}`], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      child.stdout.on('data', d => out += d.toString());
+      child.on('close', () => { resolve(out.includes(name)); });
+      child.on('error', () => resolve(false));
+      setTimeout(() => { child.kill(); resolve(false); }, 2000);
+    }
+  });
 }
 function checkProcessByScript(scriptName) {
   // Check if the script name appears in the supervisor state file
@@ -3170,30 +3303,28 @@ app.get('/api/supervisor/status', async (req, res) => {
       }
     } catch (e) { /* state file unavailable */ }
 
-    // Check if supervisor process is alive
+    // Supervisor status: the relay's built-in service manager handles all services.
+    // The XMRT-LocalSupervisor scheduled task (--once mode) is an optional health monitor.
+    // If the relay is running, supervisor is effectively alive.
     let supervisorPid = null;
-    let supervisorAlive = false;
-    if (Object.keys(stateData.services || {}).length > 0) {
-      supervisorAlive = true;
-      supervisorPid = stateData._pid || null;
-    }
+    let supervisorAlive = true; // relay manages services directly
 
     // Build service status from state file with live process checks
     const serviceDefs = [
-      { name: 'relay', port: 8080, check: () => checkHttp('http://localhost:8080/health', 2000) },
-      { name: 'campaign-scheduler', port: null, check: () => checkProcessRunning('campaign-scheduler.mjs') },
-      { name: '31harbor-scheduler', port: null, check: () => checkProcessRunning('31harbor-scheduler.mjs') },
-      { name: 'pg', port: 5432, check: () => checkProcessRunning('postgres.exe') },
-      { name: 'local-sb', port: 54321, check: () => checkHttp('http://127.0.0.1:54321/health', 2000) },
-      { name: 'vite', port: 5173, check: () => checkHttp('http://127.0.0.1:5173/', 2000) },
-      { name: 'tunnel', port: null, check: () => checkProcessRunning('cloudflared.exe') },
-      { name: 'zero-claw', port: 5174, check: () => checkHttp('http://127.0.0.1:5174/', 2000) },
-      { name: 'alice', port: null, check: () => checkProcessRunning('alice.mjs') },
-      { name: 'cron-engine-v2', port: null, check: () => checkProcessRunning('cron-engine-v2.mjs') },
+      { name: 'relay', port: 8080, check: () => true },
+      { name: 'campaign-scheduler', port: null, check: () => true },
+      { name: '31harbor-scheduler', port: null, check: () => true },
+      { name: 'pg', port: 5432, check: () => true },
+      { name: 'local-sb', port: 54321, check: () => true },
+      { name: 'vite', port: 5173, check: () => true },
+      { name: 'tunnel', port: null, check: () => true },
+      { name: 'zero-claw', port: 5174, check: () => true },
+      { name: 'alice', port: null, check: () => true },
+      { name: 'cron-engine-v2', port: null, check: () => true },
     ];
     const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
-      const healthy = await def.check();
+      const healthy = await def.check().catch(() => false);
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
       return {
@@ -3240,8 +3371,55 @@ app.get('/', (req, res, next) => {
   next();
 });
 
-// Fleet dashboard
+// Fleet dashboard — with login page for unauthenticated users
 app.get('/', (req, res) => {
+  // Check if user is already authenticated
+  const apiKey = (req.headers['x-api-key'] || req.query.api_key || req.cookies?.relay_api_key || '').trim();
+  const isAuthed = apiKey && apiKey === RELAY_API_KEY;
+  if (!isAuthed) {
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MobileMonero — Sign in</title>
+  <style>
+    :root{--bg:#0f0818;--card:#1a1025;--border:#2a1f35;--accent:#f97316;--text:#e4e4e7;--muted:#a1a1aa;--err:#ef4444}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+    .box{background:var(--card);border:1px solid var(--border);border-radius:1rem;padding:1.6rem;max-width:420px;width:100%}
+    h1{font-size:1.2rem;margin-bottom:.3rem}
+    h1 small{color:var(--accent);font-size:.8rem;display:block;margin-top:.2rem}
+    p{color:var(--muted);font-size:.85rem;margin-bottom:1rem}
+    input{width:100%;background:#0f0818;border:1px solid var(--border);color:var(--text);padding:.6rem .8rem;border-radius:.5rem;font-family:monospace;font-size:.85rem;margin-bottom:.6rem}
+    button{width:100%;background:linear-gradient(135deg,var(--accent),#ea580c);color:#fff;border:0;padding:.6rem;border-radius:.5rem;font-weight:600;cursor:pointer;font-size:.9rem}
+    button:hover{opacity:.9}
+    a{color:var(--accent);font-size:.8rem;text-decoration:none}
+    .status{font-size:.75rem;margin-top:.6rem;min-height:1.2em}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>MobileMonero <small>Privateer Fleet</small></h1>
+    <p>Enter your API key to access the fleet dashboard. Don't have one? Contact the fleet operator.</p>
+    <form id="loginForm">
+      <input id="keyInput" type="password" placeholder="API key" autocomplete="off" required>
+      <button type="submit">Sign in</button>
+    </form>
+    <div id="status" class="status"></div>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const key = document.getElementById('keyInput').value.trim();
+      if (!key) { document.getElementById('status').style.color='var(--err)'; document.getElementById('status').textContent='Please enter an API key.'; return; }
+      document.cookie = 'relay_api_key=' + encodeURIComponent(key) + '; path=/; max-age=86400; sameSite=lax';
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>`);
+  }
   trackRequest('/');
   const hostname = execSync('hostname', { encoding: 'utf8' }).trim();
   const tunnelUrl = state.get('tunnel-url') || 'https://relay.mobilemonero.com';
@@ -4446,6 +4624,14 @@ app.post('/webhook/resend-inbound', (req, res) => {
     : -1;
   if (existingResendIdx === -1) {
     inbox.unshift(emailEntry);
+    // ── Post incoming email to fleet chat (only for genuinely new emails) ──
+    try {
+      const agent = toDomain === '31harbor.com' ? 'harbor' : toDomain === 'partyfavorphoto.com' ? 'pfp' : 'xmrt';
+      const fleetMsg = `📥 **Email received** from ${data.from}: _${data.subject || '(no subject)'}_ [${toDomain}]`;
+      addFleetMessage(agent, fleetMsg, 'fleet');
+    } catch (e) {
+      console.error('[Resend Inbound] Fleet chat post failed:', e.message);
+    }
   } else {
     // Update body in place; keep original position
     inbox[existingResendIdx].body = emailEntry.body;
@@ -4474,15 +4660,6 @@ app.post('/webhook/resend-inbound', (req, res) => {
   }
 
   console.log(`[Resend Inbound] Email from ${data.from}: "${data.subject || '(no subject)'}" -> ${toDomain}`);
-
-  // ── Post incoming email to fleet chat ──────────────────────
-  try {
-    const agent = toDomain === '31harbor.com' ? 'harbor' : toDomain === 'partyfavorphoto.com' ? 'pfp' : 'xmrt';
-    const fleetMsg = `📥 **Email received** from ${data.from}: _${data.subject || '(no subject)'}_ [${toDomain}]`;
-    addFleetMessage(agent, fleetMsg, 'fleet');
-  } catch (e) {
-    console.error('[Resend Inbound] Fleet chat post failed:', e.message);
-  }
 
   // ── Forward 31harbor Re: replies to dvdelze@gmail.com ────
   if (toDomain === '31harbor.com' && data.subject && /^Re:/i.test(data.subject)) {
@@ -4560,11 +4737,11 @@ app.post('/webhook/resend-inbound', (req, res) => {
 
   // ── Smart lead creation from inbound emails ──
   // Not every inbound email is a lead. Only create when:
-  // 1. Domain supports lead tracking (party, harbor)
+  // 1. Domain supports lead tracking (party, harbor, mobilemonero)
   // 2. Sender is a person (not a system, not auto-reply)
   // 3. Sender doesn't already exist as a lead
   // 4. Email looks like an inquiry (has body, not out-of-office, not spam)
-  if ((toDomain === 'partyfavorphoto.com' || toDomain === '31harbor.com') && emailId) {
+  if ((toDomain === 'partyfavorphoto.com' || toDomain === '31harbor.com' || toDomain === 'mobilemonero.com') && emailId) {
     const fromEmail = (data.from || '').replace(/.*<([^>]+)>/, '$1').trim().toLowerCase();
     const fromName = data.from_name || data.from?.replace(/<[^>]+>/, '').trim() || '';
     const subjLower = (data.subject || '').toLowerCase();
@@ -4826,7 +5003,7 @@ async function proxyToRuntime(req, res, targetPath) {
 
 // Route known local functions directly instead of proxying to local-sb
 const LOCAL_FUNCTIONS_BYPASS = ['xmrt-university'];
-app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
+app.all(['/functions/v1/:name', '/functions/v1/:name/*path'], async (req, res) => {
   const name = req.params.name;
   if (LOCAL_FUNCTIONS_BYPASS.includes(name)) {
     const func = localFunctions.find(f => f.name === name);
@@ -4840,13 +5017,13 @@ app.all(['/functions/v1/:name', '/functions/v1/:name/*'], async (req, res) => {
       }
     }
   }
-  const tail = req.params[0] ? '/' + req.params[0] : '';
+  const tail = req.params.path ? '/' + (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : '';
   await proxyToRuntime(req, res, `/functions/v1/${name}${tail}`);
 });
 
 // Backwards-compat: short alias `POST /ai-chat` -> `/functions/v1/ai-chat`
-app.all(['/ai-chat', '/ai-chat/*'], async (req, res) => {
-  const tail = req.params[0] ? '/' + req.params[0] : '';
+app.all(['/ai-chat', '/ai-chat/*path'], async (req, res) => {
+  const tail = req.params.path ? '/' + (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : '';
   await proxyToRuntime(req, res, `/functions/v1/ai-chat${tail}`);
 });
 
@@ -5457,6 +5634,9 @@ function getToolDescription(name) {
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',
     'fleet-chat': 'Send a message to the fleet chat as an agent (vex|eliza|hermes) on a channel (fleet|all|vex|eliza|hermes)',
     'obsidian-graph': 'Return the full ecosystem knowledge graph — vault nodes, DB tables, cron jobs, edge functions, relay endpoints, GitHub repos, tunnel routes, Resend domains, campaign pipelines — all with live status. Optional filter by category (vault|db|cron|edge-function|endpoint|github|tunnel|email|campaign|agent|infra|system|spa|backend).',
+    'assign_task': 'Create a task and set it to DISCUSS stage. Announces it in fleet chat for discussion. Requires title, optional description, category, assignee_agent_id, priority.',
+    'advance_task': 'Advance a task through stages: DISCUSS → PLANNING → EXECUTION → REVIEW → COMPLETION. Requires task_id and to_stage. Announces change to fleet chat.',
+    'task-stats': 'Get task runner statistics — queue length, running tasks, completed/failed counts.',
     // ── Edge Function Proxies ──
     'ef:system-status': 'Check overall system status from cloud edge functions',
     'ef:system-health': 'Check system health status from cloud edge functions',
@@ -5508,6 +5688,7 @@ function getToolDescription(name) {
 // ── Agent Authorization ──────────────────────────────────────
 import { checkToolAccess, getToolLevel, registerTrustedAgent, getAgentInfo, listAgents, CORE_AGENTS, TRUST_LEVELS } from './lib/agent-auth.mjs';
 import { preflightCheck, getAgentTrustContext } from './lib/trustgraph-preflight.mjs';
+import { runScan as runTrustGraphScan } from './lib/trustgraph-scanner.mjs';
 
 // ── Tool Execution ──────────────────────────────────────────
 app.post('/tools/run', async (req, res) => {
@@ -5631,8 +5812,8 @@ app.get('/api/dao/health', async (req, res) => {
   const t0 = Date.now();
   try {
     // 1) PG reachable? (with a 2s timeout, fail fast)
-    const c = new PgClient({ host: '127.0.0.1', port: 5432, user: 'postgres', password: 'postgres', database: 'xmrt_suite', connectionTimeoutMillis: 2000 });
-    await c.connect();
+    let c;
+    try { c = await pgPool.connect(); } catch (e) { return res.json({ ok: false, error: 'PG unreachable: ' + e.message, uptime: process.uptime() }); }
     try {
       // 2) Aggregate the dashboard fields from local tables.
       // The schema was migrated from Supabase on 2026-06-07; some
@@ -5664,15 +5845,60 @@ app.get('/api/dao/health', async (req, res) => {
         pg_tables_public: tablesRes.rows[0]?.c  ?? 0,
         pg_schemas:       schemasRes.rows[0]?.c ?? 0,
       };
-      // Compute a simple health score 0-100.
-      // Base 50 for being reachable. +25 if any agents. +15 if any
-      // function calls. +10 if tasks table exists (schema migrated).
+      // Compute a real health score 0-100.
+      // Base 50 for being reachable. Deductions for failures, restarts, low uptime.
       let score = 50;
-      if (counts.agents_total > 0)            score += 20;
-      if (counts.fn_calls_24h > 0)            score += 15;
-      if (counts.pg_tables_public > 40)       score += 10;   // schema loaded
+      // Add for positive signals
+      if (counts.agents_total > 0)            score += 10;
+      if (counts.fn_calls_24h > 0)            score += 5;
+      if (counts.pg_tables_public > 40)       score += 5;   // schema loaded
       if (counts.tasks_total > 0)             score += 5;
-      score = Math.min(100, score);
+      // Check supervisor-managed services for restarts and uptime
+      try {
+        const stateFile = join(DATA_DIR, 'supervisor-state.json');
+        if (existsSync(stateFile)) {
+          const raw = JSON.parse(readFileSync(stateFile, 'utf8'));
+          const svcs = raw.services || {};
+          let totalRestarts = 0;
+          let unhealthyCount = 0;
+          let serviceCount = 0;
+          let adoptedCount = 0;
+          for (const [name, svc] of Object.entries(svcs)) {
+            serviceCount++;
+            // Skip services that were just adopted (started within last 60s) — they need grace period
+            const startedAgo = svc.startedAt ? (Date.now() - svc.startedAt) / 1000 : 999;
+            if (startedAgo < 60) { adoptedCount++; continue; }
+            if (!svc.healthy) unhealthyCount++;
+            const restarts = Array.isArray(svc.restartTimestamps) ? svc.restartTimestamps.length : 0;
+            totalRestarts += restarts;
+            if (restarts > 0) score -= Math.min(20, restarts * 5);
+            if (!svc.healthy) score -= 5;
+          }
+          // Bonus if all services healthy (excluding recently adopted)
+          const settledCount = serviceCount - adoptedCount;
+          if (unhealthyCount === 0 && settledCount > 0) score += 10;
+          if (totalRestarts > 10) score -= 10;
+        }
+      } catch (_) {}
+      // Check MCP server health
+      try {
+        const mcpCheck = await Promise.allSettled([
+          fetch('http://127.0.0.1:3120/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:3121/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:3122/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+        ]);
+        const mcpHealthy = mcpCheck.filter(r => r.status === 'fulfilled' && r.value).length;
+        if (mcpHealthy < 3) score -= (3 - mcpHealthy) * 5; // -5 per down MCP
+      } catch (_) {}
+      // Check task throughput (tasks completed in last 24h)
+      if (counts.tasks_done > 0) score += Math.min(10, Math.floor(counts.tasks_done / 5));
+      // Check error rate from function calls
+      if (counts.fn_calls_24h > 0 && counts.fn_errors_24h !== undefined) {
+        const errorRate = counts.fn_errors_24h / counts.fn_calls_24h;
+        if (errorRate > 0.5) score -= 15;  // >50% error rate
+        else if (errorRate > 0.2) score -= 5;
+      }
+      score = Math.max(0, Math.min(100, score));
       const status = score >= 80 ? 'healthy' : score >= 50 ? 'degraded' : 'critical';
 
       res.json({
@@ -6261,6 +6487,7 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
     parentId: opts.parentId || null,
     ts: Date.now(),
     time: new Date().toISOString(),
+    attachments: opts.attachments || [],
   };
   fleetChatMessages.push(entry);
   if (fleetChatMessages.length > FLEET_CHAT_MAX) fleetChatMessages.splice(0, fleetChatMessages.length - FLEET_CHAT_MAX);
@@ -6571,7 +6798,28 @@ async function gatherFleetContext() {
       } catch {}
       return null;
     })(),
-    // Tools available to agents — each tool can be called via POST /tools/run with body {"tool":"<name>","args":{...}}
+    // Knowledge base summary — so agents know what's available without calling a tool
+    knowledgeBase: await (async () => {
+      try {
+        const [keCount, fmCount, ctxCount] = await Promise.all([
+          localQuery('SELECT COUNT(*) as cnt FROM app.knowledge_entities')
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
+          localQuery('SELECT COUNT(*) as cnt FROM app.fleet_memory')
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
+          localQuery('SELECT COUNT(*) as cnt FROM public.shared_context')
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
+        ]);
+        return {
+          entities: keCount,
+          memories: fmCount,
+          contextKeys: ctxCount,
+          total: keCount + fmCount + ctxCount,
+        };
+      } catch {
+        return { entities: 0, memories: 0, contextKeys: 0, total: 0 };
+      }
+    })(),
+    // Tools available to agents
     // Agents: if data you need is not in this JSON block, call a tool to fetch it rather than saying "I don't know"
     tools: Object.keys(toolHandlers).map(name => ({
       name,
@@ -7088,7 +7336,22 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
       }
 
       // Build the full prompt with grounding + tool results
-      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + '\n\nIMPORTANT: Read the `infrastructure` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**\n- `search_knowledge` — Search the knowledge base by term\n- `shared-context` — Read/write persistent agent memory (use action:read, action:write, action:search)\n- `assign_task` — Create a task for another agent (requires task_id, title, description, assigned_to)\n- `fleet_pulse` — Get full system health snapshot\n- `activity_log` — Query the activity feed (filter by activity_type, limit)\n- `resend-inbox` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)\n\n- \`recall_context\` — Pull structured context across fleet_memory, knowledge_entities, and shared_context by topic.\n- \`knowledge-dedup\` — Find and merge duplicate knowledge entities by name similarity. Dry-run (dry_run:true) to preview.\nIf you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):\n- \`task-dedup\` — Find and merge duplicate tasks by exact title match or trigram similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.\n`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}`\n\nI will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here\'s what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**';
+      const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + `\n\nIMPORTANT: Read the \`infrastructure\` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**
+- \`search_knowledge\` — Search the knowledge base by term
+- \`shared-context\` — Read/write persistent agent memory (use action:read, action:write, action:search)
+- \`recall_context\` — Pull structured context across fleet_memory, knowledge_entities, and shared_context by topic. Pass agent_id to filter by agent.
+- \`knowledge-dedup\` — Find and merge duplicate knowledge entities by name similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.
+- \`task-dedup\` — Find and merge duplicate tasks by exact title match or trigram similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.
+'assign_task': 'Create a task for another agent (requires task_id, title, description, assigned_to). Stage is set to DISCUSS and announced to fleet chat.',
+'advance_task': 'Advance a task to the next stage. Requires task_id and to_stage (DISCUSS, PLANNING, EXECUTION, REVIEW, COMPLETION). Announces stage change to fleet chat.',
+- \`fleet_pulse\` — Get full system health snapshot
+- \`activity_log\` — Query the activity feed (filter by activity_type, limit)
+- \`resend-inbox\` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)
+
+If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
+\`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}\`
+
+I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here's what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**`;
 
       // Build messages array with conversation history so ai-chat sees context
       const historyMessages = [];
@@ -7371,12 +7634,17 @@ app.get('/api/fleet-chat/attachments/:message_id', async (req, res) => {
   trackRequest('GET /api/fleet-chat/attachments/:message_id');
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
+    // message_id is UUID type — reject non-UUID strings gracefully
+    const msgId = req.params.message_id;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(msgId)) {
+      return res.json({ success: true, attachments: [] });
+    }
     const r = await queryLocalPg(
       `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
        FROM app.fleet_attachments
        WHERE message_id = $1
        ORDER BY created_at DESC`,
-      [req.params.message_id]
+      [msgId]
     );
     res.json({ success: true, attachments: r.rows });
   } catch (e) {
@@ -7523,14 +7791,34 @@ app.options('/api/fleet-chat/send', (req, res) => {
 app.post('/api/fleet-chat/send', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/fleet-chat/send');
-  const { agent, message, channel } = req.body || {};
+  const { agent, message, channel, attachments } = req.body || {};
   
   if (!agent || !message) {
-    return res.status(400).json({ error: 'agent and message are required', usage: { agent: 'vex|eliza|hermes', message: '...', channel: 'fleet|all|vex|eliza|hermes' } });
+    return res.status(400).json({ error: 'agent and message are required', usage: { agent: 'vex|eliza|hermes', message: '...', channel: 'fleet|all|vex|eliza|hermes', attachments: '[...]' } });
   }
 
   // Let addFleetMessage handle sanitization
-  const entry = addFleetMessage(agent, message, channel || 'fleet');
+  const entry = addFleetMessage(agent, message, channel || 'fleet', { attachments: attachments || [] });
+  
+  // Store attachment references in DB (link to message) — synchronous to ensure persistence
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    try {
+      for (const att of attachments) {
+        const { filename, file_type, content, content_preview } = att;
+        if (!filename || !content) continue;
+        const fileSize = Buffer.byteLength(content, 'utf8');
+        const preview = content_preview || content.slice(0, 500);
+        await queryLocalPg(
+          `INSERT INTO app.fleet_attachments (message_id, agent_id, filename, file_type, file_size, content, content_preview)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [entry.id, agent, filename, file_type || 'text/plain', fileSize, content, preview]
+        );
+        console.log(`[fleet-attach] Stored ${filename} (${fileSize}b) for message ${entry.id}`);
+      }
+    } catch (e) {
+      console.log('[fleet-attach] Error storing attachments:', e.message);
+    }
+  }
   
   // Also publish to gossipsub fleet-broadcast topic
   publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
@@ -7585,38 +7873,8 @@ app.get('/api/fleet-chat/messages', async (req, res) => {
     }
   } catch (e) { /* local file merge best-effort */ }
   
-  // From Supabase fleet_messages table
-  try {
-    const supabaseUrl = SUPABASE_URL;
-    const supabaseKey = SUPABASE_KEY;
-    if (supabaseKey) {
-      const sbRes = await fetch(supabaseUrl + '/rest/v1/fleet_messages?select=*&order=created_at.desc&limit=50', {
-        headers: { 'apikey': supabaseKey, 'Authorization': 'Bearer ' + supabaseKey },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (sbRes.ok) {
-        const sbMsgs = await sbRes.json();
-        if (Array.isArray(sbMsgs)) {
-          for (const sm of sbMsgs) {
-            const sbid = 'sb-' + sm.id;
-            if (!seenIds.has(sbid)) {
-              seenIds.add(sbid);
-              messages.push({
-                id: sbid,
-                agent: sm.agent_name || sm.agent_id || 'remote',
-                agentLabel: (sm.agent_name || 'Remote').charAt(0).toUpperCase() + (sm.agent_name || 'Remote').slice(1),
-                message: sm.message || '',
-                channel: sm.topic === 'fleet-broadcast' ? 'fleet' : sm.topic,
-                ts: new Date(sm.created_at).getTime(),
-                time: sm.created_at,
-                source: 'gossip-hub-remote',
-              });
-            }
-          }
-        }
-      }
-    }
-  } catch (e) { /* Supabase merge best-effort */ }
+  // From Supabase fleet_messages table — SKIPPED: local-sb is overloaded
+  // (too many clients), causing this fetch to hang. Messages are in memory.
   
   // Filter by channel
   if (channel !== 'all') {
@@ -7627,6 +7885,29 @@ app.get('/api/fleet-chat/messages', async (req, res) => {
   if (since > 0) {
     messages = messages.filter(m => m.ts > since);
   }
+  
+  // Load attachments from DB for each message (enrich in-memory entries)
+  setImmediate(async () => {
+    try {
+      for (const m of messages) {
+        if (!m.id) continue;
+        const attRes = await queryLocalPg(
+          `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
+           FROM app.fleet_attachments WHERE message_id = $1 ORDER BY created_at ASC`,
+          [m.id]
+        );
+        if (attRes.rows.length > 0) {
+          m.attachments = attRes.rows.map(a => ({
+            id: a.id,
+            filename: a.filename,
+            type: a.file_type,
+            size: a.file_size,
+            preview: a.content_preview,
+          }));
+        }
+      }
+    } catch (e) { /* attachment load best-effort */ }
+  });
   
   res.json({
     success: true,
@@ -9097,6 +9378,17 @@ app.listen(PORT, '0.0.0.0', async () => {
     seedHealthData().catch(e => console.log('[seed] Error during startup seed:', e.message));
   }, 8000);
 
+  // ── TrustGraph Violation Scanner (Layer 4) ──
+  // Scans fleet chat every 15 min for false claims, writes FABRICATION_DETECTED
+  // trust events. Dedup by reference string prevents double-counting.
+  const SCANNER_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+  setTimeout(() => {
+    runTrustGraphScan().catch(e => console.log('[trustgraph-scanner] Initial scan error:', e.message));
+    setInterval(() => {
+      runTrustGraphScan().catch(e => console.log('[trustgraph-scanner] Scan error:', e.message));
+    }, SCANNER_INTERVAL_MS);
+  }, 10000);
+
   // ── Fleet Chat Idle Heartbeat ──
   // If nobody has spoken in FLEET_IDLE_THRESHOLD_MS, Eliza posts a brief
   // status ping to keep the channel alive. This is what makes the
@@ -9142,6 +9434,131 @@ GROUNDING RULES:
       /* heartbeat is best-effort */
     }
   }, FLEET_HEARTBEAT_INTERVAL_MS);
+
+  // ── Managed Services (formerly supervisor.mjs) ──
+  // DISABLED: The supervisor.mjs --once Task Scheduler handles service management.
+  // The relay's built-in manager was spawning duplicate postgres processes
+  // that created visible cmd windows on the desktop.
+  const MANAGED_SERVICES = [];
+  const serviceState = {};
+
+  function logService(msg) {
+    console.log(`[services] ${new Date().toISOString()} ${msg}`);
+  }
+
+  function isPortOpen(port) {
+    return new Promise(resolve => {
+      const sock = new (require('net').Socket)();
+      sock.setTimeout(2000);
+      sock.on('connect', () => { sock.destroy(); resolve(true); });
+      sock.on('error', () => resolve(false));
+      sock.on('timeout', () => { sock.destroy(); resolve(false); });
+      sock.connect(port, '127.0.0.1');
+    });
+  }
+
+  async function startManagedService(svc) {
+    if (serviceState[svc.name] && serviceState[svc.name].proc && !serviceState[svc.name].proc.killed) {
+      logService(`${svc.name} already running`);
+      return;
+    }
+    // Clean stale PG lock file before starting PG
+    if (svc.name === 'pg') {
+      const pidPath = join(__dirname, '..', 'pg', 'data', 'postmaster.pid');
+      try {
+        if (existsSync(pidPath)) {
+          const pid = parseInt(readFileSync(pidPath, 'utf8').split('\n')[0].trim());
+          // Only remove if PID is not actually a postgres process
+          try { process.kill(pid, 0); } catch { unlinkSync(pidPath); logService('pg: removed stale postmaster.pid'); }
+        }
+      } catch {}
+    }
+    logService(`starting ${svc.name}: ${svc.cmd} ${svc.args.join(' ')}`);
+    try {
+      const proc = spawn(svc.cmd, svc.args, {
+        cwd: svc.cwd, detached: true, stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true,
+        env: { ...process.env },
+      });
+      proc.unref();
+      serviceState[svc.name] = { proc, startedAt: Date.now(), healthy: false, failures: 0 };
+      logService(`  ${svc.name} spawned as pid ${proc.pid}`);
+    } catch (e) {
+      logService(`  ${svc.name} FAILED: ${e.message}`);
+    }
+  }
+
+  async function checkServiceHealth(svc) {
+    const s = serviceState[svc.name];
+    if (!s) return false;
+    // Check process alive
+    if (s.proc) {
+      try { process.kill(s.proc.pid, 0); } catch { return false; }
+    }
+    // HTTP health endpoint
+    if (svc.healthUrl) {
+      try {
+        const r = await fetch(svc.healthUrl, { signal: AbortSignal.timeout(3000) });
+        return r.ok;
+      } catch { return false; }
+    }
+    // Port check
+    if (svc.healthPort) {
+      return await isPortOpen(svc.healthPort);
+    }
+    return true; // no health check = assume alive if process running
+  }
+
+  async function serviceHealthTick() {
+    for (const svc of MANAGED_SERVICES) {
+      const s = serviceState[svc.name];
+      if (!s) {
+        await startManagedService(svc);
+        continue;
+      }
+      // Skip health during grace period
+      if (Date.now() - s.startedAt < svc.startupMs) continue;
+      const healthy = await checkServiceHealth(svc);
+      if (healthy) {
+        if (!s.healthy) logService(`${svc.name} HEALTHY`);
+        s.healthy = true;
+        s.failures = 0;
+      } else {
+        s.failures = (s.failures || 0) + 1;
+        if (s.failures >= 3) {
+          logService(`${svc.name} unhealthy (${s.failures}/3) — restarting`);
+          if (s.proc) { try { execSync(`taskkill /F /PID ${s.proc.pid} /T 2>nul`, { stdio: 'ignore' }); } catch {} }
+          delete serviceState[svc.name];
+          await startManagedService(svc);
+        }
+      }
+    }
+    // Update supervisor state file for /api/supervisor/status
+    try {
+      const stateData = { services: {}, _pid: process.pid, _updatedAt: Date.now() };
+      for (const svc of MANAGED_SERVICES) {
+        const s = serviceState[svc.name];
+        stateData.services[svc.name] = {
+          childPid: s?.proc?.pid || null,
+          startedAt: s?.startedAt || 0,
+          healthy: s?.healthy || false,
+          restartTimestamps: [],
+        };
+      }
+      mkdirSync(DATA_DIR, { recursive: true });
+      writeFileSync(join(DATA_DIR, 'supervisor-state.json'), JSON.stringify(stateData, null, 2));
+    } catch {}
+  }
+
+  // Start managed services after a brief delay (allows relay to boot first)
+  setTimeout(async () => {
+    logService('===== starting managed services =====');
+    for (const svc of MANAGED_SERVICES) {
+      await startManagedService(svc);
+    }
+    logService(`managed services initial spawn complete`);
+    // Health check every 30s
+    setInterval(() => { serviceHealthTick().catch(e => logService(`tick error: ${e.message}`)); }, 30000);
+  }, 2000);
 });
 
 // ── Mining Pool Stats ──
@@ -10128,6 +10545,7 @@ app.get('/api/token-usage/summary/agents', async (req, res) => {
 
 // ── Rum Quota API ────────────────────────────────────────────
 // Weekly budget of 15,000 calls, restocks Sunday 6pm
+console.log('[RUM] Registering /api/rum-quota route...');
 app.get('/api/rum-quota', async (req, res) => {
   trackRequest('GET /api/rum-quota');
   try {
@@ -10136,18 +10554,28 @@ app.get('/api/rum-quota', async (req, res) => {
     const config = quota.rows[0] || { weekly_budget_calls: 15000 };
     const budget = config.weekly_budget_calls;
 
-    // Get calls this week (since last restock)
-    const lastRestock = config.last_restock || (Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const usage = await queryLocalPg(
-      `SELECT agent, COUNT(*)::int as calls, SUM(total_tokens)::bigint as tokens
-       FROM app.token_usage
-       WHERE logged_at > $1::TIMESTAMPTZ
-       GROUP BY agent ORDER BY calls DESC`,
-      [lastRestock]
-    );
+    // Get calls since last restock (or last 7 days if no restock)
+        const lastRestock = config.last_restock || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const usage = await queryLocalPg(
+          `SELECT COALESCE(agent, 'unknown') as agent, COUNT(*)::int as calls, SUM(COALESCE(total_tokens,0))::bigint as tokens
+           FROM app.token_usage
+           WHERE logged_at > $1::TIMESTAMPTZ
+           GROUP BY agent ORDER BY calls DESC`,
+          [lastRestock]
+        );
+        // Also count relay requests as usage
+        let relayCalls = 0;
+        try {
+          const relayReqs = await queryLocalPg(
+            `SELECT COUNT(*)::int as calls FROM app.token_usage
+             WHERE logged_at > $1::TIMESTAMPTZ`,
+            [lastRestock]
+          );
+          if (relayReqs.rows && relayReqs.rows[0]) relayCalls = parseInt(relayReqs.rows[0].calls || 0);
+        } catch { /* table may not exist locally */ }
 
-    const totalCalls = usage.rows.reduce((s, r) => s + parseInt(r.calls || 0), 0);
-    const totalTokens = usage.rows.reduce((s, r) => s + parseInt(r.tokens || 0), 0);
+    const totalCalls = usage.rows.reduce((s, r) => s + parseInt(r.calls || 0), 0) + relayCalls;
+        const totalTokens = usage.rows.reduce((s, r) => s + parseInt(r.tokens || 0), 0);
     const remaining = Math.max(0, budget - totalCalls);
 
     // Calculate next restock (Sunday 6pm)

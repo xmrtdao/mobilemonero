@@ -1,5 +1,5 @@
   // ── API helper: add x-api-key to bypass Cloudflare Access on tunnel ──
-  const API_KEY = '0de4fe0de4c4723baeb812bb378f95e852a39379b117795da00095481ff14043';
+  const API_KEY = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
   window.apiFetch = function(url, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
@@ -15,8 +15,8 @@
       const down = d.services.filter(s => !s.healthy).length;
       const flapping = d.services.filter(s => s.flapping).map(s => s.name);
       const taskIssues = d.tasks.filter(t => t.missed > 0 || (t.ageHours > 30));
-      document.getElementById('qds-supervisor').textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🔴 Offline';
-      document.getElementById('qds-supervisor').style.color = d.supervisor.alive ? '#4ade80' : '#f87171';
+      document.getElementById('qds-supervisor').textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
+      document.getElementById('qds-supervisor').style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
       document.getElementById('qds-services-up').textContent = up + '/' + d.services.length;
       document.getElementById('qds-services-up').style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
       document.getElementById('qds-services-down').textContent = down > 0 ? down : '0';
@@ -31,8 +31,7 @@
       document.getElementById('qds-supervisor').style.color = '#6b6b80';
     });
   }
-  updateQDSupervisor();
-  setInterval(updateQDSupervisor, 10000);
+  setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
 
   // ── Security Tile — TrustGraph · CAC Tiers · Access Control ──
   function updateQDSSecurity() {
@@ -69,19 +68,19 @@
       var el = function(id) { return document.getElementById(id); };
       if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#6b6b80'; }
     });
-    apiFetch('/api/ef-university', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'certificates'}), signal: AbortSignal.timeout(25000) }).then(r=>r.json()).then(function(certData) {
-      var certs = certData.certificates || certData.certs || [];
-      var el = function(id) { return document.getElementById(id); };
-      if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
-      if (el('sec-uni-status')) el('sec-uni-status').textContent = '● ' + certs.length + ' graduates';
-    }).catch(function() {
+    apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
+          var certs = certData.holders || certData.certs || certData || [];
+          if (!Array.isArray(certs)) certs = [];
+          var el = function(id) { return document.getElementById(id); };
+          if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
+          if (el('sec-uni-status')) el('sec-uni-status').textContent = '● ' + certs.length + ' graduates';
+        }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
       if (el('sec-cert-count')) el('sec-cert-count').textContent = 'unavailable';
       if (el('sec-uni-status')) el('sec-uni-status').textContent = '○ offline';
     });
   }
-  updateQDSSecurity();
-  setInterval(updateQDSSecurity, 30000);
+  setTimeout(function() { updateQDSSecurity(); setInterval(updateQDSSecurity, 30000); }, 500);
 
   // ── Ship's Log (pirate-themed activity feed) ──
   function updateShipsLog() {
@@ -130,8 +129,7 @@
       if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Activity feed unavailable</span></div>';
     });
   }
-  updateShipsLog();
-  setInterval(updateShipsLog, 5000);
+  setTimeout(function() { updateShipsLog(); setInterval(updateShipsLog, 5000); }, 1000);
 
   // ── Mesh Peers ──
   function updateMeshPeers() {
@@ -157,8 +155,7 @@
       if (mtMsgs) mtMsgs.textContent = d.messageCount || 0;
     }).catch(() => {});
   }
-  updateMeshPeers();
-  setInterval(updateMeshPeers, 5000);
+  setTimeout(function() { updateMeshPeers(); setInterval(updateMeshPeers, 5000); }, 1500);
 
   // ── Bulletin Board Topics (in Quarterdeck) ──
   function updateBoardTopics() {
@@ -185,8 +182,7 @@
       list.innerHTML = '<div style="color:#f87171;font-size:0.65rem;">Articles offline</div>';
     });
   }
-  updateBoardTopics();
-  setInterval(updateBoardTopics, 15000);
+  setTimeout(function() { updateBoardTopics(); setInterval(updateBoardTopics, 15000); }, 2000);
 
   // dashboard.js v7.0.1 — FIX: removed createRadialGradient, shadowBlur, and glow caching to prevent canvas freeze on agent hover
 // ── Rum Quota + Agent Fleet (combined) ──
@@ -332,8 +328,7 @@
       content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
     });
   }
-  updateGrogQuota();
-  setInterval(updateGrogQuota, 15000);
+  setTimeout(function() { updateGrogQuota(); setInterval(updateGrogQuota, 15000); }, 2500);
 
   // ── Task Pipeline ──
   // ── Kanban Task Board ──
@@ -394,8 +389,7 @@
           content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
         });
     }
-  updateTaskPipeline();
-  setInterval(updateTaskPipeline, 15000);
+  setTimeout(function() { updateTaskPipeline(); setInterval(updateTaskPipeline, 15000); }, 3000);
 
   const SUPABASE_URL = '${supabaseUrl}';
   let functions = [];
@@ -449,8 +443,7 @@
       if (e) e.textContent = ids && ids.length ? ids.join(', ') : 'none';
     }).catch(function(){});
   }
-  loadPoolStats();
-  setInterval(loadPoolStats, 30000);
+  setTimeout(function() { loadPoolStats(); setInterval(loadPoolStats, 30000); }, 3500);
 
   // Fleet Agent Registry
   function loadFleetAgents() {
@@ -571,20 +564,23 @@ loadAgentExperienceCard();
       .then(function(d){
         var msgs = d.messages || [];
                 if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
+                // Save scroll position BEFORE DOM replacement (innerHTML resets scrollTop to 0)
+                var wasNearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 50;
                 // Sort chronologically: oldest first, newest last (closest to input)
                 msgs.sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
                 msgsEl.innerHTML = msgs.slice(-100).map(function(m){
-          var name = m.agentLabel || m.agent || 'Unknown';
-          var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
-          var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          var cls = 'color:#a0a0b0;';
-          if (m.agent === 'hermes') cls = 'color:#ff6b35;font-weight:500;';
-          else if (m.agent === 'eliza') cls = 'color:#a78bfa;font-weight:500;';
-          else if (m.agent === 'vex') cls = 'color:#4ade80;font-weight:500;';
-          else if (m.agent === 'alice') cls = 'color:#60a5fa;font-weight:500;';
-          return '<div style="margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a2a;"><span style="'+cls+'font-size:11px;">'+name+'</span> <span style="color:#6b6b80;font-size:10px;float:right;">'+time+'</span><br/><span style="color:#c0c0d0;font-size:12px;word-break:break-word;">'+body+'</span></div>';
-        }).join('');
-        msgsEl.scrollTop = msgsEl.scrollHeight;
+                  var name = m.agentLabel || m.agent || 'Unknown';
+                  var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
+                  var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  var cls = 'color:#a0a0b0;';
+                  if (m.agent === 'hermes') cls = 'color:#ff6b35;font-weight:500;';
+                  else if (m.agent === 'eliza') cls = 'color:#a78bfa;font-weight:500;';
+                  else if (m.agent === 'vex') cls = 'color:#4ade80;font-weight:500;';
+                  else if (m.agent === 'alice') cls = 'color:#60a5fa;font-weight:500;';
+                  return '<div style="margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a2a;"><span style="'+cls+'font-size:11px;">'+name+'</span> <span style="color:#6b6b80;font-size:10px;float:right;">'+time+'</span><br/><span style="color:#c0c0d0;font-size:12px;word-break:break-word;">'+body+'</span></div>';
+                }).join('');
+                // Only auto-scroll to bottom if user was already near the bottom BEFORE the update
+                if (wasNearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
       })
       .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
   }
@@ -620,8 +616,7 @@ loadAgentExperienceCard();
       // Mesh peers unavailable
     });
   };
-  loadMeshPeers();
-  setInterval(loadMeshPeers, 30000);
+  setTimeout(function() { loadMeshPeers(); setInterval(loadMeshPeers, 30000); }, 4000);
 
   // Meshtastic bridge status (inline in Fleet Network)
   function updateMeshtasticBridge() {
@@ -664,8 +659,7 @@ loadAgentExperienceCard();
       if (status) { status.textContent = '○ offline'; status.style.color = '#6b6b80'; }
     });
   }
-  updateMeshtasticBridge();
-  setInterval(updateMeshtasticBridge, 5000);
+  setTimeout(function() { updateMeshtasticBridge(); setInterval(updateMeshtasticBridge, 5000); }, 4500);
 
   // Mining Stats from pool + xmrig (proxied through relay)
   // Load mining leaderboard
@@ -693,8 +687,7 @@ loadAgentExperienceCard();
       if (el) el.innerHTML = '<div class="stat"><span class="label">Leaderboard unavailable</span></div>';
     });
   }
-  loadMiningLeaderboard();
-  setInterval(loadMiningLeaderboard, 15000);
+  setTimeout(function() { loadMiningLeaderboard(); setInterval(loadMiningLeaderboard, 15000); }, 5000);
 
   // Local XMRig heartbeat (vex-laptop auto-reports hashrate)
   function localMinerHeartbeat() {
@@ -711,8 +704,7 @@ loadAgentExperienceCard();
         }
       }).catch(function(){});
   }
-  localMinerHeartbeat();
-  setInterval(localMinerHeartbeat, 60000);
+  setTimeout(function() { localMinerHeartbeat(); setInterval(localMinerHeartbeat, 60000); }, 5500);
 
   // Party Favor Photo inbox refresh (brief — lightweight)
   function loadPfpInbox() {
@@ -755,8 +747,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadPfpInbox();
-  setInterval(loadPfpInbox, 15000);
+  setTimeout(function() { loadPfpInbox(); setInterval(loadPfpInbox, 15000); }, 6000);
 
   // MobileMonero inbox refresh (brief — lightweight)
   function loadMmInbox() {
@@ -795,8 +786,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadMmInbox();
-  setInterval(loadMmInbox, 15000);
+  setTimeout(function() { loadMmInbox(); setInterval(loadMmInbox, 15000); }, 6500);
 
   // 31 Harbor inbox refresh (brief — lightweight)
   function loadHbInbox() {
@@ -835,8 +825,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadHbInbox();
-  setInterval(loadHbInbox, 15000);
+  setTimeout(function() { loadHbInbox(); setInterval(loadHbInbox, 15000); }, 7000);
 
   // XMRT DAO Health — dynamic data from Supabase
   function loadDaoHealth() {
@@ -949,8 +938,7 @@ loadAgentExperienceCard();
         if (statusEl) statusEl.textContent = 'offline';
       });
   }
-  loadDaoHealth();
-  setInterval(loadDaoHealth, 30000);
+  setTimeout(function() { loadDaoHealth(); setInterval(loadDaoHealth, 30000); }, 7500);
 
   // GitHub Activity — dynamic data from GitHub API
   function loadGithubActivity() {
@@ -989,8 +977,7 @@ loadAgentExperienceCard();
         if (repoEl) repoEl.textContent = 'unavailable';
       });
   }
-  loadGithubActivity();
-  setInterval(loadGithubActivity, 60000);
+  setTimeout(function() { loadGithubActivity(); setInterval(loadGithubActivity, 60000); }, 8000);
 
   // PFP Campaign — live stats
   function loadPfpCampaign() {
@@ -1006,8 +993,7 @@ loadAgentExperienceCard();
         if (el('pfp-last-run')) el('pfp-last-run').textContent = d.campaignLastRun;
       });
   }
-  loadPfpCampaign();
-  setInterval(loadPfpCampaign, 30000);
+  setTimeout(function() { loadPfpCampaign(); setInterval(loadPfpCampaign, 30000); }, 8500);
 
   // 31 Harbor Campaign — live stats
   function loadHarborCampaign() {
@@ -1023,8 +1009,7 @@ loadAgentExperienceCard();
         if (el('harbor-last-run')) el('harbor-last-run').textContent = d.harborLastRun;
       });
   }
-  loadHarborCampaign();
-  setInterval(loadHarborCampaign, 30000);
+  setTimeout(function() { loadHarborCampaign(); setInterval(loadHarborCampaign, 30000); }, 9000);
 
   // PFP Leads — live from pfp_leads table via local-sb
   function loadPfpLeads() {
@@ -1051,8 +1036,7 @@ loadAgentExperienceCard();
         }
       });
   }
-  loadPfpLeads();
-  setInterval(loadPfpLeads, 30000);
+  setTimeout(function() { loadPfpLeads(); setInterval(loadPfpLeads, 30000); }, 9500);
 
   function renderFunctions() {
     const search = document.getElementById('search').value.toLowerCase();

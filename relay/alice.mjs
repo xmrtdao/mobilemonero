@@ -544,13 +544,15 @@ async function daemonLoop() {
     state.lastServices = services;
     saveState(state);
     
-    // Run fleet autopilot (GitHub audit, auto-close, auto-assign, escalate)
-    try {
-      const { runAutopilot } = await import('./lib/fleet-autopilot.mjs');
-      await runAutopilot();
-    } catch (e) {
-      log('[AUTOPILOT] Error: ' + e.message);
-    }
+    // Run fleet autopilot (GitHub audit, auto-close, auto-assign, escalate) — DISABLED
+    // Pending captain decision on what Alice's autopilot should do and how to configure it.
+    // See fleet_memory: alice-autopilot-cycle, fleet chat Jul 10-17.
+    // try {
+    //   const { runAutopilot } = await import('./lib/fleet-autopilot.mjs');
+    //   await runAutopilot();
+    // } catch (e) {
+    //   log('[AUTOPILOT] Error: ' + e.message);
+    // }
 
     // Parse inbound emails (PFP + XMRT inboxes) — classify, extract
     // fields, mark parsed, create follow-up tasks for inquiries

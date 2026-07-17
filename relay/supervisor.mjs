@@ -268,7 +268,7 @@ function checkHttp(url, timeoutMs, skipAuth = false) {
     };
     // Add API key for relay health check to bypass Cloudflare Access
     if (skipAuth) {
-      options.headers['x-api-key'] = '0de4fe0de4c4723baeb812bb378f95e852a39379b117795da00095481ff14043';
+      options.headers['x-api-key'] = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
     }
     const req = http.request(options, (res) => {
       res.resume();
