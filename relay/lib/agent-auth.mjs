@@ -17,6 +17,10 @@ export const TRUST_LEVELS = {
 // Hardcoded core agents. Trusted agents are added via registration.
 export const CORE_AGENTS = new Set(['vex', 'hermes', 'eliza', 'eliza-cloud', 'alice',
   'trib', 'arch', 'builder', 'sovereign', 'trustgraph', 'dao', 'global-communicator',
+  'ai-chat-local-context', 'anya-sharma',
+  // Fleet chat aliases (same agents, different name format)
+  'vex-user', 'vex-captain,-hms-speedy', 'alice-sidecar', 'alice-daemon', 'eliza-quartermaster',
+  'hermes-agent', 'hermes',
 ]);
 
 // In-memory trusted agent registry (persisted to relay-data)
@@ -199,7 +203,6 @@ export const TOOL_SECURITY = {
 
   // ── PRODUCTIVITY (TRUSTED agents) ──
   'knowledge-sync': TRUST_LEVELS.TRUSTED,
-  'store-knowledge': TRUST_LEVELS.TRUSTED,
   'device-registration': TRUST_LEVELS.TRUSTED,
   'mining-dashboard': TRUST_LEVELS.TRUSTED,
   'fleet-chat': TRUST_LEVELS.TRUSTED,
@@ -211,6 +214,11 @@ export const TOOL_SECURITY = {
   'db-query': TRUST_LEVELS.TRUSTED,
   'db-rest': TRUST_LEVELS.TRUSTED,
   'shared-context': TRUST_LEVELS.TRUSTED,
+  'recall_context': TRUST_LEVELS.TRUSTED,
+  'knowledge-dedup': TRUST_LEVELS.TRUSTED,
+  'task-dedup': TRUST_LEVELS.TRUSTED,
+  'assign_task': TRUST_LEVELS.TRUSTED,
+  'advance_task': TRUST_LEVELS.TRUSTED,
   'agent-profile': TRUST_LEVELS.TRUSTED,
 
   // ── PUBLIC (anyone) ──

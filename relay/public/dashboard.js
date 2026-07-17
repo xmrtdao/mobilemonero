@@ -1,9 +1,10 @@
   // ── API helper: add x-api-key to bypass Cloudflare Access on tunnel ──
-  const API_KEY = '0de4fe0de4c4723baeb812bb378f95e852a39379b117795da00095481ff14043';
+  const API_KEY = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
   window.apiFetch = function(url, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
     opts.headers['x-api-key'] = API_KEY;
+    opts.headers['x-agent-id'] = 'dashboard';
     return fetch(url, opts);
   };
 
@@ -14,8 +15,8 @@
       const down = d.services.filter(s => !s.healthy).length;
       const flapping = d.services.filter(s => s.flapping).map(s => s.name);
       const taskIssues = d.tasks.filter(t => t.missed > 0 || (t.ageHours > 30));
-      document.getElementById('qds-supervisor').textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🔴 Offline';
-      document.getElementById('qds-supervisor').style.color = d.supervisor.alive ? '#4ade80' : '#f87171';
+      document.getElementById('qds-supervisor').textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
+      document.getElementById('qds-supervisor').style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
       document.getElementById('qds-services-up').textContent = up + '/' + d.services.length;
       document.getElementById('qds-services-up').style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
       document.getElementById('qds-services-down').textContent = down > 0 ? down : '0';
@@ -30,8 +31,7 @@
       document.getElementById('qds-supervisor').style.color = '#6b6b80';
     });
   }
-  updateQDSupervisor();
-  setInterval(updateQDSupervisor, 10000);
+  setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
 
   // ── Security Tile — TrustGraph · CAC Tiers · Access Control ──
   function updateQDSSecurity() {
@@ -68,19 +68,19 @@
       var el = function(id) { return document.getElementById(id); };
       if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#6b6b80'; }
     });
-    apiFetch('/api/ef-university', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'certificates'}), signal: AbortSignal.timeout(25000) }).then(r=>r.json()).then(function(certData) {
-      var certs = certData.certificates || certData.certs || [];
-      var el = function(id) { return document.getElementById(id); };
-      if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
-      if (el('sec-uni-status')) el('sec-uni-status').textContent = '● ' + certs.length + ' graduates';
-    }).catch(function() {
+    apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
+          var certs = certData.holders || certData.certs || certData || [];
+          if (!Array.isArray(certs)) certs = [];
+          var el = function(id) { return document.getElementById(id); };
+          if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
+          if (el('sec-uni-status')) el('sec-uni-status').textContent = '● ' + certs.length + ' graduates';
+        }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
       if (el('sec-cert-count')) el('sec-cert-count').textContent = 'unavailable';
       if (el('sec-uni-status')) el('sec-uni-status').textContent = '○ offline';
     });
   }
-  updateQDSSecurity();
-  setInterval(updateQDSSecurity, 30000);
+  setTimeout(function() { updateQDSSecurity(); setInterval(updateQDSSecurity, 30000); }, 500);
 
   // ── Ship's Log (pirate-themed activity feed) ──
   function updateShipsLog() {
@@ -129,8 +129,7 @@
       if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Activity feed unavailable</span></div>';
     });
   }
-  updateShipsLog();
-  setInterval(updateShipsLog, 5000);
+  setTimeout(function() { updateShipsLog(); setInterval(updateShipsLog, 5000); }, 1000);
 
   // ── Mesh Peers ──
   function updateMeshPeers() {
@@ -156,8 +155,7 @@
       if (mtMsgs) mtMsgs.textContent = d.messageCount || 0;
     }).catch(() => {});
   }
-  updateMeshPeers();
-  setInterval(updateMeshPeers, 5000);
+  setTimeout(function() { updateMeshPeers(); setInterval(updateMeshPeers, 5000); }, 1500);
 
   // ── Bulletin Board Topics (in Quarterdeck) ──
   function updateBoardTopics() {
@@ -184,86 +182,143 @@
       list.innerHTML = '<div style="color:#f87171;font-size:0.65rem;">Articles offline</div>';
     });
   }
-  updateBoardTopics();
-  setInterval(updateBoardTopics, 15000);
+  setTimeout(function() { updateBoardTopics(); setInterval(updateBoardTopics, 15000); }, 2000);
 
-  // ── Rum Quota + Agent Fleet (combined) ──
+  // dashboard.js v7.0.1 — FIX: removed createRadialGradient, shadowBlur, and glow caching to prevent canvas freeze on agent hover
+// ── Rum Quota + Agent Fleet (combined) ──
   function updateGrogQuota() {
     var seq = Date.now();
     var content = document.getElementById('rum-quota-content');
     if (!content) return;
     content.dataset.seq = seq;
     Promise.all([
-      apiFetch('/api/token-usage/summary/agents?days=7', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return [];}),
+      apiFetch('/api/rum-quota', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return null;}),
       apiFetch('/api/fleet-chat/agents', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {agents:[]};}),
-      apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {};})
+      apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {};}),
+      apiFetch('/api/agent-activity', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).catch(function(){return {agents:[]};})
     ]).then(function(results) {
       if (content.dataset.seq != seq) return;
-      var tokenData = results[0] || [];
+      var rumData = results[0];
       var fleetData = results[1] || {agents:[]};
       var trustData = results[2] || {};
+      var activityData = results[3] || {agents:[]};
       var trustAgents = trustData.agents || trustData.nodes || [];
+
+      if (!rumData) {
+        content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
+        return;
+      }
+
+      // Build activity map
+      var activityMap = {};
+      (activityData.agents || []).forEach(function(a) {
+        activityMap[a.agent_id] = a;
+      });
+
+      // Build trust map
       var trustMap = {};
       trustAgents.forEach(function(t) {
-        var name = (t.name || '').toLowerCase();
+        var name = (t.name || '').toLowerCase().trim();
         trustMap[name] = { score: t.trustScore, band: t.trustBand, status: t.status, tier: t.cacTier };
       });
+
+      // Build fleet map
       var fleetMap = {};
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = (a.name || '').toLowerCase().trim();
         fleetMap[name] = a.type || 'relay';
       });
-      var seen = {};
+
+      // Merge rum data with trust and fleet info
       var rows = [];
-      tokenData.forEach(function(t) {
-        var agent = t.agent.toLowerCase();
-        seen[agent] = true;
-        var trust = trustMap[agent] || {};
-        var type = fleetMap[agent] || 'unknown';
+      var totalCalls = rumData.total_calls_used || 0;
+      var budget = rumData.budget_calls || 15000;
+      var remaining = rumData.calls_remaining || 0;
+      var pctUsed = rumData.pct_used || '0.0';
+      var hoursUntil = rumData.hours_until_restock || 0;
+      var nextRestock = rumData.next_restock || '';
+
+      // Format hours until restock
+      var restockStr = '';
+      if (hoursUntil > 24) {
+        restockStr = Math.round(hoursUntil / 24) + 'd ' + Math.round(hoursUntil % 24) + 'h';
+      } else {
+        restockStr = Math.round(hoursUntil) + 'h';
+      }
+
+      var emojiMap = { 'eliza': '🤖', 'joe': '🏴‍☠️', 'hermes': '⚡', 'vex': '🦑', 'alice': '📧', 'system': '⚙️', 'trib': '🏛️', 'harbor': '🏠', 'postman': '📬', 'arch': '🏗️', 'builder': '🔨', 'sovereign': '👑', 'trustgraph': '📊', 'dao-gov': '🏛️', 'global-communicator': '📡', 'kimi': '🧠', 'xmrt-aidy': '🛠️', 'pfp': '📸', 'relay': '🔌', '127.0.0.1': '🖥️', 'suite-unified-chat': '💬', 'local-dev': '💻', 'anya-sharma': '👩‍💼', 'vex-user': '🦑', 'eliza-quartermaster': '🤖', 'vex-captain,-hms-speedy': '🦑', 'hermes-agent': '⚡' };
+
+      rumData.agents.forEach(function(a) {
+        var canon = a.agent.toLowerCase().trim();
+        var trust = trustMap[canon] || {};
+        var type = fleetMap[canon] || 'unknown';
         var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
         var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-        var emoji = agent === 'eliza' ? '🤖' : agent === 'joe' ? '🏴‍☠️' : agent === 'hermes' ? '⚡' : agent === 'vex' ? '🦑' : agent === 'alice' ? '📧' : agent === 'system' ? '⚙️' : agent === 'trib' ? '🏛️' : agent === 'harbor' ? '🏠' : agent === 'postman' ? '📬' : '🫡';
-        rows.push({ agent: t.agent, emoji: emoji, tokens: parseInt(t.total_tokens) || 0, cost: parseFloat(t.total_cost) || 0, calls: parseInt(t.calls) || 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
+        var emoji = emojiMap[canon] || '🫡';
+        rows.push({ agent: a.agent, emoji: emoji, calls: a.calls, tokens: a.tokens, pct: a.pct, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
+
+      // Add fleet agents with no token usage
+      var seen = {};
+      rows.forEach(function(r) { seen[r.agent.toLowerCase().trim()] = true; });
       fleetData.agents.forEach(function(a) {
-        var name = (a.name || '').toLowerCase().split(' ')[0];
+        var name = (a.name || '').toLowerCase().trim();
         if (!seen[name]) {
           seen[name] = true;
           var trust = trustMap[name] || {};
           var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
           var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
-          var emoji = name === 'eliza' ? '🤖' : name === 'hermes' ? '⚡' : name === 'vex' ? '🦑' : name === 'alice' ? '📧' : name === 'trib' ? '🏛️' : name === 'arch' ? '🏗️' : name === 'builder' ? '🔨' : name === 'sovereign' ? '👑' : name === 'trustgraph' ? '📊' : name === 'dao' ? '🏛️' : name === 'global-communicator' ? '📡' : '🫡';
-          rows.push({ agent: a.name, emoji: emoji, tokens: 0, cost: 0, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
+          var emoji = emojiMap[name] || '🫡';
+          rows.push({ agent: a.name, emoji: emoji, calls: 0, tokens: 0, pct: '0.0', trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
       });
-      rows.sort(function(a, b) { return b.tokens - a.tokens; });
-      var totalTokens = rows.reduce(function(s, r){ return s + r.tokens; }, 0);
-      var totalCost = rows.reduce(function(s, r){ return s + r.cost; }, 0);
-      var html = '<div style="font-size:0.6rem;color:#6b6b80;margin-bottom:4px;">🍺 <b style="color:#a78bfa;">' + totalTokens.toLocaleString() + '</b> tokens · <b style="color:#fbbf24;">$' + totalCost.toFixed(4) + '</b> total rum · <b style="color:#4ade80;">' + rows.length + '</b> crew</div>';
+
+      rows.sort(function(a, b) { return b.calls - a.calls; });
+
+      // Header with budget info
+      var html = '<div style="font-size:0.6rem;color:#6b6b80;margin-bottom:4px;">';
+      html += '🍺 <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used · ';
+      html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
+      html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum · ';
+      html += '⏳ <b style="color:#fbbf24;">' + restockStr + '</b> till restock';
+      html += '</div>';
+
+      // Progress bar
+      var pctNum = parseFloat(pctUsed) / 100;
+      var barColor = pctNum > 0.8 ? '#f87171' : pctNum > 0.5 ? '#fbbf24' : '#4ade80';
+      html += '<div style="height:4px;background:#1e1e2e;border-radius:2px;margin-bottom:4px;overflow:hidden;">';
+      html += '<div style="height:100%;width:' + Math.min(pctNum * 100, 100) + '%;background:' + barColor + ';border-radius:2px;transition:width 1s;"></div>';
+      html += '</div>';
+
+      // Column headers
       html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#6b6b80;padding:2px 0;border-bottom:1px solid #1e1e2e;margin-bottom:2px;">';
       html += '<span style="width:16px;"></span>';
       html += '<span style="flex:1;">Crew</span>';
       html += '<span style="width:28px;text-align:center;">St</span>';
       html += '<span style="width:32px;text-align:right;">Trust</span>';
-      html += '<span style="width:50px;text-align:right;">Tokens</span>';
+      html += '<span style="width:40px;text-align:right;">Calls</span>';
       html += '<span style="width:24px;text-align:right;">%</span>';
-      html += '<span style="width:30px;text-align:right;">Calls</span>';
-      html += '<span style="width:56px;text-align:right;padding-right:4px;">Cost</span>';
+      html += '<span style="width:50px;text-align:right;">Tokens</span>';
       html += '</div>';
+
+      // Agent rows
       html += '<div style="display:flex;flex-direction:column;gap:1px;">';
       rows.forEach(function(r) {
-        var pct = totalTokens > 0 ? (r.tokens / totalTokens * 100).toFixed(0) : 0;
         var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#6b6b80;">-</span>';
         var statusDot = r.statusColor !== '#6b6b80' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
+        // Check if agent is actively working
+        var activity = activityMap[r.agent.toLowerCase().trim()];
+        var isWorking = activity && activity.status === 'working';
+        var workingIndicator = isWorking ? '<span style="color:#fbbf24;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">⚡</span>' : '';
+        var durationStr = isWorking && activity.duration_seconds ? ' (' + activity.duration_seconds + 's)' : '';
         html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.6rem;padding:1px 0;">';
         html += '<span>' + r.emoji + '</span>';
         html += '<span style="flex:1;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + r.agent + '</span>';
-        html += '<span style="width:28px;text-align:center;">' + statusDot + '</span>';
+        html += '<span style="width:28px;text-align:center;">' + (isWorking ? workingIndicator : statusDot) + '</span>';
         html += '<span style="width:32px;text-align:right;">' + trustStr + '</span>';
-        html += '<span style="color:#a78bfa;width:50px;text-align:right;font-weight:500;">' + r.tokens.toLocaleString() + '</span>';
-        html += '<span style="color:#6b6b80;width:24px;text-align:right;">' + pct + '%</span>';
-        html += '<span style="color:#6b6b80;width:30px;text-align:right;">' + (r.calls || 0) + '</span>';
-        html += '<span style="color:#fbbf24;width:56px;text-align:right;padding-right:4px;">$' + r.cost.toFixed(4) + '</span>';
+        html += '<span style="color:#a78bfa;width:40px;text-align:right;font-weight:500;">' + (r.calls || 0) + '</span>';
+        html += '<span style="color:#6b6b80;width:24px;text-align:right;">' + r.pct + '%</span>';
+        html += '<span style="color:#6b6b80;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
         html += '</div>';
       });
       html += '</div>';
@@ -273,8 +328,68 @@
       content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
     });
   }
-  updateGrogQuota();
-  setInterval(updateGrogQuota, 15000);
+  setTimeout(function() { updateGrogQuota(); setInterval(updateGrogQuota, 15000); }, 2500);
+
+  // ── Task Pipeline ──
+  // ── Kanban Task Board ──
+    function updateTaskPipeline() {
+      var content = document.getElementById('task-pipeline-content');
+      if (!content) return;
+      apiFetch('/api/tasks/pipeline-summary', { signal: AbortSignal.timeout(25000) })
+        .then(function(r){return r.json();})
+        .then(function(d){
+          var tasks = d.tasks || d.recent || [];
+          var stages = ['PENDING','DISCUSS','PLAN','EXECUTE','VERIFY','INTEGRATE','COMPLETED'];
+          var stageColors = {'PENDING':'#6b6b80','DISCUSS':'#fbbf24','PLAN':'#60a5fa','EXECUTE':'#a78bfa','VERIFY':'#4ade80','INTEGRATE':'#34d399','COMPLETED':'#2dd4bf'};
+          var catColors = {'code':'#3b82f6','infrastructure':'#f97316','research':'#a855f7','documentation':'#06b6d4','testing':'#10b981','bug':'#ef4444','feature':'#8b5cf6','design':'#ec4899'};
+          // Organize tasks into stage buckets
+          var buckets = {};
+          stages.forEach(function(s){ buckets[s] = []; });
+          tasks.forEach(function(t) {
+            var stage = t.stage || 'PENDING';
+            if (stage === 'COMPLETED' || stage === 'DONE') stage = 'COMPLETED';
+            if (!buckets[stage]) buckets[stage] = [];
+            buckets[stage].push(t);
+          });
+          // Render
+          var html = '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-height:180px;">';
+          stages.forEach(function(stage) {
+            var col = buckets[stage] || [];
+            var color = stageColors[stage] || '#6b6b80';
+            html += '<div style="min-width:170px;max-width:170px;background:#0d0d18;border-radius:6px;border:1px solid #1a1a2a;padding:6px;flex-shrink:0;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #1e1e2e;">';
+            html += '<span style="color:'+color+';font-weight:600;font-size:0.6rem;text-transform:uppercase;">'+stage+'</span>';
+            html += '<span style="background:'+color+';color:#000;border-radius:8px;padding:0 5px;font-size:0.5rem;font-weight:700;">'+col.length+'</span>';
+            html += '</div>';
+            col.forEach(function(t) {
+              var pct = t.progress_percentage != null ? t.progress_percentage : 0;
+              var pctCls = pct >= 80 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#6b6b80';
+              var cat = t.category || '';
+              var catColor = catColors[cat.toLowerCase()] || '';
+              var assignee = t.assignee_agent_id || '';
+              var title = (t.title || '').slice(0, 45);
+              // Card
+              html += '<div style="background:#12121f;border-radius:4px;padding:5px;margin-bottom:4px;border:1px solid #1a1a2e;border-left:2px solid '+color+';">';
+              if (catColor) html += '<span style="display:inline-block;background:'+catColor+';color:#000;border-radius:3px;padding:0 4px;font-size:0.45rem;font-weight:600;margin-bottom:2px;">'+cat+'</span>';
+              html += '<div style="color:#d0d0e0;font-size:0.55rem;margin:1px 0;word-break:break-word;">'+title+'</div>';
+              // Progress bar
+              html += '<div style="height:3px;background:#1e1e2e;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
+              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#6b6b80;">';
+              if (assignee) html += '<span>👤 '+assignee.slice(0,8)+'</span>';
+              else html += '<span></span>';
+              html += '<span>'+pct+'%</span>';
+              html += '</div></div>';
+            });
+            if (!col.length) html += '<div style="color:#3a3a4a;font-size:0.5rem;text-align:center;padding:10px 0;">— empty —</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+          content.innerHTML = html;
+        }).catch(function(){
+          content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
+        });
+    }
+  setTimeout(function() { updateTaskPipeline(); setInterval(updateTaskPipeline, 15000); }, 3000);
 
   const SUPABASE_URL = '${supabaseUrl}';
   let functions = [];
@@ -328,8 +443,7 @@
       if (e) e.textContent = ids && ids.length ? ids.join(', ') : 'none';
     }).catch(function(){});
   }
-  loadPoolStats();
-  setInterval(loadPoolStats, 30000);
+  setTimeout(function() { loadPoolStats(); setInterval(loadPoolStats, 30000); }, 3500);
 
   // Fleet Agent Registry
   function loadFleetAgents() {
@@ -441,6 +555,38 @@ async function loadAgentExperienceCard() {
 setInterval(loadAgentExperienceCard, 60000);
 loadAgentExperienceCard();
 
+  // ── Fleet Chat Message Feed ──
+  function loadFleetChat() {
+    var msgsEl = document.getElementById('fleet-chat-msgs');
+    if (!msgsEl) return;
+    apiFetch('/api/fleet-chat/messages?limit=50&channel=all', { signal: AbortSignal.timeout(8000) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var msgs = d.messages || [];
+                if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
+                // Save scroll position BEFORE DOM replacement (innerHTML resets scrollTop to 0)
+                var wasNearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 50;
+                // Sort chronologically: oldest first, newest last (closest to input)
+                msgs.sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
+                msgsEl.innerHTML = msgs.slice(-100).map(function(m){
+                  var name = m.agentLabel || m.agent || 'Unknown';
+                  var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
+                  var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  var cls = 'color:#a0a0b0;';
+                  if (m.agent === 'hermes') cls = 'color:#ff6b35;font-weight:500;';
+                  else if (m.agent === 'eliza') cls = 'color:#a78bfa;font-weight:500;';
+                  else if (m.agent === 'vex') cls = 'color:#4ade80;font-weight:500;';
+                  else if (m.agent === 'alice') cls = 'color:#60a5fa;font-weight:500;';
+                  return '<div style="margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a2a;"><span style="'+cls+'font-size:11px;">'+name+'</span> <span style="color:#6b6b80;font-size:10px;float:right;">'+time+'</span><br/><span style="color:#c0c0d0;font-size:12px;word-break:break-word;">'+body+'</span></div>';
+                }).join('');
+                // Only auto-scroll to bottom if user was already near the bottom BEFORE the update
+                if (wasNearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
+      })
+      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
+  }
+  setInterval(loadFleetChat, 3000);
+  loadFleetChat();
+
   setInterval(loadFleetAgents, 15000);
 
   // Load mesh peers from peer connector
@@ -470,8 +616,7 @@ loadAgentExperienceCard();
       // Mesh peers unavailable
     });
   };
-  loadMeshPeers();
-  setInterval(loadMeshPeers, 30000);
+  setTimeout(function() { loadMeshPeers(); setInterval(loadMeshPeers, 30000); }, 4000);
 
   // Meshtastic bridge status (inline in Fleet Network)
   function updateMeshtasticBridge() {
@@ -514,8 +659,7 @@ loadAgentExperienceCard();
       if (status) { status.textContent = '○ offline'; status.style.color = '#6b6b80'; }
     });
   }
-  updateMeshtasticBridge();
-  setInterval(updateMeshtasticBridge, 5000);
+  setTimeout(function() { updateMeshtasticBridge(); setInterval(updateMeshtasticBridge, 5000); }, 4500);
 
   // Mining Stats from pool + xmrig (proxied through relay)
   // Load mining leaderboard
@@ -543,8 +687,7 @@ loadAgentExperienceCard();
       if (el) el.innerHTML = '<div class="stat"><span class="label">Leaderboard unavailable</span></div>';
     });
   }
-  loadMiningLeaderboard();
-  setInterval(loadMiningLeaderboard, 15000);
+  setTimeout(function() { loadMiningLeaderboard(); setInterval(loadMiningLeaderboard, 15000); }, 5000);
 
   // Local XMRig heartbeat (vex-laptop auto-reports hashrate)
   function localMinerHeartbeat() {
@@ -561,8 +704,7 @@ loadAgentExperienceCard();
         }
       }).catch(function(){});
   }
-  localMinerHeartbeat();
-  setInterval(localMinerHeartbeat, 60000);
+  setTimeout(function() { localMinerHeartbeat(); setInterval(localMinerHeartbeat, 60000); }, 5500);
 
   // Party Favor Photo inbox refresh (brief — lightweight)
   function loadPfpInbox() {
@@ -584,15 +726,18 @@ loadAgentExperienceCard();
       });
       var count = 0;
       Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
+        var msgs = groups[addr];
+        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
+        html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
+        html += '<span class="value badge badge-info">' + msgs.length + '</span>';
+        html += '</div>';
+        msgs.forEach(function(m){
           count++;
           if (count > 10) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
+          html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
+          html += '<span class="label">' + (m.from||'').substring(0,28) + '</span>';
+          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,22) + '</span>';
+          html += '</div>';
         });
       });
       if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
@@ -602,8 +747,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadPfpInbox();
-  setInterval(loadPfpInbox, 15000);
+  setTimeout(function() { loadPfpInbox(); setInterval(loadPfpInbox, 15000); }, 6000);
 
   // MobileMonero inbox refresh (brief — lightweight)
   function loadMmInbox() {
@@ -629,7 +773,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 10) return;
+          if (count > 8) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -642,8 +786,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadMmInbox();
-  setInterval(loadMmInbox, 15000);
+  setTimeout(function() { loadMmInbox(); setInterval(loadMmInbox, 15000); }, 6500);
 
   // 31 Harbor inbox refresh (brief — lightweight)
   function loadHbInbox() {
@@ -669,7 +812,7 @@ loadAgentExperienceCard();
         html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
         groups[addr].forEach(function(m){
           count++;
-          if (count > 10) return;
+          if (count > 8) return;
           html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
           html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
           html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
@@ -682,8 +825,7 @@ loadAgentExperienceCard();
       if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
   }
-  loadHbInbox();
-  setInterval(loadHbInbox, 15000);
+  setTimeout(function() { loadHbInbox(); setInterval(loadHbInbox, 15000); }, 7000);
 
   // XMRT DAO Health — dynamic data from Supabase
   function loadDaoHealth() {
@@ -796,8 +938,7 @@ loadAgentExperienceCard();
         if (statusEl) statusEl.textContent = 'offline';
       });
   }
-  loadDaoHealth();
-  setInterval(loadDaoHealth, 30000);
+  setTimeout(function() { loadDaoHealth(); setInterval(loadDaoHealth, 30000); }, 7500);
 
   // GitHub Activity — dynamic data from GitHub API
   function loadGithubActivity() {
@@ -807,55 +948,28 @@ loadAgentExperienceCard();
         var repoEl = document.getElementById('gh-repo-count');
         var commitEl = document.getElementById('gh-last-commit');
         var recentEl = document.getElementById('gh-recent-commits');
-        var prEl = document.getElementById('gh-recent-prs');
-        var issueEl = document.getElementById('gh-recent-issues');
 
         if (d.total_repos) {
           if (repoEl) repoEl.textContent = d.total_repos + ' repos';
         }
 
-        var NL = String.fromCharCode(10);
-
-        // Commits
         if (d.recent_commits && d.recent_commits.length > 0) {
           var last = d.recent_commits[0];
+          var NL = String.fromCharCode(10);
           var lastMsg = (last.commit && last.commit.message) ? last.commit.message.split(NL)[0].slice(0, 35) : 'recent commit';
           var lastWhen = new Date(last.commit.author.date).toLocaleDateString();
           var lastRepo = last._repo ? ' [' + last._repo + ']' : '';
           if (commitEl) commitEl.textContent = lastMsg + lastRepo + ' (' + lastWhen + ')';
 
+          // Show last 5 commits across all repos with repo tag
           if (recentEl) {
-            recentEl.innerHTML = d.recent_commits.slice(0,6).map(function(c){
-              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 24) : '?';
+            recentEl.innerHTML = d.recent_commits.slice(0,5).map(function(c){
+              var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
               var dd = new Date(c.commit.author.date).toLocaleDateString();
               var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
               return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#6b6b80;">(' + dd + ')</span></div>';
             }).join('');
           }
-        }
-
-        // Pull Requests
-        if (d.recent_prs && d.recent_prs.length > 0 && prEl) {
-          prEl.innerHTML = d.recent_prs.slice(0,6).map(function(pr){
-            var state = pr.state === 'open' ? '<span style="color:#4ade80;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
-            var title = (pr.title || '?').substring(0, 28);
-            var repo = pr._repo ? '<span style="color:#fbbf24;">' + pr._repo + '</span> ' : '';
-            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
-          }).join('');
-        } else if (prEl) {
-          prEl.innerHTML = '<div class="stat"><span class="label">No PRs</span></div>';
-        }
-
-        // Issues
-        if (d.recent_issues && d.recent_issues.length > 0 && issueEl) {
-          issueEl.innerHTML = d.recent_issues.slice(0,6).map(function(issue){
-            var state = issue.state === 'open' ? '<span style="color:#f87171;">open</span>' : '<span style="color:#6b6b80;">closed</span>';
-            var title = (issue.title || '?').substring(0, 28);
-            var repo = issue._repo ? '<span style="color:#60a5fa;">' + issue._repo + '</span> ' : '';
-            return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + title + ' ' + state + '</div>';
-          }).join('');
-        } else if (issueEl) {
-          issueEl.innerHTML = '<div class="stat"><span class="label">No issues</span></div>';
         }
       })
       .catch(function(){
@@ -863,8 +977,7 @@ loadAgentExperienceCard();
         if (repoEl) repoEl.textContent = 'unavailable';
       });
   }
-  loadGithubActivity();
-  setInterval(loadGithubActivity, 60000);
+  setTimeout(function() { loadGithubActivity(); setInterval(loadGithubActivity, 60000); }, 8000);
 
   // PFP Campaign — live stats
   function loadPfpCampaign() {
@@ -880,8 +993,7 @@ loadAgentExperienceCard();
         if (el('pfp-last-run')) el('pfp-last-run').textContent = d.campaignLastRun;
       });
   }
-  loadPfpCampaign();
-  setInterval(loadPfpCampaign, 30000);
+  setTimeout(function() { loadPfpCampaign(); setInterval(loadPfpCampaign, 30000); }, 8500);
 
   // 31 Harbor Campaign — live stats
   function loadHarborCampaign() {
@@ -897,8 +1009,7 @@ loadAgentExperienceCard();
         if (el('harbor-last-run')) el('harbor-last-run').textContent = d.harborLastRun;
       });
   }
-  loadHarborCampaign();
-  setInterval(loadHarborCampaign, 30000);
+  setTimeout(function() { loadHarborCampaign(); setInterval(loadHarborCampaign, 30000); }, 9000);
 
   // PFP Leads — live from pfp_leads table via local-sb
   function loadPfpLeads() {
@@ -925,8 +1036,7 @@ loadAgentExperienceCard();
         }
       });
   }
-  loadPfpLeads();
-  setInterval(loadPfpLeads, 30000);
+  setTimeout(function() { loadPfpLeads(); setInterval(loadPfpLeads, 30000); }, 9500);
 
   function renderFunctions() {
     const search = document.getElementById('search').value.toLowerCase();
@@ -996,6 +1106,16 @@ loadAgentExperienceCard();
     renderFunctions();
   }
   
+  // ── Fleet Chat Attachment Support ──
+  // Track pending file to attach to next message
+  var pendingFile = null;
+  function attachFleetFile(input) {
+    var file = input.files[0];
+    if (!file) return;
+    pendingFile = file;
+    document.getElementById('fleet-chat-attach-status').textContent = '📎 ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB) — will attach with next message';
+  }
+
   function sendFleetChat() {
     // Get or prompt for agent name (persisted in localStorage)
     var nameInput = document.getElementById('fleet-chat-name');
@@ -1028,6 +1148,36 @@ loadAgentExperienceCard();
       .then(function(d){
         document.getElementById('fleet-chat-status').textContent = '● connected';
         document.getElementById('fleet-chat-status').style.color = '#4ade80';
+        // If there's a pending file, upload it as an attachment to this message
+        if (pendingFile && d.message && d.message.id) {
+          var file = pendingFile;
+          pendingFile = null;
+          document.getElementById('fleet-chat-attach-status').textContent = '📤 Uploading ' + file.name + '...';
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            var content = e.target.result;
+            // For text files, send the content directly. For binary, send base64.
+            var payload = {
+              message_id: d.message.id,
+              agent_id: agent,
+              filename: file.name,
+              file_type: file.type || 'application/octet-stream',
+              content: content,
+              content_preview: content.slice(0, 500),
+            };
+            apiFetch('/api/fleet-chat/attach', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(payload),
+            }).then(function(r){return r.json();}).then(function(ar){
+              document.getElementById('fleet-chat-attach-status').textContent = '✅ Attached ' + file.name;
+              fetchFleetMessages();
+            }).catch(function(err){
+              document.getElementById('fleet-chat-attach-status').textContent = '❌ Upload failed: ' + err.message;
+            });
+          };
+          reader.readAsDataURL(file);
+        }
         // Remove optimistic message, let poll re-add with real data-id
         var opt = msgs.querySelector('[data-id="' + tempId + '"]');
         if (opt) opt.remove();
@@ -1059,7 +1209,28 @@ loadAgentExperienceCard();
             var div = document.createElement('div');
             div.style.marginBottom = '6px';
             div.setAttribute('data-id', m.id);
-            div.innerHTML = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
+            var msgHtml = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
+            // Check for attachments on this message
+            if (m.id) {
+              apiFetch('/api/fleet-chat/attachments/' + encodeURIComponent(m.id), { signal: AbortSignal.timeout(5000) })
+                .then(function(r){return r.json();})
+                .then(function(ad){
+                  if (ad.attachments && ad.attachments.length > 0) {
+                    var attHtml = '<div style="margin-top:4px;font-size:10px;">';
+                    ad.attachments.forEach(function(a){
+                      attHtml += '<span style="color:#a78bfa;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">📎 ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
+                    });
+                    attHtml += '</div>';
+                    var attDiv = div.querySelector('.fleet-attachments');
+                    if (!attDiv) {
+                      attDiv = document.createElement('div');
+                      attDiv.className = 'fleet-attachments';
+                      div.appendChild(attDiv);
+                    }
+                    attDiv.innerHTML = attHtml;
+                  }
+                }).catch(function(){});
+            }
             msgs.appendChild(div);
             lastFleetTs = Math.max(lastFleetTs, m.ts);
           }
@@ -1604,6 +1775,7 @@ loadAgentExperienceCard();
 
   // Effect toggles
   let effectExplode = false; // OFF by default — start unexploded, click Explode for galaxy view
+  let effectOrbit = true;    // on by default — orbital physics
   let effectLabels = true;   // on by default
   let effectTrust = true;    // on by default — show trust score arcs on agent nodes
   let effectCluster = false; // off by default — group nodes by category
@@ -1618,6 +1790,7 @@ loadAgentExperienceCard();
       // Zoom to 100% when exploded, back to 30% when unexploded
       if (effectExplode) { camZ = 1.0; } else { camZ = 0.3; }
     }
+    else if (name === 'orbit') { effectOrbit = !effectOrbit; newState = effectOrbit; }
     else if (name === 'labels') { effectLabels = !effectLabels; newState = effectLabels; }
     else if (name === 'trust') { effectTrust = !effectTrust; newState = effectTrust; }
     else if (name === 'cluster') { effectCluster = !effectCluster; newState = effectCluster; }
@@ -2102,40 +2275,19 @@ loadAgentExperienceCard();
         }
       }
 
-      // ── Outer glow (large, faint halo) ──
+      // ── Outer glow (large, faint halo) — solid fill, no gradient (faster) ──
       var isStar = n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema';
-      var glowSize = n.category === 'agent' || isStar ? r * 5 : r * 3;
-      // Use a single reusable gradient at origin, translate canvas instead
-      if (!window._galaxyGlowGrad) {
-        window._galaxyGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-        window._galaxyGlowGrad.addColorStop(0, '#e8c06020');
-        window._galaxyGlowGrad.addColorStop(0.3, '#e8c06008');
-        window._galaxyGlowGrad.addColorStop(1, 'transparent');
-      }
-      ctx.save();
-      ctx.translate(n.x, n.y);
-      ctx.scale(glowSize, glowSize);
+      var glowSize = Math.max(1, n.category === 'agent' || isStar ? r * 5 : r * 3);
       ctx.beginPath();
-      ctx.arc(0, 0, 1, 0, Math.PI * 2);
-      ctx.fillStyle = window._galaxyGlowGrad;
+      ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
+      ctx.fillStyle = warmColor + '12';
       ctx.fill();
-      ctx.restore();
 
-      // ── Inner glow (medium, visible aura) ──
-      if (!window._galaxyInnerGlowGrad) {
-        window._galaxyInnerGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-        window._galaxyInnerGlowGrad.addColorStop(0, '#e8c06060');
-        window._galaxyInnerGlowGrad.addColorStop(0.5, '#e8c06025');
-        window._galaxyInnerGlowGrad.addColorStop(1, 'transparent');
-      }
-      ctx.save();
-      ctx.translate(n.x, n.y);
-      ctx.scale(r * 2, r * 2);
+      // ── Inner glow (medium, visible aura) — solid fill ──
       ctx.beginPath();
-      ctx.arc(0, 0, 1, 0, Math.PI * 2);
-      ctx.fillStyle = window._galaxyInnerGlowGrad;
+      ctx.arc(n.x, n.y, Math.max(1, r * 2), 0, Math.PI * 2);
+      ctx.fillStyle = warmColor + '25';
       ctx.fill();
-      ctx.restore();
 
       // ── Lens flare cross for agent nodes and star nodes ──
       if (n.category === 'agent' || n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema') {
@@ -2172,43 +2324,45 @@ loadAgentExperienceCard();
       // ── Agent nodes: golden ring + score gauge ──
       if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
-        // Outer ring (glowing golden) — no shadowBlur, use stroke alpha instead
+        // Outer ring (glowing golden) — shadow only on hover/select to avoid GPU choke
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = warmColor + '15';
         ctx.fill();
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = (isSelected ? 3 : isHovered ? 2.5 : 1.5) / camZ;
-        ctx.globalAlpha = isSelected ? 0.9 : isHovered ? 0.7 : 0.5;
+        if (isSelected || isHovered) {
+          ctx.shadowColor = warmColor;
+          ctx.shadowBlur = 8 / camZ;
+        }
         ctx.stroke();
-        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 0;
 
-        // Inner filled arc showing score — no shadowBlur
+        // Inner filled arc showing score — no shadow (too expensive per frame)
         var arcEnd = -Math.PI / 2 + (score / 100) * Math.PI * 2;
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.6, -Math.PI / 2, arcEnd);
         ctx.strokeStyle = warmColor;
         ctx.lineWidth = 3 / camZ;
-        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
         ctx.stroke();
-        ctx.globalAlpha = 1.0;
 
-        // Bright golden center dot — no shadowBlur
+        // Bright golden center dot — no shadow
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.25, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = isSelected ? 0.8 : 0.5;
+        ctx.globalAlpha = 0.8;
         ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
 
-        // Score label
-        if (isSelected || isHovered) {
-          ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
-          ctx.fillStyle = warmColor;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
-        }
+        // Score label — disabled: ctx.font setter is slow and causes freeze on hover
+        // if (isSelected || isHovered) {
+        //   ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
+        //   ctx.fillStyle = warmColor;
+        //   ctx.textAlign = 'center';
+        //   ctx.textBaseline = 'top';
+        //   ctx.fillText(score.toFixed(1) + ' ' + (trustInfo.band || ''), n.x, n.y + r + 4 / camZ + (fontSize || 10) + 2);
+        // }
       } else {
         // Non-agent nodes: warm glowing dot
         ctx.beginPath();
@@ -2384,25 +2538,16 @@ loadAgentExperienceCard();
       return;
     }
     const n = getNodeAtScreen(sx, sy);
-    if (n !== hoveredNode) {
-      hoveredNode = n;
-      canvas.style.cursor = n ? 'pointer' : 'grab';
-      if (n && tooltip) {
-        // Cache connection count on the node so we don't filter edges every frame
-        if (n._connCount === undefined) {
-          n._connCount = edges.filter(function(e){return e.source === n.id || e.target === n.id;}).length;
-        }
-        tooltip.style.display = 'block';
-        tooltip.style.left = (sx + 14) + 'px';
-        tooltip.style.top = (sy - 10) + 'px';
-        tooltip.textContent = n.label + ' — ' + n.category + ' (' + n._connCount + ' connections)';
-      } else if (tooltip) {
-        tooltip.style.display = 'none';
-      }
-    } else if (n && tooltip) {
-      // Same node — just update position, skip DOM text/display changes
+    hoveredNode = n;
+    canvas.style.cursor = n ? 'pointer' : 'grab';
+    if (n && tooltip) {
+      tooltip.style.display = 'block';
       tooltip.style.left = (sx + 14) + 'px';
       tooltip.style.top = (sy - 10) + 'px';
+      const connCount = edges.filter(e => e.source === n.id || e.target === n.id).length;
+      tooltip.textContent = n.label + ' — ' + n.category + ' (' + connCount + ' connections)';
+    } else if (tooltip) {
+      tooltip.style.display = 'none';
     }
   });
 
