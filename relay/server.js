@@ -3599,11 +3599,13 @@ app.get('/', (req, res) => {
     .card:hover { border-color: var(--accent-orange-glow); }
     .card h3 { color: var(--accent-orange); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; font-weight: 700; }
     @media (min-width: 640px) { .card h3 { font-size: 0.8rem; margin-bottom: 0.6rem; } }
-    .stat { display: flex; justify-content: space-between; padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.65rem; gap: 0.3rem; }
+    .stat { display: flex; justify-content: space-between; padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.65rem; gap: 0.3rem; overflow: hidden; }
     @media (min-width: 640px) { .stat { padding: 0.3rem 0; font-size: 0.85rem; gap: 0.5rem; } }
     .stat:last-child { border-bottom: none; }
-    .label { color: var(--text-muted); flex-shrink: 0; }
-    .value { color: var(--text-primary); font-family: var(--font-mono); text-align: right; word-break: break-all; min-width: 0; }
+    .label { color: var(--text-muted); flex-shrink: 0; white-space: nowrap; }
+    .value { color: var(--text-primary); font-family: var(--font-mono); text-align: right; word-break: break-word; min-width: 0; overflow-wrap: break-word; hyphens: auto; max-width: 60%; }
+    @media (min-width: 480px) { .value { max-width: 70%; } }
+    @media (min-width: 640px) { .value { max-width: none; } }
     .badge { display: inline-block; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; }
     @media (min-width: 640px) { .badge { font-size: 0.7rem; padding: 0.1rem 0.4rem; } }
     .badge-ok { background: rgba(74,222,128,0.12); color: var(--accent-teal); }
@@ -3766,9 +3768,19 @@ app.get('/', (req, res) => {
       .fn-desc { display: none; }
       .endpoint-url { max-width: 60px; }
       .fn-inputs { display: none; }
+      th:nth-child(4), td:nth-child(4) { display: none; } /* hide Description column */
+      th:nth-child(5), td:nth-child(5) { display: none; } /* hide Endpoint column */
     }
     @media (max-width: 640px) {
       .hide-mobile { display: none; }
+    }
+    /* Collapse tools list on mobile — show count only */
+    @media (max-width: 480px) {
+      .tools-list-mobile { display: none; }
+      .tools-count-mobile { display: inline; }
+    }
+    @media (min-width: 481px) {
+      .tools-count-mobile { display: none; }
     }
     /* Quarterdeck responsive layout */
     .quarterdeck-mid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
@@ -4142,7 +4154,8 @@ app.get('/', (req, res) => {
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🔧 Tools</div>
-      ${tools.map(t => '<div class="stat"><span class="label">' + t + '</span><span class="value badge badge-info">ready</span></div>').join('')}
+      <div class="tools-list-mobile">${tools.map(t => '<div class="stat"><span class="label">' + t + '</span><span class="value badge badge-info">ready</span></div>').join('')}</div>
+      <div class="tools-count-mobile"><div class="stat"><span class="label">Total Tools</span><span class="value">${toolCount}</span></div></div>
       ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;"><div style="font-size:0.6rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px;">Local Functions</div>' + localFunctions.map(f => '<div class="stat"><span class="label" style="color:#4ade80;">fn:' + f.name + '</span><span class="value badge badge-info">local</span></div>').join('') + '</div>' : ''}
       <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
         <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
@@ -7110,8 +7123,16 @@ async function routeFleetMessage(entry) {
               }
             }
           }
-    const toolName = parsed?.tool;
+    let toolName = parsed?.tool;
         const args = parsed?.args || {};
+        // Normalize underscore tool names to hyphenated (cloud Eliza uses underscores, relay uses hyphens)
+        if (toolName && !toolHandlers[toolName]) {
+          const hyphenated = toolName.replace(/_/g, '-');
+          if (toolHandlers[hyphenated]) {
+            toolName = hyphenated;
+            parsed.tool = hyphenated;
+          }
+        }
         if (!toolName || !toolHandlers[toolName]) return { executed: false };
 
     // Auto-inject agent name for resend-send-email if missing
