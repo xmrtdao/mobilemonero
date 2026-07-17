@@ -7069,7 +7069,15 @@ async function routeFleetMessage(entry) {
               parsed = JSON.parse(jsonText);
             } catch {}
           }
-    
+
+          // Fallback: try to extract JSON across multiple lines (model may have inserted newlines)
+          if (!parsed && reply.includes('TOOL_CALL:')) {
+            const m = reply.match(/TOOL_CALL:\s*(\{[\s\S]*?\})\s*$/);
+            if (m) {
+              try { parsed = JSON.parse(m[1]); } catch {}
+            }
+          }
+
           // Fallback: function-call style TOOL_CALL: toolName(arg1="val1",arg2="val2")
           if (!parsed) {
             toolCallLine = strippedLines.find(l => /^TOOL_CALL:\s*\w+\s*\(/.test(l.trim()));
@@ -7091,6 +7099,11 @@ async function routeFleetMessage(entry) {
     const toolName = parsed?.tool;
         const args = parsed?.args || {};
         if (!toolName || !toolHandlers[toolName]) return { executed: false };
+
+    // Auto-inject agent name for resend-send-email if missing
+    if (toolName === 'resend-send-email' && !args.agent) {
+      args.agent = agentName === 'eliza' ? 'eliza' : agentName === 'vex' ? 'vex' : agentName === 'hermes' ? 'hermes' : agentName;
+    }
 
     // Authorize the agent
     const toolLevel = getToolLevel(toolName);
@@ -7235,6 +7248,7 @@ ${ctxJson}
 GROUNDING RULES:
 - If a fact is in the JSON block, reference it directly.
 - If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
+- For resend-send-email: ALWAYS include the "agent" field (use "eliza" if you are Eliza). Keep the email body SHORT — under 200 words — to avoid output truncation. Do NOT include long numbered lists in the body.
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
 - For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
@@ -7466,11 +7480,10 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
 - \`recall_context\` — Pull structured context across fleet_memory, knowledge_entities, and shared_context by topic. Pass agent_id to filter by agent.
 - \`knowledge-dedup\` — Find and merge duplicate knowledge entities by name similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.
 - \`task-dedup\` — Find and merge duplicate tasks by exact title match or trigram similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.
-'assign_task': 'Create a task for another agent (requires task_id, title, description, assigned_to). Stage is set to DISCUSS and announced to fleet chat.',
-'advance_task': 'Advance a task to the next stage. Requires task_id and to_stage (DISCUSS, PLANNING, EXECUTION, REVIEW, COMPLETION). Announces stage change to fleet chat.',
 - \`fleet_pulse\` — Get full system health snapshot
 - \`activity_log\` — Query the activity feed (filter by activity_type, limit)
 - \`resend-inbox\` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)
+- \`resend-send-email\` — Send an email via Resend. Args: agent (use "eliza"), to, subject, body. KEEP THE BODY SHORT (under 200 words) to avoid output truncation.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
 \`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}\`
@@ -7510,7 +7523,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
               message: fullPrompt,
               model: 'deepseek-v4-flash:cloud',
               temperature: 0.4,
-              maxTokens: 320,
+              maxTokens: 1024,
             }),
             signal: AbortSignal.timeout(28000),
           });
