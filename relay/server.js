@@ -8190,7 +8190,7 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
 
   const AGENT_FROM = {
     'vex': 'Vex Relay <vex@mobilemonero.com>',
-    'eliza': 'Eliza Cloud <eliza@mobilemonero.com>',
+    'eliza': 'Eliza Cloud <eliza@partyfavorphoto.com>',
     'hermes': 'Hermes Mobile <hermes@mobilemonero.com>',
     'pfp': 'Party Favor Photo <bookings@partyfavorphoto.com>',
     'harbor': '31 Harbor <david@31harbor.com>',
