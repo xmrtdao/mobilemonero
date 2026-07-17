@@ -5956,7 +5956,8 @@ app.get('/api/dao/health', async (req, res) => {
       // Check supervisor-managed services for restarts and uptime
       try {
         const stateFile = join(DATA_DIR, 'supervisor-state.json');
-        if (existsSync(stateFile)) {
+        const fileExists = existsSync(stateFile);
+        if (fileExists) {
           const raw = JSON.parse(readFileSync(stateFile, 'utf8'));
           const svcs = raw.services || {};
           let totalRestarts = 0;
@@ -5978,6 +5979,28 @@ app.get('/api/dao/health', async (req, res) => {
           const settledCount = serviceCount - adoptedCount;
           if (unhealthyCount === 0 && settledCount > 0) score += 10;
           if (totalRestarts > 10) score -= 10;
+          // If services is empty (relay service manager disabled), do live checks instead
+          if (serviceCount === 0) {
+            // No supervisor-state.json services — do live port checks on known services
+            // Skip self-check on 8080 (we're handling this request, so relay is up)
+            const liveChecks = await Promise.allSettled([
+              fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+              fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
+              fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
+            ]);
+            const allHealthy = liveChecks.every(r => r.status === 'fulfilled' && r.value);
+            if (allHealthy) score += 10; // relay is healthy (handling this request) + all others healthy
+          }
+        } else {
+          // No supervisor-state.json — do live port checks on known services
+          // Skip self-check on 8080 (we're handling this request, so relay is up)
+          const liveChecks = await Promise.allSettled([
+            fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+            fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
+            fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
+          ]);
+          const allHealthy = liveChecks.every(r => r.status === 'fulfilled' && r.value);
+          if (allHealthy) score += 10;
         }
       } catch (_) {}
       // Check MCP server health
@@ -6853,12 +6876,13 @@ async function gatherFleetContext() {
       latencyMs: ollama?.latency,
     },
     supervisor: supervisor && !supervisor.error ? {
-      relayUp: supervisor?.services?.relay?.childPid != null,
-      // Wrapper-exit services (pg, local-sb, tunnel) have null childPid
-      // because the wrapper process exits cleanly. Check uptimeSec > 0 instead.
-      pgUp: (supervisor?.services?.pg?.uptimeSec || 0) > 0,
-      localSbUp: (supervisor?.services?.['local-sb']?.uptimeSec || 0) > 0,
-      tunnelUp: (supervisor?.services?.tunnel?.uptimeSec || 0) > 0,
+      relayUp: supervisor?.services?.relay?.healthy ?? (supervisor?.services?.relay?.childPid != null),
+      // Services managed externally (pg, local-sb, tunnel) have null childPid and no uptimeSec
+      // because the relay's service manager is disabled (MANAGED_SERVICES = []).
+      // Use the healthy flag from /api/supervisor/status instead.
+      pgUp: supervisor?.services?.pg?.healthy ?? false,
+      localSbUp: supervisor?.services?.['local-sb']?.healthy ?? false,
+      tunnelUp: supervisor?.services?.tunnel?.healthy ?? false,
     } : null,
     cron: cronStatus ? {
       totalJobs: cronStatus.totalJobs || 0,
@@ -10483,8 +10507,8 @@ app.get('/api/obsidian-graph', async (req, res) => {
     // Run parallel health probes for key nodes
     const statusChecks = {
       'Relay Server': fetch('http://localhost:8080/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
-      'Local Supabase': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => (d.services?.['local-sb']?.uptimeSec || 0) > 0 ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
-      'Cloudflare Tunnel': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => (d.services?.tunnel?.uptimeSec || 0) > 0 ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
+      'Local Supabase': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => d.services?.find(s => s.name === 'local-sb')?.healthy ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
+      'Cloudflare Tunnel': fetch('http://localhost:8080/api/supervisor/status', { signal: AbortSignal.timeout(2000) }).then(r => r.json().then(d => d.services?.find(s => s.name === 'tunnel')?.healthy ? 'up' : 'down').catch(() => 'unknown')).catch(() => 'down'),
       'Cron Engine': fetch('http://localhost:8080/cron/status', { signal: AbortSignal.timeout(2000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
       'GitHub Org': fetch('https://api.github.com/orgs/xmrtdao', { signal: AbortSignal.timeout(3000) }).then(r => r.ok ? 'up' : 'degraded').catch(() => 'down'),
       'Resend API': fetch('https://api.resend.com/domains', { signal: AbortSignal.timeout(3000), headers: { 'Authorization': 'Bearer re_' } }).then(r => r.status === 401 ? 'up' : 'degraded').catch(() => 'down'),
