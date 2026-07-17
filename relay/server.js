@@ -3327,7 +3327,7 @@ app.get('/api/supervisor/status', async (req, res) => {
     ];
     const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
-      const healthy = await def.check().catch(() => false);
+      const healthy = await Promise.resolve(def.check()).catch(() => false);
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
       return {
