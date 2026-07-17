@@ -1868,9 +1868,14 @@ const toolHandlers = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent, to, subject, body }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(20000),
       });
-      return await res.json();
+      const data = await res.json();
+      // If the Resend key is over quota, suggest using a different agent
+      if (data?.error?.statusCode === 429) {
+        return { success: false, error: 'Resend daily quota exceeded for this domain. Try agent: "pfp" (bookings@partyfavorphoto.com) or agent: "harbor" (david@31harbor.com) instead. Quota resets at midnight UTC.' };
+      }
+      return data;
     } catch (err) { return { success: false, error: err.message }; }
       },
 
