@@ -268,7 +268,7 @@ function checkHttp(url, timeoutMs, skipAuth = false) {
     };
     // Add API key for relay health check to bypass Cloudflare Access
     if (skipAuth) {
-      options.headers['x-api-key'] = '0de4fe0de4c4723baeb812bb378f95e852a39379b117795da00095481ff14043';
+      options.headers['x-api-key'] = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
     }
     const req = http.request(options, (res) => {
       res.resume();
@@ -352,6 +352,74 @@ function pruneLegacyState() {
   if (stale.length > 0) saveState(state);
 }
 
+// ── Duplicate Runtime Detection ──────────────────────────────
+// Scans for duplicate instances of known service scripts and kills extras.
+// Keeps the instance with the lowest PID (oldest process).
+// Runs on pre-flight and periodically in the health loop.
+const KNOWN_SCRIPTS = [
+  'server.js',           // relay
+  'supervisor.mjs',      // supervisor itself
+  'alice.mjs',           // Alice daemon
+  'campaign-scheduler.mjs',
+  'cron-engine-v2.mjs',
+  '31harbor-scheduler.mjs',
+  'cuttlefishclaws-mcp.mjs',
+  'cuttlefish-mcp.mjs',
+  'xmrtdao-suite-mcp.mjs',
+  'start-pg.mjs',
+  'start-tunnel-detached.mjs',
+  'start-vite-detached.mjs',
+];
+
+function deduplicateRuntimes() {
+  let totalKilled = 0;
+  for (const script of KNOWN_SCRIPTS) {
+    try {
+      const out = execFileSync('wmic',
+        ['process', 'where', "name='node.exe'", 'get', 'processid,commandline', '/format:csv'],
+        { encoding: 'utf8', timeout: 5000, windowsHide: true }
+      );
+      // Find all PIDs running this script
+      const lines = out.split('\n').filter(l => l.includes(script));
+      if (lines.length <= 1) continue; // 0 or 1 instance — fine
+
+      // Parse PIDs: format is "Node,PID,node relay/server.js" or similar
+      const pids = [];
+      for (const line of lines) {
+        const parts = line.trim().split(',');
+        // WMIC CSV: ComputerName,CommandLine,ProcessId (alphabetical order)
+        // PID is the third field (index 2)
+        const pid = parseInt(parts[2], 10);
+        if (Number.isFinite(pid)) pids.push(pid);
+      }
+      if (pids.length <= 1) continue;
+
+      // Keep the lowest PID (oldest process), kill the rest
+      pids.sort((a, b) => a - b);
+      const keepPid = pids[0];
+      const killPids = pids.slice(1).filter(pid => pid !== process.pid); // never kill ourselves
+
+      if (killPids.length === 0) continue; // only ourselves running
+
+      for (const pid of killPids) {
+        try {
+          execSync(`taskkill /F /PID ${pid} 2>nul`, { stdio: 'ignore', timeout: 3000 });
+          log('INFO', `Dedup: killed duplicate ${script} (PID ${pid}), kept PID ${keepPid}`);
+          totalKilled++;
+        } catch {
+          log('WARN', `Dedup: failed to kill duplicate ${script} (PID ${pid})`);
+        }
+      }
+    } catch {
+      // WMIC failure — skip this script
+    }
+  }
+  if (totalKilled > 0) {
+    log('INFO', `Dedup: killed ${totalKilled} duplicate process(es)`);
+  }
+  return totalKilled;
+}
+
 function startService(svc) {
   const svcState = state.services[svc.name];
   pruneOldRestarts(svcState);
@@ -398,6 +466,9 @@ function startService(svc) {
 }
 
 async function superviseLoop() {
+  // Deduplicate runtimes on every health check cycle
+  deduplicateRuntimes();
+
   for (const svc of SERVICES) {
     // Skip paused services
     if (svc.paused) continue;
@@ -619,7 +690,8 @@ async function main() {
     return;
   }
 
-  // Pre-flight: start everything
+  // Pre-flight: deduplicate runtimes, then start everything
+  deduplicateRuntimes();
   pruneLegacyState();
   const reconciled = reconcileStalePids();
   if (reconciled > 0) log('INFO', `Reconciled ${reconciled} stale childPid entries`);

@@ -20,24 +20,11 @@
  *   node alice.mjs --status     # Print Alice's status
  */
 
+import https from 'https';
+import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
-// ── Text Sanitization ──────────────────────────────────────────
-function sanitizeText(text) {
-  if (typeof text !== 'string') return text;
-  return text
-    .replace(/\uFFFD/g, '-')
-    .replace(/\u2014/g, '-')
-    .replace(/\u2013/g, '-')
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/\u2022/g, '*')
-    .replace(/\u2026/g, '...')
-    .replace(/\u00A0/g, ' ')
-    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
-}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -65,48 +52,91 @@ function loadEnv() {
 }
 loadEnv();
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-if (!SUPABASE_URL) {
-  console.error('[FATAL] SUPABASE_URL is not set in env. Refusing to start — would otherwise fall back to a dead cloud endpoint.');
-  process.exit(1);
-}
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const RESEND_KEY = process.env.RESEND_PFP_API_KEY || process.env.RESEND_API_KEY || '';
+const SUPABASE_URL = 'http://127.0.0.1:54321';
+const SUPABASE_KEY = 'local-anon-key';
+const RESEND_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_XMRT_KEY = process.env.RESEND_XMRT_API_KEY || '';
 const MUAPI_KEY = process.env.MUAPI_API_KEY || '';
 const RELAY_PORT = 8080;
-const ALICE_ID = 'alice-sidecar';
+const ALICE_ID = 'alice-daemon';
 const ALICE_NAME = 'Alice';
 
 // ── State ─────────────────────────────────────────────────
 function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { certified: false, lastServiceCheck: null, activeTasks: [] }; }
+  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return { certified: false, lastServiceCheck: null, activeTasks: [], cycle: 'undefined', lastRun: null }; }
 }
 function saveState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 function log(msg) {
   const ts = new Date().toISOString();
-  const line = `[${ts}] ${sanitizeText(msg)}`;
+  const line = `[${ts}] ${msg}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
 }
 
+// ── Shared Context (persistent memory visible to all agents) ──
+async function readSharedContext(key) {
+  try {
+    const res = await fetchJSON(`http://localhost:${RELAY_PORT}/tools/run`, {
+      method: 'POST', timeout: 5000,
+      headers: { 'x-agent-id': 'alice-daemon' },
+      body: { tool: 'shared-context', args: { action: 'read', key } },
+    });
+    return res?.context?.value || null;
+  } catch { return null; }
+}
+
+async function writeSharedContext(key, value, description) {
+  try {
+    await fetchJSON(`http://localhost:${RELAY_PORT}/tools/run`, {
+      method: 'POST', timeout: 5000,
+      headers: { 'x-agent-id': 'alice-daemon' },
+      body: { tool: 'shared-context', args: { action: 'write', key, value, description } },
+    });
+  } catch {}
+}
+
+// ── Read Alice's cycle definition from shared_context ──
+async function syncCycleFromSharedContext() {
+  try {
+    const cycleDef = await readSharedContext('alice-autopilot-cycle');
+    if (cycleDef) {
+      const parsed = typeof cycleDef === 'string' ? JSON.parse(cycleDef) : cycleDef;
+      const state = loadState();
+      state.cycle = parsed.cycle || parsed.interval || '60min';
+      state.cycleDefinition = parsed;
+      state.lastSync = new Date().toISOString();
+      saveState(state);
+      log(`[CYCLE] Synced from shared_context: interval=${state.cycle}, definition=${JSON.stringify(parsed).slice(0, 100)}`);
+      return parsed;
+    }
+  } catch (e) {
+    log(`[CYCLE] Could not parse cycle definition from shared_context: ${e.message}`);
+  }
+  return null;
+}
+
 // ── HTTP helpers ──────────────────────────────────────────
 function fetchJSON(url, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
-  const fetchOpts = {
-    method: options.method || 'GET',
-    headers,
-    signal: AbortSignal.timeout(options.timeout || 30000),
-  };
-  if (options.body) fetchOpts.body = JSON.stringify(options.body);
-  return fetch(url, fetchOpts)
-    .then(async r => {
-      const text = await r.text();
-      try { return JSON.parse(text); } catch { return { raw: text, status: r.status }; }
-    })
-    .catch(e => { throw e; });
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request(url, {
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      timeout: options.timeout || 30000,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve({ raw: data, status: res.statusCode }); }
+      });
+    });
+    req.on('error', reject);
+    if (options.body) req.write(JSON.stringify(options.body));
+    req.end();
+  });
 }
 
 function sendEmail(to, subject, body) {
@@ -214,15 +244,12 @@ async function checkServices() {
 
 // ── Task Management ──────────────────────────────────────
 async function fetchAndRouteTasks() {
-  log('[TASKS] Fetching pending tasks from Supabase...');
+  log('[TASKS] Fetching pending tasks from local relay...');
   try {
-    const tasks = await fetchJSON(`${SUPABASE_URL}/functions/v1/hourly-task-fetcher`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: { source: 'alice-cron' },
-      timeout: 30000,
+    const tasks = await fetchJSON(`http://localhost:${RELAY_PORT}/api/suite/tasks?limit=10&status_in=PENDING`, {
+      timeout: 10000,
     });
-    const pending = tasks?.tasks || tasks?.pending || [];
+    const pending = Array.isArray(tasks) ? tasks : [];
     log(`[TASKS] Found ${pending.length} pending tasks`);
     
     for (const task of pending) {
@@ -411,7 +438,7 @@ async function checkFleetMentions() {
     const now = Date.now();
     for (const m of msgs) {
       // Check for @alice mentions in recent messages (last 5 min)
-      if (m.ts > now - 300000 && (m.message.toLowerCase().includes('@alice') || m.message.toLowerCase().includes('@alice-sidecar'))) {
+      if (m.ts > now - 300000 && (m.message.toLowerCase().includes('@alice-daemon'))) {
         if (!m.answered) {
           log('[FLEETCHAT] Mentioned by ' + m.agent + ': ' + m.message.slice(0, 80));
           
@@ -423,18 +450,41 @@ async function checkFleetMentions() {
               const msgs = data.messages || [];
               
               const lower = m.message.toLowerCase();
-              let dataReply = null;
+                            let dataReply = null;
               
-              if (lower.includes('muapi') || lower.includes('balance') || lower.includes('credit')) {
-                dataReply = '@' + m.agent + ' MUAPI balance is low (under ). Needs topup.';
-              } else if (lower.includes('service') || lower.includes('monitor') || lower.includes('health')) {
-                const s = loadState().lastServices || [];
-                const ok = s.filter(x => x.status === 'ok').length;
-                dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
-              } else if (lower.includes('task') || lower.includes('autopilot')) {
-                const st = loadState();
-                dataReply = '@' + m.agent + ' Autopilot cycle ' + (st.cycle || 0) + '. Last run: ' + (st.lastRun || 'never');
-              }
+                            if (lower.includes('muapi') || lower.includes('balance') || lower.includes('credit')) {
+                                            dataReply = '@' + m.agent + ' MUAPI balance is low (under). Needs topup.';
+                                          } else if (lower.includes('task') || lower.includes('autopilot') || lower.includes('cycle')) {
+                                            // Read cycle definition from shared_context (not local state)
+                                            let cycleDef = 'undefined';
+                                            let lastRun = 'never';
+                                            try {
+                                              const ctxData = await fetchJSON('http://localhost:' + RELAY_PORT + '/tools/run', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json', 'x-agent-id': 'alice-daemon' },
+                                                body: { tool: 'shared-context', args: { action: 'read', key: 'alice-autopilot-cycle' } },
+                                                timeout: 5000,
+                                              });
+                                              const ctx = ctxData?.context?.value;
+                                              if (ctx) {
+                                                try { const parsed = JSON.parse(ctx); cycleDef = parsed.cycle || parsed.interval + 'ms'; } catch { cycleDef = ctx.slice(0, 80); }
+                                              } else {
+                                                log('[FLEETCHAT] shared-context returned no value: ' + JSON.stringify(ctxData).slice(0, 100));
+                                              }
+                                            } catch (e) {
+                                              log('[FLEETCHAT] shared-context error: ' + (e.message || e));
+                                            }
+                                            dataReply = '@' + m.agent + ' Daemon is running. Cycle: ' + cycleDef + '. Last run: ' + lastRun;
+                                          } else if (lower.includes('service') || lower.includes('monitor') || lower.includes('health')) {
+                                            const s = loadState().lastServices || [];
+                                            const ok = s.filter(x => x.status === 'ok').length;
+                                            dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
+                                          } else {
+                                            // Unknown query — do NOT fall back to generic health response.
+                                            // Stay silent and let the AI agent handle it.
+                                            log('[FLEETCHAT] No matching keyword for: ' + lower.slice(0, 60) + ' — staying silent');
+                                            return;
+                                          }
               
               if (dataReply) await postToFleetChat(dataReply);
             } catch (e) { log('[FLEETCHAT] Supplement error: ' + e.message); }
@@ -456,21 +506,10 @@ async function daemonLoop() {
   
   const state = loadState();
   
-  // Step 1: Attend university if not certified
-  if (!state.certified) {
-    log('[INIT] Alice not certified yet. Attending XMRT University...');
-    const uniResult = await attendUniversity();
-    if (uniResult.status === 'failed') {
-      log('[INIT] University failed, will retry next cycle');
-    }
-  } else {
-    log(`[INIT] Alice certified! Certificate: ${state.certificateId}`);
-  }
-  
-  // Step 2: Initial service check
+  // Step 1: Initial service check
   await checkServices();
   
-  // Step 3: Send heartbeat to relay
+  // Step 2: Send heartbeat to relay
   try {
     await fetchJSON(`http://localhost:${RELAY_PORT}/api/fleet/heartbeat`, {
       method: 'POST', timeout: 5000,
@@ -487,11 +526,8 @@ async function daemonLoop() {
     cycle++;
     log(`[CYCLE ${cycle}] Starting...`);
     
-    // Persist cycle state so Alice can report it when queried
-    const st = loadState();
-    st.cycle = cycle;
-    st.lastRun = new Date().toISOString();
-    saveState(st);
+    // Sync cycle definition from shared_context (other agents can update this)
+    await syncCycleFromSharedContext();
     
     // Heartbeat every cycle
     try {
@@ -508,13 +544,15 @@ async function daemonLoop() {
     state.lastServices = services;
     saveState(state);
     
-    // Run fleet autopilot (GitHub audit, auto-close, auto-assign, escalate)
-    try {
-      const { runAutopilot } = await import('./lib/fleet-autopilot.mjs');
-      await runAutopilot();
-    } catch (e) {
-      log('[AUTOPILOT] Error: ' + e.message);
-    }
+    // Run fleet autopilot (GitHub audit, auto-close, auto-assign, escalate) — DISABLED
+    // Pending captain decision on what Alice's autopilot should do and how to configure it.
+    // See fleet_memory: alice-autopilot-cycle, fleet chat Jul 10-17.
+    // try {
+    //   const { runAutopilot } = await import('./lib/fleet-autopilot.mjs');
+    //   await runAutopilot();
+    // } catch (e) {
+    //   log('[AUTOPILOT] Error: ' + e.message);
+    // }
 
     // Parse inbound emails (PFP + XMRT inboxes) — classify, extract
     // fields, mark parsed, create follow-up tasks for inquiries
@@ -542,8 +580,8 @@ async function daemonLoop() {
     // (app.fleet_memory) and ask local Ollama to synthesize a terse
     // 1-2 line digest for fleet chat. Operational tone, no essays.
     try {
-      const { writeMemoryBatch, readRecent, readOpenQuestions } = await import('./lib/fleet-memory.mjs');
-      const { synthesizeAndPost, postServiceTransitions, diffServices } = await import('./lib/fleet-firehose.mjs');
+      const { writeMemoryBatch } = await import('./lib/fleet-memory.mjs');
+      const { postCycleDelta, diffServices } = await import('./lib/fleet-firehose.mjs');
 
       // 1. Write observations: service transitions, email parse summary, and
       //    any open questions/contradictions we noticed.
@@ -553,7 +591,7 @@ async function daemonLoop() {
 
       for (const t of transitions) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'synthesizer',
           memory_type: 'event',
           scope: `service:${t.service}`,
@@ -569,7 +607,7 @@ async function daemonLoop() {
       const bad = services.filter(s => s.status !== 'ok');
       if (bad.length > 0) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'observer',
           memory_type: 'observation',
           scope: 'fleet',
@@ -584,7 +622,7 @@ async function daemonLoop() {
       const lastEmail2 = prevState.lastEmailParse;
       if (lastEmail2) {
         observations.push({
-          agent_id: 'alice-sidecar',
+          agent_id: 'alice-daemon',
           agent_role: 'observer',
           memory_type: 'observation',
           scope: 'fleet',
@@ -601,22 +639,37 @@ async function daemonLoop() {
         log(`[MEMORY] Wrote ${w.written} observation(s) to app.fleet_memory`);
       }
 
-      // 2. Every 3rd cycle (or when transitions happen) ask Ollama to
-      //    synthesize a terse digest. Falls back to template if Ollama
-      //    is unreachable or slow.
-      const shouldSynthesize = (cycle % 3 === 0) || transitions.length > 0 || bad.length > 0;
-      if (shouldSynthesize) {
-        const [recentMem, openQ] = await Promise.all([
-          readRecent({ hours: 24, limit: 12 }),
-          readOpenQuestions({ limit: 5 }),
-        ]);
-        const result = await synthesizeAndPost({
-          memoryRows: recentMem,
-          services,
-          openQuestions: openQ,
-          prefix: `Alice cycle ${cycle}`,
+      // 2a. Log service status to eliza_activity_log for Rum Quota visibility
+      try {
+        const okCount = services.filter(s => s.status === 'ok').length;
+        const totalCount = services.length;
+        const badServices = services.filter(s => s.status !== 'ok');
+        const activityMsg = badServices.length > 0
+          ? `Alice cycle ${cycle}: ${okCount}/${totalCount} services healthy — ${badServices.map(s => `${s.service}=${s.status}`).join(', ')}`
+          : `Alice cycle ${cycle}: ${okCount}/${totalCount} services healthy`;
+        await fetchJSON(`${SUPABASE_URL}/rest/v1/eliza_activity_log`, {
+          method: 'POST', timeout: 5000,
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
+          body: {
+            activity_type: 'service_check',
+            title: activityMsg,
+            status: badServices.length > 0 ? 'warning' : 'info',
+            agent_id: 'alice-daemon',
+          },
         });
-        log(`[SYNTH] posted=${result.posted} msg="${result.message.slice(0, 100)}"`);
+      } catch (e) { log('[ACTIVITY] Error: ' + e.message); }
+
+      // 2. Every 3rd cycle (or when transitions happen) post a terse delta
+      //    using postCycleDelta which only posts when something actually changed.
+      const shouldPost = (cycle % 3 === 0) || transitions.length > 0 || bad.length > 0;
+      if (shouldPost) {
+        const emailStats = prevState.lastEmailParse || null;
+        const result = await postCycleDelta(prevState, services, emailStats);
+        if (result.posted) {
+          log(`[DELTA] posted: ${result.reason || 'change_detected'}`);
+        } else {
+          log(`[DELTA] skipped: ${result.reason || 'no_change'}`);
+        }
       }
     } catch (e) {
       log('[LOOP] Error: ' + e.message);
@@ -644,6 +697,10 @@ async function printStatus() {
   console.log('\n=== Alice Status ===');
   console.log(`Certified: ${state.certified ? '✅ Yes (' + state.certificateId + ')' : '❌ No'}`);
   console.log(`Last service check: ${state.lastServiceCheck || 'Never'}`);
+  console.log(`Autopilot cycle: ${state.cycle || 'undefined'}`);
+  console.log(`Cycle definition: ${state.cycleDefinition ? JSON.stringify(state.cycleDefinition).slice(0, 100) : 'not set'}`);
+  console.log(`Last run: ${state.lastRun || 'Never'}`);
+  console.log(`Last sync from shared_context: ${state.lastSync || 'Never'}`);
   console.log('');
   
   if (state.lastServices) {

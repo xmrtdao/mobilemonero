@@ -5,7 +5,7 @@
  * Thread-safe for single-process relay
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFile, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,6 +15,7 @@ const STATE_FILE = join(DATA_DIR, 'state.json');
 
 let _cache = null;
 let _dirty = false;
+let _writing = false;
 
 function ensureDir() {
   mkdirSync(DATA_DIR, { recursive: true });
@@ -35,23 +36,27 @@ function load() {
 }
 
 function save() {
-  if (!_dirty) return;
+  if (!_dirty || _writing) return;
+  _writing = true;
+  _dirty = false;
   ensureDir();
-  try {
-    writeFileSync(STATE_FILE, JSON.stringify(_cache, null, 2));
-    _dirty = false;
-  } catch (e) {
-    console.error(`[state] Error saving state: ${e.message}`);
-  }
+  // Use compact JSON (no indentation) — much faster for 2.7MB
+  // Pretty-printing with null,2 was adding ~40ms to the stringify
+  let data;
+  try { data = JSON.stringify(_cache); } catch (e) { _writing = false; console.error(`[state] JSON.stringify error: ${e.message}`); return; }
+  writeFile(STATE_FILE, data, (err) => {
+    _writing = false;
+    if (err) console.error(`[state] Error saving state: ${err.message}`);
+  });
 }
 
-// Auto-save every 5 seconds if dirty
-setInterval(() => save(), 5000);
+// Auto-save every 30 seconds if dirty (was 5s — 2.7MB stringify was too frequent)
+setInterval(() => save(), 30000);
 
-// Save on exit
-process.on('exit', () => save());
-process.on('SIGINT', () => { save(); process.exit(0); });
-process.on('SIGTERM', () => { save(); process.exit(0); });
+// Save on exit (sync — must complete before process exits)
+process.on('exit', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} });
+process.on('SIGINT', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} process.exit(0); });
+process.on('SIGTERM', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} process.exit(0); });
 
 /**
  * Get a value from state
