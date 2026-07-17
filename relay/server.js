@@ -1772,7 +1772,20 @@ const toolHandlers = {
     return { success: true, ...result };
   },
 
-  // ── Sent Email Log (suite_email_activity table) ──
+  // ── Mark email as read ──
+  'resend-inbox-read': async (args) => {
+    const { id, domain } = args || {};
+    if (!id) return { error: 'id is required (email ID from resend-inbox)' };
+    try {
+      const res = await fetch(`http://localhost:${PORT}/resend/inbox/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, domain: domain || 'partyfavorphoto.com' }),
+        signal: AbortSignal.timeout(5000),
+      });
+      return await res.json();
+    } catch (err) { return { success: false, error: err.message }; }
+  },
   'sent-emails': async (args) => {
     const limit = Math.min(args?.limit || 10, 50);
     const search = args?.search || '';
@@ -5722,6 +5735,7 @@ function getToolDescription(name) {
     'vex-vision': 'Capture and describe images from 4 sources: screenshot (screen:true), webcam (default), local file (file:"/path"), or URL (url:"https://..."). Uses kimi-k2.6:cloud vision model by default (zero local RAM). Fallback: moondream.',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
+    'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
     'sent-emails': 'Search sent email history from suite_email_activity table. Use search param to find by email address or subject. Columns: id, email_from, email_to, subject, status, sent_at.',
     'pfp-leads': 'Manage PFP leads. Actions: list (all leads), search (by name/email/notes), add (create new lead), update (modify existing). Columns: contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes.',
     'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor)',
@@ -7251,7 +7265,7 @@ GROUNDING RULES:
 - For resend-send-email: ALWAYS include the "agent" field (use "eliza" if you are Eliza). Keep the email body SHORT — under 200 words — to avoid output truncation. Do NOT include long numbered lists in the body.
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
-- For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context.
+- For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context. For marking emails as read: use resend-inbox-read with the email ID and domain.
 
 ${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}
 
@@ -7483,6 +7497,7 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
 - \`fleet_pulse\` — Get full system health snapshot
 - \`activity_log\` — Query the activity feed (filter by activity_type, limit)
 - \`resend-inbox\` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)
+- \`resend-inbox-read\` — Mark an email as read. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Use after you have handled an email.
 - \`resend-send-email\` — Send an email via Resend. Args: agent (use "eliza"), to, subject, body. KEEP THE BODY SHORT (under 200 words) to avoid output truncation.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
@@ -7551,8 +7566,10 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
         // Strip verbose thinking / preamble / tool-syntax from Eliza's reply
         let cleanReply = elizaRes.reply;
         // Remove thinking-like blocks: "I'll analyze", "Here's my reasoning", "Let me break this down", etc.
-        cleanReply = cleanReply.replace(/^(Let me analyze|I('ll| will) (analyze|break down|work through|start by|check on|look into)|Here('s| is) (my|the) (analysis|reasoning|breakdown|summary|verdict)).*?(?=\n[A-Z])/ims, '');
-        // Collapse "Oh wait", "Actually", "Hmm", "Well", preamble words at line start
+        cleanReply = cleanReply.replace(/^(Let me analyze|I('ll| will) (analyze|break down|work through|start by|check on|look into|need to|should|can |have |could )|Here('s| is) (my|the) (analysis|reasoning|breakdown|summary|verdict)|We need to|I need to|The user|I don't have a tool|I could use|Alternatively|Let me do that|I'll call|I have the).*?(?=\n[A-Z])/ims, '');
+        // Remove internal reasoning patterns: "I have a tool X", "I don't have a tool", "I could use", "Let me do that"
+        cleanReply = cleanReply.replace(/I (don't have|do not have|have|could use|can use|will call|have the)[^\n.]*\n/gi, '');
+        // Collapse "Oh wait", "Actually", "Hmm", "Well", "So", "Okay", "Alright" preamble words at line start
         cleanReply = cleanReply.replace(/^(Oh wait|Actually|Hmm|Well|So|Okay|Alright)[,\s]+/gim, '');
         // Remove tool/syntax artifacts
         cleanReply = cleanReply
@@ -7575,7 +7592,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
                 message: synthPrompt,
                 model: 'deepseek-v4-flash:cloud',
                 temperature: 0.4,
-                maxTokens: 320,
+                maxTokens: 1024,
               }),
               signal: AbortSignal.timeout(28000),
             });
