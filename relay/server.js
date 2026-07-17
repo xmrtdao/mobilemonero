@@ -7489,7 +7489,7 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
 
       // Build the full prompt with grounding + tool results
       const fullPrompt = elizaMsg + '\n\nGROUNDING — Real-time system data:\n' + ctxJson + toolResultsBlock + `\n\nIMPORTANT: Read the \`infrastructure\` field first. The database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A "supabase" status of "error" or "unreachable" means the local-sb REST layer is down, not the cloud.\n\n**AVAILABLE TOOLS (call by putting a single JSON line in your reply):**
-- \`search_knowledge\` — Search the knowledge base by term
+The \`tools\` array in the JSON block above lists ALL available tools with descriptions. Here are the most commonly used ones:
 - \`shared-context\` — Read/write persistent agent memory (use action:read, action:write, action:search)
 - \`recall_context\` — Pull structured context across fleet_memory, knowledge_entities, and shared_context by topic. Pass agent_id to filter by agent.
 - \`knowledge-dedup\` — Find and merge duplicate knowledge entities by name similarity. Dry-run (dry_run:true) to preview, or set dry_run:false to merge.
@@ -7499,6 +7499,22 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
 - \`resend-inbox\` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)
 - \`resend-inbox-read\` — Mark an email as read. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Use after you have handled an email.
 - \`resend-send-email\` — Send an email via Resend. Args: agent (use "eliza"), to, subject, body. KEEP THE BODY SHORT (under 200 words) to avoid output truncation.
+- \`sent-emails\` — Search sent email history. Args: search (email address or subject), limit.
+- \`db-query\` — Run a read-only SQL query against local Postgres. Args: sql, params (array).
+- \`db-rest\` — Query any database table via local-sb REST API. Args: path (table name), method, body.
+- \`web-search\` — Search the web. Args: query, maxResults.
+- \`web-scrape\` — Extract text from a URL. Args: url.
+- \`pfp-leads\` — Manage PFP leads. Actions: list, search, add, update.
+- \`assign_task\` — Create a task. Args: task_id, title, description, assigned_to.
+- \`advance_task\` — Advance a task. Args: task_id, to_stage (DISCUSS, PLANNING, EXECUTION, REVIEW, COMPLETION).
+- \`agent-rpc\` — Send a message to another agent via RPC. Args: agent, message.
+- \`fleet-chat\` — Send a message to fleet chat. Args: agent (vex|eliza|hermes), message, channel.
+- \`ollama-chat\` — Chat with a local LLM. Args: message, model, temperature, maxTokens.
+- \`state-get\` — Read a value from persistent state. Args: key.
+- \`state-set\` — Write a value to persistent state. Args: key, value.
+- \`agent-profile\` — Read agent profiles from the database. Args: agent_id or list all.
+- \`knowledge-sync\` — Sync local knowledge base.
+For ALL tools and their descriptions, check the \`tools\` array in the JSON grounding block.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
 \`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}\`
