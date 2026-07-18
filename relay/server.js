@@ -3796,15 +3796,9 @@ app.get('/', (req, res) => {
     .subgrid-3 { display: grid; grid-template-columns: 1fr; gap: 8px; }
     @media (min-width: 480px) { .subgrid-3 { grid-template-columns: 1fr 1fr; } }
     @media (min-width: 768px) { .subgrid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; } }
-    .subgrid-2 { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    @media (min-width: 480px) { .subgrid-2 { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 768px) { .subgrid-2 { grid-template-columns: 1fr 2fr; gap: 12px; } }
     .subgrid-4 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     @media (min-width: 480px) { .subgrid-4 { grid-template-columns: repeat(2, 1fr); } }
     @media (min-width: 768px) { .subgrid-4 { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
-    .subgrid-3-inbox { display: grid; grid-template-columns: 1fr; gap: 6px; }
-    @media (min-width: 480px) { .subgrid-3-inbox { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 768px) { .subgrid-3-inbox { grid-template-columns: 1fr 1fr 1fr; gap: 8px; } }
   
     canvas#mesh-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
     body { position: relative; z-index: 0; }
@@ -4069,15 +4063,16 @@ app.get('/', (req, res) => {
 <div class="card" style="grid-column:1/-1;">
   <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📡 Ship's Intelligence
-    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · GitHub Activity · Incoming Mail</span>
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
   </h3>
-  <div class="subgrid-2">
+  <div class="subgrid-3">
+    <!-- 🎓 XMRT University -->
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
       <div id="university-status">
         <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#6b6b80;">checking...</span></div>
       </div>
-      <div id="university-detail" style="display:none;">
+      <div id="university-detail">
         <div class="stat"><span class="label">Progress</span><span class="value" id="uni-progress">-</span></div>
         <div class="stat"><span class="label">Cert ID</span><span class="value" id="uni-cert" style="font-size:0.65rem;">-</span></div>
         <div class="stat"><span class="label">Tier</span><span class="value" id="uni-tier">-</span></div>
@@ -4090,36 +4085,36 @@ app.get('/', (req, res) => {
         </div>
       </div>
     </div>
-    <div style="display:flex;flex-direction:column;gap:8px;">
-      <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-        <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📬 Incoming Mail</div>
-        <div class="subgrid-3-inbox">
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
-            <div id="pfp-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
+    <!-- 📬 Incoming Mail -->
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📬 Incoming Mail</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div>
+          <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">Party Favor Photo</div>
+          <div id="pfp-inbox" style="max-height:80px;overflow-y:auto;font-size:0.65rem;">
+            <div class="stat"><span class="label">Loading...</span></div>
           </div>
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">MobileMonero</div>
-            <div id="mm-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
+        </div>
+        <div>
+          <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">MobileMonero</div>
+          <div id="mm-inbox" style="max-height:80px;overflow-y:auto;font-size:0.65rem;">
+            <div class="stat"><span class="label">Loading...</span></div>
           </div>
-          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">31 Harbor</div>
-            <div id="hb-inbox" style="max-height:100px;overflow-y:auto;font-size:0.65rem;">
-              <div class="stat"><span class="label">Loading...</span></div>
-            </div>
+        </div>
+        <div>
+          <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">31 Harbor</div>
+          <div id="hb-inbox" style="max-height:80px;overflow-y:auto;font-size:0.65rem;">
+            <div class="stat"><span class="label">Loading...</span></div>
           </div>
         </div>
       </div>
-      <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-        <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
-        <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
-        <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
-        <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
-      </div>
+    </div>
+    <!-- 🐙 GitHub Activity -->
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
+      <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
+      <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
+      <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
     </div>
   </div>
 </div>
