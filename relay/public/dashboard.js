@@ -69,7 +69,7 @@
       if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#6b6b80'; }
     });
     apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
-          var certs = certData.holders || certData.certs || certData || [];
+          var certs = certData.certHolders || certData.holders || certData.certs || [];
           if (!Array.isArray(certs)) certs = [];
           var el = function(id) { return document.getElementById(id); };
           if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
