@@ -8,7 +8,8 @@
  *
  * Auto-recovery: if the pool's connections go stale (PG-side idle timeout),
  * a periodic health check detects it and recreates the pool automatically
- * without requiring a relay restart.
+ * without requiring a relay restart. The health check requires 3 consecutive
+ * failures before recreating to avoid flapping on transient errors.
  */
 
 import pg from 'pg';
@@ -20,7 +21,7 @@ const DB_URL = process.env.LOCAL_DATABASE_URL
 
 let _pool = null;
 let _healthTimer = null;
-let _recovering = false;
+let _consecutiveFailures = 0;
 
 /**
  * Create a new pool with the standard config.
@@ -46,34 +47,41 @@ function createPool() {
 export function getPool() {
   if (_pool) return _pool;
   _pool = createPool();
-  startHealthCheck();
+  // Start health check after a 30s grace period (avoids false positives during startup)
+  setTimeout(() => startHealthCheck(), 30_000);
   return _pool;
 }
 
 /**
  * Periodically check that the pool can actually acquire a connection.
- * If it fails, drain the old pool and create a fresh one.
- * Runs every 60 seconds.
+ * Only recreates after 3 consecutive failures to avoid flapping.
+ * Does NOT call pool.end() — just replaces the reference so in-flight
+ * queries on the old pool can complete naturally.
+ * Runs every 120 seconds (less aggressive than 60s to reduce churn).
  */
 function startHealthCheck() {
   if (_healthTimer) clearInterval(_healthTimer);
   _healthTimer = setInterval(async () => {
-    if (_recovering) return;
+    let client = null;
     try {
-      const c = await _pool.connect();
-      await c.query('SELECT 1');
-      c.release();
+      client = await _pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      _consecutiveFailures = 0;
     } catch (err) {
-      console.error('[db] Pool health check failed — recreating pool:', err.message);
-      _recovering = true;
-      try {
-        await _pool.end();
-      } catch (_) {}
-      _pool = createPool();
-      _recovering = false;
-      console.log('[db] Pool recreated successfully');
+      if (client) try { client.release(); } catch (_) {}
+      _consecutiveFailures++;
+      console.error(`[db] Pool health check failed (${_consecutiveFailures}/3):`, err.message);
+      if (_consecutiveFailures >= 3) {
+        console.log('[db] 3 consecutive failures — replacing pool');
+        const oldPool = _pool;
+        _pool = createPool();
+        _consecutiveFailures = 0;
+        // Drain old pool in background — don't await, don't block
+        oldPool.end().catch(() => {});
+      }
     }
-  }, 60_000);
+  }, 120_000);
   // Don't let the timer keep the process alive
   if (_healthTimer && _healthTimer.unref) _healthTimer.unref();
 }
