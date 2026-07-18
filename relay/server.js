@@ -7235,7 +7235,7 @@ async function routeFleetMessage(entry) {
     const sessionId = opts.sessionId || (agentName + '-fleet-' + entry.agent);
     const model = opts.model || 'deepseek-v4-flash:cloud';
     const temperature = opts.temperature != null ? opts.temperature : 0.5;
-    const maxTokens = opts.maxTokens || 180;
+    const maxTokens = opts.maxTokens || 4096;
     const timeout = opts.timeout || 15000;
     const signOffPattern = opts.signOffPattern || new RegExp('\\s*—\\s*' + agentLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i');
 
@@ -7295,7 +7295,7 @@ GROUNDING RULES:
 
 ${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}
 
-Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
+Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
 
       const r = await fetch('http://localhost:11434/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7358,7 +7358,7 @@ Your response (1-2 sentences, no emoji sign-offs, no "—${agentLabel}", no "o7"
               summary += `The data below may be truncated but the total count is ${resultData.count}.] `;
             }
             const resultStr = JSON.stringify(resultData).slice(0, 3000);
-            const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + summary + resultStr + '\n\nNow give your final answer (1-2 sentences):';
+            const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + summary + resultStr + '\n\nNow give your final answer:';
             try {
               const sR = await fetch('http://localhost:11434/api/generate', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7545,7 +7545,7 @@ For ALL tools and their descriptions, check the \`tools\` array in the JSON grou
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
 \`TOOL_CALL: {"tool":"search_knowledge","args":{"search_term":"term"}}\`
 
-I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with ONLY the final answer — 1-2 sentences. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here's what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can.**`;
+I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: Reply with your answer. No thinking aloud, no step-by-step reasoning, no "Let me analyze this", no "Here's what I found", no preamble. Just the answer. Be direct and specific. Reference data by name when you can. If you need to list many items, that's fine — post whatever is needed.**`;
 
       // Build messages array with conversation history so ai-chat sees context
       const historyMessages = [];
@@ -7625,7 +7625,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
         const elizaToolResult = await executeAgentToolCall('eliza', cleanReply || elizaRes.reply, entry);
         if (elizaToolResult.executed) {
           // Re-query deepseek with tool result for synthesis
-          const synthPrompt = fullPrompt + '\n\nYou called ' + elizaToolResult.toolName + ' and got: ' + JSON.stringify(elizaToolResult.result || elizaToolResult.error).slice(0, 1500) + '\n\nNow give your final answer (1-2 sentences):';
+          const synthPrompt = fullPrompt + '\n\nYou called ' + elizaToolResult.toolName + ' and got: ' + JSON.stringify(elizaToolResult.result || elizaToolResult.error).slice(0, 1500) + '\n\nNow give your final answer:';
           try {
             const sR = await fetch('http://localhost:' + PORT + '/ollama/chat', {
               method: 'POST',
@@ -7722,7 +7722,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
   const mentionsAlice = /@alice/i.test(entry.message) || entry.channel === 'alice' || (entry.channel === 'fleet' && /@alice/i.test(entry.message));
   if ((entry.channel === 'all' && mentionsAlice) || entry.channel === 'alice' || (entry.channel === 'fleet' && mentionsAlice)) {
     const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.`;
-    await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 120, timeout: 12000 });
+    await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 2048, timeout: 12000 });
   }
 
   // ── CuttlefishClaws Fleet Agents ──────────────────────────────────
