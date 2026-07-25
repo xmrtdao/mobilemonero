@@ -1,0 +1,685 @@
+[
+  {
+    "id": 81,
+    "schedule": "*/30 * * * *",
+    "type": "sql",
+    "name": "batch-vectorize-memories",
+    "sql": "SELECT public.batch_vectorize_memories();",
+    "desc": "Batch vectorizes all new memories"
+  },
+  {
+    "id": 218,
+    "schedule": "3,13,23,33,43,53 * * * *",
+    "type": "python",
+    "name": "vectorize-memory",
+    "desc": "Real-time memory vectorization (python)",
+    "code": "\"\"\"\nrelay/cron-python/vectorize-memory.py\nCalled by cron-engine-v2.mjs via the python-exec tool.\nVectorizes conversation memories for semantic search.\n\"\"\"\n\nimport json, urllib.request, sys\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(\n        f\"{RELAY}/tools/run\", data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# Fetch un-vectorized conversation memories\nresult = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT id, session_id, summary, message_count\n    FROM knowledge.conversation_summaries \n    WHERE embedding IS NULL \n    ORDER BY created_at DESC LIMIT 10\n\"\"\"})\nrows = result.get(\"rows\", [])\nprint(f\"Un-vectorized summaries: {len(rows)}\")\n\nfor row in rows:\n    sid = row.get(\"session_id\", \"?\")\n    summary_text = str(row.get(\"summary\", row.get(\"message_count\", 0)))[:80]\n    print(f\"  Session {sid}: {summary_text}\")\n    rid = row[\"id\"]\n    tools_run(\"db-query\", {\"sql\": f\"\"\"\n        UPDATE knowledge.conversation_summaries \n        SET embedding = '{{}}'::jsonb \n        WHERE id = '{rid}'\n    \"\"\"})\n\nprint(\"Vectorization complete\")\n"
+  },
+  {
+    "id": 207,
+    "schedule": "8,23,38,53 * * * *",
+    "type": "ef",
+    "name": "summarize-conversation",
+    "fn": "summarize-conversation",
+    "body": {},
+    "desc": "Summarizes conversations for context recall",
+    "disabled": true,
+    "note": "Duplicate of 202 (summarize-conversation-fast, */5). */5 is denser"
+  },
+  {
+    "id": 202,
+    "schedule": "*/5 * * * *",
+    "type": "python",
+    "name": "summarize-conversation-fast",
+    "desc": "Conversation summarizer (python)",
+    "code": "\"\"\"\nrelay/cron-python/summarize-conversation-fast.py\nCalled by cron-engine-v2.mjs via the python-exec tool every 5 minutes.\nSummarizes recent conversations from fleet chat for context recall.\n\"\"\"\n\nimport json, urllib.request, datetime\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(f\"{RELAY}/tools/run\", data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\")\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# Fetch recent fleet messages\nresult = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT m.agent_id, m.message, m.created_at \n    FROM public.fleet_messages m\n    WHERE m.created_at > NOW() - INTERVAL '10 minutes'\n    ORDER BY m.created_at DESC LIMIT 20\n\"\"\"})\nrows = result.get(\"rows\", [])\nprint(f\"Recent messages (10min): {len(rows)}\")\n\nif rows:\n    # Group by agent\n    from collections import Counter\n    agents = Counter(r.get(\"agent_id\", \"?\") for r in rows)\n    for agent, count in agents.most_common():\n        print(f\"  {agent}: {count} messages\")\n\nprint(\"Summarization complete\")\n"
+  },
+  {
+    "id": 198,
+    "schedule": "*/15 * * * *",
+    "type": "sql",
+    "name": "check-knowledge-drift",
+    "sql": "SELECT public.check_knowledge_snippet_drift_and_alert();",
+    "desc": "Detects when knowledge goes stale"
+  },
+  {
+    "id": 199,
+    "schedule": "*/15 * * * *",
+    "type": "sql",
+    "name": "repair-knowledge-drift",
+    "sql": "SELECT public.repair_then_alert_knowledge_snippet_drift();",
+    "desc": "Auto-repairs stale knowledge"
+  },
+  {
+    "id": 204,
+    "schedule": "4,24,44 * * * *",
+    "type": "python",
+    "name": "extract-knowledge",
+    "desc": "Extracts knowledge from conversations (python)",
+    "code": "\"\"\"\nrelay/cron-python/extract-knowledge.py\nCalled by cron-engine-v2.mjs via the python-exec tool every 15 minutes.\nExtracts knowledge from unprocessed fleet chat messages and stores them\nin the knowledge base via the relay's tools.\n\"\"\"\n\nimport json, urllib.request, sys\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(\n        f\"{RELAY}/tools/run\",\n        data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# Step 1: Check if there are unprocessed fleet messages\nresult = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT COUNT(*) as cnt FROM app.cuttlefish_messages \n    WHERE processed_for_knowledge IS NOT TRUE\n\"\"\"})\ntotal = result.get(\"rows\", [{}])[0].get(\"cnt\", 0)\nprint(f\"Unprocessed messages: {total}\")\n\nif total == 0:\n    sys.exit(0)\n\n# Step 2: Fetch unprocessed messages\nmsgs = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT id, agent, message, channel, created_at \n    FROM app.cuttlefish_messages \n    WHERE processed_for_knowledge IS NOT TRUE\n    ORDER BY created_at ASC LIMIT 20\n\"\"\"})\nrows = msgs.get(\"rows\", [])\nprint(f\"Fetched {len(rows)} messages\")\n\n# Step 3: Extract knowledge from each message\nimport re\nfor row in rows:\n    msg_id = row[\"id\"]\n    msg_text = row.get(\"message\", \"\")\n    agent = row.get(\"agent\", \"unknown\")\n    \n    # Skip system messages and short messages\n    if len(msg_text) < 30:\n        continue\n    \n    # Extract key topics (capitalized phrases, technical terms)\n    topics = re.findall(r'\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', msg_text)\n    topics = [t for t in topics if len(t) > 5 and t not in (\"This\", \"That\", \"What\", \"There\", \"Here\" \"Note\")]\n    \n    if topics:\n        # Store as shared context\n        topic_key = f\"knowledge_auto_{msg_id[:8]}\"\n        context_result = tools_run(\"shared-context\", {\n            \"action\": \"write\",\n            \"key\": topic_key,\n            \"value\": {\n                \"source\": agent,\n                \"content\": msg_text[:500],\n                \"topics\": topics[:5],\n                \"extracted_at\": None,\n            }\n        })\n        print(f\"  Stored knowledge from {agent}: {topics[:3]}\")\n    \n    # Mark as processed\n    tools_run(\"db-query\", {\"sql\": f\"\"\"\n        UPDATE app.cuttlefish_messages \n        SET processed_for_knowledge = TRUE \n        WHERE id = {msg_id}\n    \"\"\"})\n\nprint(\"Knowledge extraction complete\")\n"
+  },
+  {
+    "id": 200,
+    "schedule": "*/10 * * * *",
+    "type": "python",
+    "name": "learning-cycle",
+    "desc": "Learning cycle processing (python)",
+    "code": "\"\"\"\nrelay/cron-python/learning-cycle.py\nCalled by cron-engine-v2.mjs via the python-exec tool every 10 minutes.\nRuns the learning cycle: check drift, extract new knowledge, prune stale.\n\"\"\"\n\nimport json, urllib.request\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(f\"{RELAY}/tools/run\", data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\")\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# 1. Check for knowledge drift\ndrift = tools_run(\"db-query\", {\"sql\": \"SELECT COUNT(*) as cnt FROM knowledge.knowledge_entities WHERE updated_at < NOW() - INTERVAL '30 days'\"})\nstale = int(drift.get(\"rows\", [{}])[0].get(\"cnt\", 0))\nprint(f\"Stale knowledge entities (>30d): {stale}\")\n\n# 2. Check shared context count\nctx = tools_run(\"shared-context\", {\"action\": \"read\", \"key\": \"__count\"})\nprint(f\"Shared context keys available\")\n\n# 3. Check recent fleet messages for learning material\nmsgs = tools_run(\"db-query\", {\"sql\": \"SELECT COUNT(*) as cnt FROM public.fleet_messages WHERE created_at > NOW() - INTERVAL '1 hour'\"})\nrecent = int(msgs.get(\"rows\", [{}])[0].get(\"cnt\", 0))\nprint(f\"Recent fleet messages (1h): {recent}\")\n\nprint(\"Learning cycle complete\")\n"
+  },
+  {
+    "id": 201,
+    "schedule": "*/5 * * * *",
+    "type": "sql",
+    "name": "requeue-failed-vectorize",
+    "sql": "SELECT * FROM public.requeue_safe_failed_vectorize_jobs(3, interval '7 days', 100);",
+    "desc": "Retries failed vectorization",
+    "disabled": false,
+    "note": "Re-enabled 2026-07-20. webhook_logs is empty (0 rows), no runaway risk."
+  },
+  {
+    "id": 82,
+    "schedule": "0 2 * * *",
+    "type": "sql",
+    "name": "generate-conversation-insights",
+    "sql": "SELECT public.generate_conversation_insights();",
+    "desc": "Deep conversation insight generation (daily 2AM)"
+  },
+  {
+    "id": 105,
+    "schedule": "9,24,39,54 * * * *",
+    "type": "sql",
+    "name": "refresh-conversation-view",
+    "sql": "SELECT count(*) FROM public.recent_conversation_messages;",
+    "desc": "Keeps conversation view current (local-sb: base table, COUNT only)"
+  },
+  {
+    "id": 170,
+    "schedule": "2,17,32,47 * * * *",
+    "type": "ef",
+    "name": "task-auto-advance",
+    "fn": "task-auto-advance",
+    "body": {},
+    "desc": "Auto-advances pending tasks",
+    "disabled": true,
+    "note": "Duplicate of 169 (task-auto-advance-fast, */10)"
+  },
+  {
+    "id": 197,
+    "schedule": "9,39 * * * *",
+    "type": "ef",
+    "name": "task-auto-advance-batch",
+    "fn": "task-auto-advance",
+    "body": {
+      "action": "run_all"
+    },
+    "desc": "Batch task auto-advance",
+    "disabled": true,
+    "note": "Duplicate of 169 (task-auto-advance-fast, */10)"
+  },
+  {
+    "id": 169,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "task-auto-advance-fast",
+    "fn": "task-auto-advance",
+    "body": {},
+    "desc": "Task auto-advance (10min) \u2014 KEEPER of task-auto-advance family"
+  },
+  {
+    "id": 83,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "task-orchestrator-assign",
+    "fn": "task-orchestrator",
+    "body": {
+      "action": "auto_assign_tasks"
+    },
+    "desc": "Auto-assigns tasks"
+  },
+  {
+    "id": 84,
+    "schedule": "0,15,30,45 * * * *",
+    "type": "ef",
+    "name": "task-orchestrator-rebalance",
+    "fn": "task-orchestrator",
+    "body": {
+      "action": "rebalance_workload"
+    },
+    "desc": "Rebalances workload across agents"
+  },
+  {
+    "id": 85,
+    "schedule": "0,10,20,30,40,50 * * * *",
+    "type": "ef",
+    "name": "task-orchestrator-blockers",
+    "fn": "task-orchestrator",
+    "body": {
+      "action": "identify_blockers"
+    },
+    "desc": "Identifies task blockers"
+  },
+  {
+    "id": 86,
+    "schedule": "14 * * * *",
+    "type": "ef",
+    "name": "task-orchestrator-report",
+    "fn": "task-orchestrator",
+    "body": {
+      "action": "performance_report"
+    },
+    "desc": "Performance report"
+  },
+  {
+    "id": 181,
+    "schedule": "3,13,23,33,43,53 * * * *",
+    "type": "ef",
+    "name": "suite-task-automation-engine",
+    "fn": "suite-task-automation-engine",
+    "body": {
+      "action": "run_all"
+    },
+    "desc": "Suite task automation engine"
+  },
+  {
+    "id": 168,
+    "schedule": "18,48 * * * *",
+    "type": "ef",
+    "name": "suite-task-automation-alt",
+    "fn": "suite-task-automation-engine",
+    "body": {
+      "action": "run_all"
+    },
+    "desc": "Suite task automation (alt schedule)",
+    "disabled": true,
+    "note": "Duplicate of 181 (suite-task-automation-engine, */10)"
+  },
+  {
+    "id": 182,
+    "schedule": "4,19,34,49 * * * *",
+    "type": "ef",
+    "name": "suite-task-auto-engine",
+    "fn": "suite-task-automation-engine",
+    "body": {
+      "action": "run_all"
+    },
+    "desc": "Suite task automation (quad schedule)",
+    "disabled": true,
+    "note": "Duplicate of 181 (suite-task-automation-engine, */10)"
+  },
+  {
+    "id": 178,
+    "schedule": "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+    "type": "sql",
+    "name": "agent-work-executor",
+    "sql": "SELECT app.run_agent_work_executor(5);",
+    "desc": "Runs agent work executor (every 5min)"
+  },
+  {
+    "id": 179,
+    "schedule": "0 * * * *",
+    "type": "sql",
+    "name": "github-issue-scanner",
+    "sql": "SELECT app.run_github_issue_scanner();",
+    "desc": "Scans GitHub for new issues"
+  },
+  {
+    "id": 87,
+    "schedule": "0 */6 * * *",
+    "type": "ef",
+    "name": "ecosystem-monitor-evaluate",
+    "fn": "ecosystem-monitor",
+    "body": {
+      "action": "self_evaluate"
+    },
+    "desc": "Ecosystem self-evaluation (every 6h)",
+    "disabled": true,
+    "note": "Overlap with 95+97 (daily 11am). 6h cadence redundant with daily self_evaluate"
+  },
+  {
+    "id": 95,
+    "schedule": "0 11 * * *",
+    "type": "ef",
+    "name": "ecosystem-monitor-daily",
+    "fn": "ecosystem-monitor",
+    "body": {},
+    "desc": "Daily ecosystem monitor",
+    "disabled": true,
+    "note": "Duplicate of 97 (ecosystem-monitor-tasks). 97 does same + generates tasks"
+  },
+  {
+    "id": 97,
+    "schedule": "0 11 * * *",
+    "type": "ef",
+    "name": "ecosystem-monitor-tasks",
+    "fn": "ecosystem-monitor",
+    "body": {
+      "generate_tasks": true
+    },
+    "desc": "Ecosystem monitor with task generation \u2014 KEEPER of ecosystem-monitor family"
+  },
+  {
+    "id": 89,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "code-monitor-daemon",
+    "fn": "code-monitor-daemon",
+    "body": {
+      "action": "monitor"
+    },
+    "desc": "Code monitor daemon (10min)"
+  },
+  {
+    "id": 153,
+    "schedule": "*/10 * * * *",
+    "type": "sql",
+    "name": "check-agent-heartbeats",
+    "sql": "SELECT util.check_agent_heartbeats();",
+    "desc": "Checks agent heartbeats"
+  },
+  {
+    "id": 174,
+    "schedule": "*/5 * * * *",
+    "type": "sql",
+    "name": "capture-lock-blockers",
+    "sql": "SELECT util.capture_lock_blockers();",
+    "desc": "Captures lock blockers"
+  },
+  {
+    "id": 192,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "video-job-processor",
+    "fn": "video-job-processor",
+    "body": {},
+    "desc": "Processes video jobs (every 10min)"
+  },
+  {
+    "id": 205,
+    "schedule": "6,21,36,51 * * * *",
+    "type": "ef",
+    "name": "monitor-device-connections",
+    "fn": "monitor-device-connections",
+    "body": {},
+    "desc": "Monitors device connections (every 15min)"
+  },
+  {
+    "id": 206,
+    "schedule": "9 */2 * * *",
+    "type": "ef",
+    "name": "predictive-analytics",
+    "fn": "predictive-analytics",
+    "body": {},
+    "desc": "Runs predictive analytics (every 2h)"
+  },
+  {
+    "id": 141,
+    "schedule": "0 9 * * *",
+    "type": "sql",
+    "name": "trigger-daily-discussion",
+    "sql": "SELECT public.trigger_daily_discussion_post();",
+    "desc": "Triggers daily discussion post"
+  },
+  {
+    "id": 90,
+    "schedule": "0 8 * * *",
+    "type": "ef",
+    "name": "morning-discussion-post",
+    "fn": "morning-discussion-post",
+    "body": {},
+    "desc": "Morning discussion post",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 88,
+    "schedule": "0 15 * * *",
+    "type": "ef",
+    "name": "daily-discussion-post",
+    "fn": "daily-discussion-post",
+    "body": {},
+    "desc": "Daily discussion post",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 91,
+    "schedule": "0 9 * * *",
+    "type": "ef",
+    "name": "progress-update-post",
+    "fn": "progress-update-post",
+    "body": {},
+    "desc": "Progress update post",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 92,
+    "schedule": "0 20 * * *",
+    "type": "ef",
+    "name": "evening-summary-post",
+    "fn": "evening-summary-post",
+    "body": {},
+    "desc": "Evening summary post",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 93,
+    "schedule": "0 16 * * 5",
+    "type": "ef",
+    "name": "weekly-retrospective-post",
+    "fn": "weekly-retrospective-post",
+    "body": {},
+    "desc": "Weekly retrospective post (Fri 4PM)",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 94,
+    "schedule": "0 14 * * 3",
+    "type": "ef",
+    "name": "community-spotlight-post",
+    "fn": "community-spotlight-post",
+    "body": {},
+    "desc": "Community spotlight post (Wed)",
+    "disabled": true,
+    "note": "Requires cloud Supabase functions.invoke('github-integration') \u2014 not available in local stack. Re-enable when cloud Supabase is reachable."
+  },
+  {
+    "id": 195,
+    "schedule": "0 0 * * *",
+    "type": "ef",
+    "name": "daily-news-finder",
+    "fn": "daily-news-finder",
+    "body": {},
+    "desc": "Daily news finder (midnight)"
+  },
+  {
+    "id": 211,
+    "schedule": "0 5 * * *",
+    "type": "ef",
+    "name": "superduper-design-brand",
+    "fn": "superduper-design-brand",
+    "body": {},
+    "desc": "Superduper brand design agent"
+  },
+  {
+    "id": 215,
+    "schedule": "25 */2 * * *",
+    "type": "ef",
+    "name": "superduper-integration",
+    "fn": "superduper-integration",
+    "body": {},
+    "desc": "Superduper integration agent"
+  },
+  {
+    "id": 208,
+    "schedule": "15 */4 * * *",
+    "type": "ef",
+    "name": "superduper-business-growth",
+    "fn": "superduper-business-growth",
+    "body": {},
+    "desc": "Superduper business growth agent"
+  },
+  {
+    "id": 212,
+    "schedule": "0 9 * * 1-5",
+    "type": "ef",
+    "name": "superduper-development-coach",
+    "fn": "superduper-development-coach",
+    "body": {},
+    "desc": "Superduper dev coach (weekdays)"
+  },
+  {
+    "id": 216,
+    "schedule": "18 * * * *",
+    "type": "ef",
+    "name": "superduper-research-intelligence",
+    "fn": "superduper-research-intelligence",
+    "body": {},
+    "desc": "Superduper research intelligence"
+  },
+  {
+    "id": 209,
+    "schedule": "22 */6 * * *",
+    "type": "ef",
+    "name": "superduper-communication-outreach",
+    "fn": "superduper-communication-outreach",
+    "body": {},
+    "desc": "Superduper comms outreach"
+  },
+  {
+    "id": 213,
+    "schedule": "30 8 * * 1-5",
+    "type": "ef",
+    "name": "superduper-domain-experts",
+    "fn": "superduper-domain-experts",
+    "body": {},
+    "desc": "Superduper domain experts (weekdays)"
+  },
+  {
+    "id": 217,
+    "schedule": "0 2 * * *",
+    "type": "ef",
+    "name": "superduper-router",
+    "fn": "superduper-router",
+    "body": {},
+    "desc": "Superduper router (daily 2AM)",
+    "disabled": true,
+    "note": "Requires x-eliza-key or Authorization header. Re-enable when INTERNAL_ELIZA_KEY is set or cron uses service-role key."
+  },
+  {
+    "id": 210,
+    "schedule": "0 7,19 * * *",
+    "type": "ef",
+    "name": "superduper-content-media",
+    "fn": "superduper-content-media",
+    "body": {},
+    "desc": "Superduper content media"
+  },
+  {
+    "id": 214,
+    "schedule": "0 6 * * *",
+    "type": "ef",
+    "name": "superduper-finance-investment",
+    "fn": "superduper-finance-investment",
+    "body": {},
+    "desc": "Superduper finance investment"
+  },
+  {
+    "id": 191,
+    "schedule": "0 * * * *",
+    "type": "ef",
+    "name": "opportunity-scanner",
+    "fn": "opportunity-scanner",
+    "body": {},
+    "desc": "Opportunity scanner (hourly)",
+    "disabled": true,
+    "note": "Duplicate of 152 (opportunity-scanner-fast, */10). */10 is denser than hourly"
+  },
+  {
+    "id": 152,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "opportunity-scanner-fast",
+    "fn": "opportunity-scanner",
+    "body": {},
+    "desc": "Opportunity scanner (10min) \u2014 KEEPER of opportunity-scanner family"
+  },
+  {
+    "id": 102,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "api-key-health-monitor",
+    "fn": "api-key-health-monitor",
+    "body": {},
+    "desc": "API key health monitor"
+  },
+  {
+    "id": 172,
+    "schedule": "*/10 * * * *",
+    "type": "ef",
+    "name": "system-status",
+    "fn": "system-status",
+    "body": {},
+    "desc": "System status check (disabled on cloud)"
+  },
+  {
+    "id": 78,
+    "schedule": "2 * * * *",
+    "type": "sql",
+    "name": "cleanup-webhook-logs",
+    "sql": "DELETE FROM public.webhook_logs WHERE created_at < now() - interval '30 days'; DELETE FROM public.conversation_sessions WHERE created_at < now() - interval '30 days';",
+    "desc": "Cleanup old logs and sessions (hourly)"
+  },
+  {
+    "id": 103,
+    "schedule": "3,13,23,33,43,53 * * * *",
+    "type": "sql",
+    "name": "prune-http-responses",
+    "sql": "SELECT public.prune_net_http_response(3, 5000);",
+    "desc": "Prune old net_http responses"
+  },
+  {
+    "id": 104,
+    "schedule": "8 * * * *",
+    "type": "sql",
+    "name": "prune-http-responses-force",
+    "sql": "SELECT public.prune_net_http_response_until_clear(3);",
+    "desc": "Force-prune http responses until clear"
+  },
+  {
+    "id": 173,
+    "schedule": "*/15 * * * *",
+    "type": "sql",
+    "name": "cleanup-stale-device-sessions",
+    "sql": "SELECT cleanup_stale_device_sessions();",
+    "desc": "Cleanup stale device sessions"
+  },
+  {
+    "id": 175,
+    "schedule": "8 3 * * *",
+    "type": "sql",
+    "name": "purge-lock-diagnostics",
+    "sql": "SELECT util.purge_old_lock_diagnostics();",
+    "desc": "Purge old lock diagnostics (daily 3:08AM)"
+  },
+  {
+    "id": 221,
+    "schedule": "0 3 * * 0",
+    "type": "sql",
+    "name": "purge-cron-execution-logs",
+    "sql": "DELETE FROM cron_execution_log WHERE created_at < now() - interval '30 days';",
+    "desc": "Purge old cron execution logs (weekly)"
+  },
+  {
+    "id": 79,
+    "schedule": "4,9,14,19,24,29,34,39,44,49,54,59 * * * *",
+    "type": "sql",
+    "name": "process-scheduled-actions",
+    "sql": "UPDATE public.scheduled_actions SET next_execution = now() WHERE is_active = true AND next_execution <= now() AND (next_execution IS NULL OR next_execution <= now());",
+    "desc": "Process scheduled actions queue"
+  },
+  {
+    "id": 80,
+    "schedule": "3,18,33,48 * * * *",
+    "type": "sql",
+    "name": "timeout-stale-tasks",
+    "sql": "UPDATE public.task_executions SET status = 'timeout', error_message = 'Task execution timeout', execution_end = now() WHERE status = 'running' AND execution_start < now() - interval '30 minutes';",
+    "desc": "Timeout stale running tasks"
+  },
+  {
+    "id": 149,
+    "schedule": "0 0 1 * *",
+    "type": "ef",
+    "name": "workflow-template-manager-monthly",
+    "fn": "workflow-template-manager",
+    "body": {
+      "action": "execute_template",
+      "data": {
+        "template_name": "monthly_retrospective"
+      }
+    },
+    "desc": "Monthly workflow template execution",
+    "disabled": true,
+    "note": "Function works (returns 404 'Template not found: monthly_retrospective'). Needs INSERT into public.workflow_templates (also seed public.workflow_template_categories with the FK). Re-enable after rows exist."
+  },
+  {
+    "id": 150,
+    "schedule": "0 0 * * 0",
+    "type": "ef",
+    "name": "workflow-template-manager-weekly",
+    "fn": "workflow-template-manager",
+    "body": {
+      "action": "execute_template",
+      "data": {
+        "template_name": "weekly_planning"
+      }
+    },
+    "desc": "Weekly workflow template execution",
+    "disabled": true,
+    "note": "Function works (returns 404 'Template not found: weekly_planning'). Needs INSERT into public.workflow_templates. Re-enable after rows exist."
+  },
+  {
+    "id": 224,
+    "schedule": "0 * * * *",
+    "type": "ef",
+    "name": "cron-proxy",
+    "fn": "cron-proxy",
+    "body": {
+      "path": "system-status"
+    },
+    "desc": "Cron proxy relay (hourly) \u2014 proxies system-status by default"
+  },
+  {
+    "id": 196,
+    "schedule": "* * * * *",
+    "type": "ef",
+    "name": "event-dispatcher",
+    "fn": "event-dispatcher",
+    "body": {},
+    "desc": "Event dispatcher (every minute)",
+    "disabled": true,
+    "note": "Not a cron job \u2014 should be called by event-router with real event payloads. Every 60s with empty body is a no-op."
+  },
+  {
+    "id": 301,
+    "schedule": "0 3 * * 1",
+    "type": "sql",
+    "name": "cuttlefish-trustgraph-decay",
+    "sql": "UPDATE app.cuttlefish_agents SET trust_score = GREATEST(CASE cac_tier WHEN 'anchor' THEN 70 WHEN 'enterprise' THEN 55 WHEN 'studio' THEN 40 WHEN 'developer' THEN 30 ELSE 20 END, trust_score - 2.0), trust_score_updated_at = NOW() WHERE trust_score_updated_at < NOW() - INTERVAL '7 days' AND trust_score > CASE cac_tier WHEN 'anchor' THEN 70 WHEN 'enterprise' THEN 55 WHEN 'studio' THEN 40 WHEN 'developer' THEN 30 ELSE 20 END;",
+    "desc": "TG-001 Phase 2: Weekly decay (-2/week) for agents with stale positive signals"
+  },
+  {
+    "id": 302,
+    "schedule": "15 * * * *",
+    "type": "sql",
+    "name": "cuttlefish-lifecycle-automation",
+    "sql": "UPDATE app.cuttlefish_agents SET lifecycle_status = 'revoked' WHERE trust_score < 10 AND lifecycle_status != 'revoked'; UPDATE app.cuttlefish_agents SET lifecycle_status = 'suspended' WHERE trust_score >= 10 AND trust_score < 20 AND lifecycle_status NOT IN ('suspended', 'revoked'); UPDATE app.cuttlefish_agents SET lifecycle_status = 'active' WHERE trust_score >= 25 AND lifecycle_status = 'suspended';",
+    "desc": "TG-001 Phase 2: Lifecycle automation (SUSPENDED/REVOKED with hysteresis)"
+  },
+  {
+    "id": 225,
+    "schedule": "*/30 * * * *",
+    "type": "local",
+    "name": "fleet-chat-heartbeat",
+    "action": "fleet-chat-heartbeat",
+    "desc": "Fleet chat heartbeat \u2014 prompts a random agent with a contextual conversation starter (every 30min)"
+  },
+  {
+    "id": 226,
+    "schedule": "*/5 * * * *",
+    "type": "local",
+    "name": "fleet-chat-followup",
+    "action": "fleet-chat-followup",
+    "desc": "Fleet chat follow-up \u2014 checks if prompted agent responded and prompts another agent to engage (every 5min)"
+  },
+  {
+    "id": 227,
+    "schedule": "*/10 * * * *",
+    "type": "local",
+    "name": "fleet-chat-task-creator",
+    "action": "fleet-chat-task-creator",
+    "desc": "Fleet chat task creator \u2014 after a conversation cycle completes, creates a task from actionable findings (every 10min)"
+  }
+]

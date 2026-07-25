@@ -332,6 +332,32 @@ async function runEdgeFunction(job) {
   return runEdgeFunctionByName(m[1], {});
 }
 
+// ── Python Job Runner ─────────────────────────────────────
+// Executes Python code on the relay's python-exec tool.
+// The job's `code` field contains the Python script.
+async function runPythonJob(code) {
+  if (!code) return { ok: false, error: 'no code in job definition' };
+  try {
+    const res = await fetch('http://127.0.0.1:8080/tools/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602',
+        'x-agent-id': 'cron',
+      },
+      body: JSON.stringify({ tool: 'python-exec', args: { code, timeout: 120 } }),
+      signal: AbortSignal.timeout(130_000),
+    });
+    const data = await res.json();
+    if (data.success) {
+      return { ok: true, result: data.output?.slice(0, 500) || '(empty)', rows: data.length };
+    }
+    return { ok: false, error: data.error || data.stderr || 'python-exec failed' };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 function loadState() {
   try { return JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { return { lastRun: {} }; }
 }
@@ -371,6 +397,8 @@ async function tick() {
       res = await runFleetChatFollowUp();
     } else if (job.type === 'local' && job.action === 'fleet-chat-task-creator') {
       res = await runFleetChatTaskCreator();
+    } else if (job.type === 'python' && job.code) {
+      res = await runPythonJob(job.code);
     } else {
       res = { ok: false, error: `unknown type: ${job.type}` };
     }
