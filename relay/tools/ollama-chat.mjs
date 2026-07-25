@@ -272,38 +272,16 @@ export async function ollamaChat(message, options = {}) {
     }
   }
 
-  // ── 3) Last resort: local Ollama ────────────────────────────
-  if (!result) {
-    try {
-      const data = await tryOllamaLocal(ollamaPayload, controller.signal);
-      result = normalizeResponse(data, model, 'ollama-local');
-    } catch (err) {
-      errors.push(`OllamaLocal: ${err.message}`);
+  // ── 3) No local fallback ─────────────────────────────────────
+    // This machine has no local models (6GB RAM, no room for inference).
+    // Cloud models (Ollama Cloud + OpenRouter) are the only pipeline.
+    // If both fail, surface the errors immediately.
+    clearTimeout(timer);
+    if (!result) {
+      return { error: `All cloud providers failed: ${errors.join('; ')}` };
     }
-  }
 
-  // ── 4) True last resort: fallback to a real local model (not cloud-tagged) ──
-  if (!result) {
-    const fallbackModels = ['mistral-small3.2:latest', 'llama3-chatqa:latest', 'gemma3:1b', 'deepseek-r1:latest'];
-    for (const fallbackModel of fallbackModels) {
-      try {
-        const fallbackPayload = { ...ollamaPayload, model: fallbackModel };
-        const data = await tryOllamaLocal(fallbackPayload, controller.signal);
-        result = normalizeResponse(data, fallbackModel, 'ollama-local');
-        break;
-      } catch (err) {
-        errors.push(`OllamaLocal(${fallbackModel}): ${err.message}`);
-      }
-    }
-  }
-
-  clearTimeout(timer);
-
-  if (!result) {
-    return { error: `All providers failed: ${errors.join('; ')}` };
-  }
-
-  // Log token usage with agent/source attribution
+    // Log token usage with agent/source attribution
   await logTokenUsage(agent, source, result.model, result.promptEvalCount, result.evalCount, result.costUsd);
 
   return result;
