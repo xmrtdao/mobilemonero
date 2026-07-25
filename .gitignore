@@ -9,8 +9,9 @@ next.user-config.*
 
 # Environment variables
 .env*.local
+relay/.env
 
-# Common ignores
+# Dependencies
 node_modules/
 .next/
 .DS_Store
