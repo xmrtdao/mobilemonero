@@ -13,6 +13,7 @@ const OLLAMA_HOST       = process.env.OLLAMA_HOST       || 'http://localhost:114
 const DEFAULT_MODEL     = process.env.OLLAMA_MODEL       || 'deepseek-v4-flash:cloud';
 const OLLAMA_API_KEY    = process.env.OLLAMA_API_KEY    || '';
 const OLLAMA_XMRT_KEY   = process.env.OLLAMA_XMRT_API_KEY || '';
+const OLLAMA_3RD_KEY    = process.env.OLLAMA_3RD_API_KEY  || '';
 // OPENROUTER_API_KEY is read lazily to avoid a module-load-order bug:
 // server.js imports ollama-chat.mjs BEFORE calling loadEnv(), so env
 // vars set in relay/.env are not yet available at import time.
@@ -90,34 +91,51 @@ function imagesToOpenAI(messages) {
   });
 }
 
-/** Try Ollama Pro Cloud (api.ollama.com) with a specific model */
+/** Try Ollama Pro Cloud (api.ollama.com) with a specific model.
+ * Tries up to 3 API keys in cascade: primary, 2nd (XMRT), 3rd (harmonymotionstudios).
+ * Returns on first success, throws if all fail. */
 async function tryOllamaCloud(messages, model, signal) {
-  const key = OLLAMA_API_KEY || OLLAMA_XMRT_KEY;
-  if (!key) throw new Error('No OLLAMA_API_KEY or OLLAMA_XMRT_API_KEY configured');
-  // For vision/image requests, keep the native Ollama format (images: [base64])
-  // which the Ollama Cloud API accepts natively. For text-only, use OpenAI format.
-  const hasImages = messages.some(m => m.images && m.images.length > 0);
-  const body = hasImages
-    ? JSON.stringify({
-        model: model.replace(':cloud', ''),
-        messages,  // messages have images field; Ollama cloud accepts this natively
-        stream: false,
-        max_tokens: 4096,
-      })
-    : JSON.stringify({
-        model: model.replace(':cloud', ''),
-        messages: imagesToOpenAI(messages),
-        stream: false,
-        max_tokens: 4096,
+  const keys = [
+    { key: OLLAMA_API_KEY, label: 'primary' },
+    { key: OLLAMA_XMRT_KEY, label: 'xmrt' },
+    { key: OLLAMA_3RD_KEY, label: '3rd' },
+  ].filter(k => k.key);
+  if (keys.length === 0) throw new Error('No OLLAMA_API_KEY configured');
+  
+  let lastError = null;
+  for (const { key, label } of keys) {
+    try {
+      // For vision/image requests, keep the native Ollama format (images: [base64])
+      // which the Ollama Cloud API accepts natively. For text-only, use OpenAI format.
+      const hasImages = messages.some(m => m.images && m.images.length > 0);
+      const body = hasImages
+        ? JSON.stringify({
+            model: model.replace(':cloud', ''),
+            messages,  // messages have images field; Ollama cloud accepts this natively
+            stream: false,
+            max_tokens: 4096,
+          })
+        : JSON.stringify({
+            model: model.replace(':cloud', ''),
+            messages: imagesToOpenAI(messages),
+            stream: false,
+            max_tokens: 4096,
+          });
+      const res = await fetch('https://api.ollama.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body,
+        signal,
       });
-  const res = await fetch('https://api.ollama.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-    body,
-    signal,
-  });
-  if (!res.ok) throw new Error(`Ollama Cloud HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
+      if (!res.ok) throw new Error(`Ollama Cloud HTTP ${res.status} (${label}): ${(await res.text()).slice(0, 150)}`);
+      return res.json();
+    } catch (err) {
+      lastError = err;
+      // If there's another key to try, continue; otherwise throw
+      continue;
+    }
+  }
+  throw lastError || new Error('All Ollama Cloud keys failed');
 }
 
 /** Try OpenRouter with the requested model (or fallback to deepseek-v4-flash for text, minimax-m3 for vision) */
