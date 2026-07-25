@@ -1828,16 +1828,67 @@ const toolHandlers = {
   },
 
   'vex-hear': async (args) => {
-    const capturePath = join(__dirname, '..', 'relay-data', 'vex-audio.wav');
-    const duration = Math.min(args?.duration || 3, 10);
+      const capturePath = join(__dirname, '..', 'relay-data', 'vex-audio.wav');
+      const duration = Math.min(args?.duration || 3, 10);
+      try {
+        // Use PowerShell to capture audio (handles special chars in device names)
+        execSync(
+          `powershell -Command "& {\\$ps=New-Object -ComObject Scripting.FileSystemObject; Write-Host 'audio capture placeholder'}"`,
+          { timeout: 3000, windowsHide: true }
+        );
+        return { success: false, error: 'Audio capture via ffmpeg needs device name fix on this Windows build. Vision is fully operational.', duration };
+      } catch (err) { return { success: false, error: err.message }; }
+    },
+
+    // ── Python Code Executor ─────────────────────────────────────
+  'python-exec': async (args) => {
+    const code = args?.code || args?.script || '';
+    if (!code) return { error: 'code (string) is required. Pass the Python code to execute.' };
+    const timeout = Math.min(args?.timeout || 30, 120);
+    const pip = args?.pip || ''; // optional package to install first
+    // Full path to python.exe — execSync uses cmd.exe on Windows which
+    // may not have the git-bash PATH that makes 'python' resolvable.
+    const pyPath = 'C:\\Users\\PureTrek\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe';
+    const pipPath = 'C:\\Users\\PureTrek\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\pip3.exe';
     try {
-      // Use PowerShell to capture audio (handles special chars in device names)
-      execSync(
-        `powershell -Command "& {\$ps=New-Object -ComObject Scripting.FileSystemObject; Write-Host 'audio capture placeholder'}"`,
-        { timeout: 3000, windowsHide: true }
-      );
-      return { success: false, error: 'Audio capture via ffmpeg needs device name fix on this Windows build. Vision is fully operational.', duration };
-    } catch (err) { return { success: false, error: err.message }; }
+      // Install package if requested
+      if (pip) {
+        const packages = pip.split(',').map(p => p.trim()).filter(Boolean);
+        for (const pkg of packages) {
+          const cmd = `"${pipPath}" install ${pkg}`;
+          execSync(cmd, {
+            timeout: 120000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
+            encoding: 'utf8',
+          });
+        }
+      }
+      const stdout = execSync('"' + pyPath + '" -c ' + JSON.stringify(code), {
+        timeout: timeout * 1000,
+        maxBuffer: 512 * 1024,
+        windowsHide: true,
+        encoding: 'utf8',
+      });
+      return {
+        success: true,
+        output: stdout.slice(0, 10000),
+        length: stdout.length,
+        exitCode: 0,
+        timeout,
+        pipInstalled: pip || null,
+      };
+    } catch (err) {
+      const stderr = err.stderr?.toString()?.slice(0, 5000) || '';
+      const stdout = err.stdout?.toString()?.slice(0, 5000) || '';
+      return {
+        success: false,
+        error: (err.message || String(err)).slice(0, 5000),
+        stderr,
+        stdout,
+        exitCode: err.status ?? -1,
+      };
+    }
   },
 
   // ── Resend Inbox (read emails stored in relay state) ──────
@@ -5985,6 +6036,7 @@ function getToolDescription(name) {
     'vex-vision': 'Vision tool for any agent. Capture a screenshot (screen:true), webcam image (default), local image file (file:"/path"), or image URL (url:"https://..."), then describe it with the cloud vision model. Model default: kimi-k2.6:cloud (no local models on this 6GB laptop). Fallback: OpenRouter. Best for: "what is on screen right now?", "describe this image". Output: plain text description of the image contents.',
     'vex-vision-screenshots': 'Read historical Windows screenshots from %USERPROFILE%\\Pictures\\Screenshots. Returns descriptions of the latest N screenshots (limit, default 5). Optionally filter to a specific filename. Uses kimi-k2.6:cloud via OpenRouter (no local models). Best for: "what was on screen yesterday?", "find the screenshot from last week with the error message".',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
+    'python-exec': 'Execute Python 3.11 code and return stdout/stderr. Pass code via "code" (string, required). Optional: pip (package name to install first, comma-separated for multiple), timeout (seconds, max 120). Use for data analysis, SQL queries, text processing, or any computation. Example: TOOL_CALL: {"tool":"python-exec","args":{"code":"print(numpy.__version__)","pip":"numpy"}}',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
     'sent-emails': 'Search sent email history from suite_email_activity table. Use search param to find by email address or subject. Columns: id, email_from, email_to, subject, status, sent_at.',
@@ -7954,6 +8006,7 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 |- \`knowledge-sync\` — Sync local knowledge base.
 |- \`vex-vision\` — **Vision tool.** Capture a screenshot (screen:true) or describe an image file/URL. Returns plain text description. Cloud-only — kimi-k2.6:cloud via OpenRouter. No local models on this 6GB laptop.
 |- \`vex-vision-screenshots\` — **Historical screenshots.** Read and describe recent screenshots from Windows Pictures/Screenshots folder. Args: limit (default 5), filename (optional specific file).
+|- \`python-exec\` — **Python executor.** Run Python 3.11 code on the relay machine. Pass code via "code" string. Use for data analysis, text processing, DB queries. Fast and cheap — runs locally, no LLM tokens used.
 For ALL tools and their descriptions, check the \`tools\` array in the JSON grounding block.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
