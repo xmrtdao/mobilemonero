@@ -1500,7 +1500,7 @@ loadAgentExperienceCard();
               body: JSON.stringify(payload),
             }).then(function(r){return r.json();}).then(function(ar){
               document.getElementById('fleet-chat-attach-status').textContent = '✅ Attached ' + file.name;
-              fetchFleetMessages();
+              loadFleetChat();
             }).catch(function(err){
               document.getElementById('fleet-chat-attach-status').textContent = '❌ Upload failed: ' + err.message;
             });
@@ -1510,7 +1510,7 @@ loadAgentExperienceCard();
         // Remove optimistic message, let poll re-add with real data-id
         var opt = msgs.querySelector('[data-id="' + tempId + '"]');
         if (opt) opt.remove();
-        fetchFleetMessages();
+        loadFleetChat();
       }).catch(function(e){
         document.getElementById('fleet-chat-status').textContent = '● error: ' + e.message;
         document.getElementById('fleet-chat-status').style.color = '#f87171';
@@ -1523,10 +1523,12 @@ loadAgentExperienceCard();
     var msgs = document.getElementById('fleet-chat-msgs');
     var url = '/api/fleet-chat/messages?limit=50';
     if (lastFleetTs > 0) url += '&since=' + lastFleetTs;
-    apiFetch(url)
+    apiFetch(url, { signal: AbortSignal.timeout(8000) })
       .then(function(r){return r.json();})
       .then(function(d){
         if (d.messages && d.messages.length > 0) {
+          // On first load, clear the placeholder
+          if (lastFleetTs === 0) msgs.innerHTML = '';
           for (var i = 0; i < d.messages.length; i++) {
             var m = d.messages[i];
             if (m.ts <= lastFleetTs) continue;
@@ -2001,9 +2003,7 @@ loadAgentExperienceCard();
     }
   }
 
-  // Load initial fleet messages + poll every 5 seconds
-  setTimeout(fetchFleetMessages, 500);
-  setInterval(fetchFleetMessages, 5000);
+  // Load initial fleet messages + poll every 3 seconds (handled by loadFleetChat above)
 
   // Load bulletin board
   setTimeout(loadBoard, 1000);

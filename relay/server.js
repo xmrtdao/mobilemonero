@@ -3507,17 +3507,44 @@ app.get('/api/supervisor/status', async (req, res) => {
       // For schedulers/daemons (no port), trust the state file's childPid.
       let healthy = false;
       if (def.port) {
-        try {
-          const r = await fetch(`http://127.0.0.1:${def.port}/`, {
-            signal: AbortSignal.timeout(1500),
-          });
-          healthy = r.status < 500; // any non-5xx = reachable
-        } catch {
-          // port not responding — fall back to state-file PID check
-          healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+        // pg (5432) speaks postgres protocol, not HTTP — use TCP probe
+        if (def.name === 'pg') {
+          try {
+            const sock = require('net').connect({ host: '127.0.0.1', port: 5432 });
+            sock.setTimeout(1500);
+            healthy = await new Promise(res => { sock.once('connect', () => { sock.destroy(); res(true); }); sock.once('error', () => res(false)); sock.once('timeout', () => { sock.destroy(); res(false); }); });
+          } catch { healthy = false; }
+        } else {
+          try {
+            const r = await fetch(`http://127.0.0.1:${def.port}/`, {
+              signal: AbortSignal.timeout(1500),
+            });
+            healthy = r.status < 500; // any non-5xx = reachable
+          } catch {
+            healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+          }
         }
       } else {
-        healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+        // No-port services: live process lookup by script name
+        const scriptArg = { 'tunnel': 'cloudflared.exe', 'alice': 'alice.mjs', 'cron-engine-v2': 'cron-engine-v2.mjs', 'campaign-scheduler': 'campaign-scheduler.mjs', '31harbor-scheduler': '31harbor-scheduler.mjs' }[def.name];
+        if (scriptArg) {
+          try {
+            let pid = null;
+            if (scriptArg.endsWith('.exe')) {
+              const { execSync } = require('child_process');
+              const out = execSync(`tasklist /NH /FO CSV /FI "IMAGENAME eq ${scriptArg}"`, { stdio: ['pipe', 'pipe', 'ignore'], timeout: 3000, windowsHide: true, encoding: 'utf8' });
+              pid = out.trim().length > 0 ? 1 : 0;  // any line = running
+            } else {
+              const { execSync } = require('child_process');
+              const out = execSync(`wmic process where "name='node.exe' and commandline like '%${scriptArg}%'" get processid /format:csv`, { stdio: ['pipe', 'pipe', 'ignore'], timeout: 5000, windowsHide: true, encoding: 'utf8' });
+              // Match rows where the second csv column is numeric (skip "Node,ProcessId" header)
+              const dataRows = out.trim().split('\n').filter(l => /,\d+\s*$/.test(l));
+              pid = dataRows.length > 0 ? parseInt(dataRows[0].split(',').pop().trim(), 10) : null;
+            }
+            if (pid) healthy = true;
+          } catch {}
+        }
+        if (!healthy && svcState.childPid && isProcessRunningByPid(svcState.childPid)) healthy = true;
       }
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
