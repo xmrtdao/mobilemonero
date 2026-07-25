@@ -232,6 +232,8 @@ async function logRelayRequest(method, path, statusCode, durationMs, agentId = '
   const isError = statusCode >= 400;
   const isSlow = durationMs > 5000;
   const isKeyEndpoint = ['/tools/run', '/api/fleet-chat', '/ai-chat', '/api/suite'].some(p => path.startsWith(p));
+  // Skip dashboard polling (every 3s, drowns the Ships Log)
+  if (path === '/api/fleet-chat/messages' && agentId === 'dashboard') return;
   if (!isError && !isSlow && !isKeyEndpoint) return;
   
   const activityType = isError ? 'http_error' : (isSlow ? 'slow_request' : 'api_call');

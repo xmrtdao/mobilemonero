@@ -387,8 +387,15 @@
     var logEl = document.getElementById('qds-activity-log');
     if (!logEl) return;
     apiFetch('/api/activity-log?limit=20', { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
-      if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">No activity yet</span></div>'; return; }
-      logEl.innerHTML = rows.map(function(a) {
+          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">No activity yet</span></div>'; return; }
+          // Filter out the noise: dashboard polling every 3s drowns the log
+          rows = rows.filter(function(a) {
+            var title = (a.title || '').toLowerCase();
+            // Skip dashboard fleet-chat polling (every 3s)
+            if (title === 'get /api/fleet-chat/messages' && a.agent_id === 'dashboard') return false;
+            return true;
+          }).slice(0, 20);
+          logEl.innerHTML = rows.map(function(a) {
         var type = a.activity_type || 'system';
         var title = (a.title || a.description || type).slice(0, 60);
         var status = a.status || 'info';
@@ -422,7 +429,7 @@
         else if (type === 'system_error') icon = '💥';
         else if (status === 'failed' || status === 'error') icon = '❌';
         else if (status === 'success' || status === 'completed') icon = '✅';
-        return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span></div>';
+        return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span><br/><span style="color:#8b8ba0;font-size:0.5rem;">' + agent + '</span></div>';
       }).join('');
     }).catch(function() {
       var el = document.getElementById('qds-activity-log');
