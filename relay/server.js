@@ -7547,7 +7547,10 @@ async function routeFleetMessage(entry) {
     } catch (e) { /* best-effort */ }
 
     // Execute via relay's own /tools/run with retry on transient failures
-    const MAX_RETRIES = 4;
+    // Vision tools need much longer timeouts (up to 3 min for cloud inference)
+    const isVisionTool = toolName && (toolName.includes('vision') || toolName.includes('screenshot'));
+    const toolTimeout = isVisionTool ? 180000 : 15000;
+    const MAX_RETRIES = isVisionTool ? 1 : 4;  // Don't retry vision — already takes long enough
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -7555,7 +7558,7 @@ async function routeFleetMessage(entry) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-agent-id': agentName },
           body: JSON.stringify({ tool: toolName, args: { ...args, _agent: agentName } }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(toolTimeout),
         });
         const result = await res.json();
 
