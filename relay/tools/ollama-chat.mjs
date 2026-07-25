@@ -94,18 +94,26 @@ function imagesToOpenAI(messages) {
 async function tryOllamaCloud(messages, model, signal) {
   const key = OLLAMA_API_KEY || OLLAMA_XMRT_KEY;
   if (!key) throw new Error('No OLLAMA_API_KEY or OLLAMA_XMRT_API_KEY configured');
+  // For vision/image requests, keep the native Ollama format (images: [base64])
+  // which the Ollama Cloud API accepts natively. For text-only, use OpenAI format.
+  const hasImages = messages.some(m => m.images && m.images.length > 0);
+  const body = hasImages
+    ? JSON.stringify({
+        model: model.replace(':cloud', ''),
+        messages,  // messages have images field; Ollama cloud accepts this natively
+        stream: false,
+        max_tokens: 4096,
+      })
+    : JSON.stringify({
+        model: model.replace(':cloud', ''),
+        messages: imagesToOpenAI(messages),
+        stream: false,
+        max_tokens: 4096,
+      });
   const res = await fetch('https://api.ollama.com/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: model.replace(':cloud', ''),   // e.g. minimax-m3 or deepseek-v4-flash
-      messages: imagesToOpenAI(messages),
-      stream: false,
-      max_tokens: 4096,
-    }),
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body,
     signal,
   });
   if (!res.ok) throw new Error(`Ollama Cloud HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
