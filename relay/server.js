@@ -1615,15 +1615,18 @@ const toolHandlers = {
 
   'vex-vision': async (args) => {
     const prompt = args?.prompt || 'What do you see in this image? Be concise.';
-    const model = args?.model || 'minimax/minimax-m3';
+    // Default to the cloud vision model. Local Ollama (moondream) is the fallback
+    // only if the cloud chain fails — it's a different model and produces
+    // noticeably weaker descriptions. Explicit 'model' arg always wins.
+    const model = args?.model || process.env.VEX_VISION_MODEL || 'kimi-k2.6:cloud';
     const filePath = args?.file || args?.path || args?.filePath;
     const url = args?.url;
     const screenshot = args?.screenshot === true || args?.screen === true;
     const cameraName = args?.camera || 'HP TrueVision HD Camera';
-    const ffmpegPath = 'C:\\tools\\ffmpeg';
+    const ffmpegPath = 'C:\\\\tools\\\\ffmpeg';
     const magickPath = join(__dirname, '..', 'relay-data', 'imagemagick', 'magick.exe');
     const relayData = join(__dirname, '..', 'relay-data');
-    const gsPath = 'C:\\Program Files\\gs\\gs10.07.1\\bin';
+    const gsPath = 'C:\\\\Program Files\\\\gs\\\\gs10.07.1\\\\bin';
     const execOpts = { timeout: 30000, windowsHide: true, env: { ...process.env, PATH: `${gsPath};${process.env.PATH}` } };
     const execOptsMagick = { timeout: 30000, windowsHide: true, env: { ...process.env, PATH: `${gsPath};${process.env.PATH}` } };
 
@@ -1718,27 +1721,110 @@ const toolHandlers = {
         imgBase64 = readFileSync(capturePath).toString('base64');
       }
 
-      // ── Send to Ollama vision model ───────────────────
-      const visionRes = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: prompt, images: [imgBase64] }],
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(90000),
+      // ── Send to vision model ───────────────────────────
+      // Uses the shared ollama-chat.mjs fallback chain (Ollama Cloud → OpenRouter → local).
+      // The chat API natively accepts `images` on the message — cloud models like
+      // kimi-k2.6:cloud and kimi-k3 have vision support; the local moondream
+      // fallback is kept as the last-resort chain.
+      const { ollamaChat } = await import('./tools/ollama-chat.mjs');
+      const visionResult = await ollamaChat(prompt, {
+        model,
+        agent: 'vision',
+        source: 'fleet-vision',
+        images: [imgBase64],
+        temperature: 0.3,
+        maxTokens: 512,
+        timeout: 90000,
       });
-      const visionData = await visionRes.json();
-      const desc = visionData.message?.content || visionData.error || 'no response';
+      if (visionResult.error) {
+        return { success: false, error: `Vision model failed: ${visionResult.error}`, model, source: sourceLabel };
+      }
       return {
         success: true,
         source: sourceLabel,
-        model,
-        description: desc,
+        model: visionResult.model || model,
+        provider: visionResult.provider || 'ollama-cloud',
+        description: visionResult.response || 'no response',
         image: imgBase64.slice(0, 100) + '... [' + Math.round(imgBase64.length / 1024) + 'KB]',
       };
     } catch (err) { return { success: false, error: err.message }; }
+  },
+
+  // ── Vision for Windows screenshots folder ──────────────────────────
+  // Scans the user's Windows Screenshots folder, picks the latest (or a
+  // specific filename), and runs the same vision pipeline as vex-vision.
+  // Screenshot folder default: %USERPROFILE%\Pictures\Screenshots
+  'vex-vision-screenshots': async (args) => {
+    const prompt = args?.prompt || 'Describe what is on this screen.';
+    const model = args?.model || process.env.VEX_VISION_MODEL || 'kimi-k2.6:cloud';
+    const limit = Math.min(args?.limit || 5, 20);
+    const filename = args?.filename; // specific file, or omit for latest
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { homedir } = await import('node:os');
+
+    // Windows screenshots folder (PowerShell native-PrintScreen location)
+    const screenshotDirs = [
+      path.join(homedir(), 'Pictures', 'Screenshots'),
+      path.join(homedir(), 'Pictures', 'Screenshots', 'Saved Pictures'),
+      path.join(homedir(), 'OneDrive', 'Pictures', 'Screenshots'),
+    ];
+    let screenshotDir = null;
+    for (const d of screenshotDirs) {
+      try { if (fs.existsSync(d) && fs.readdirSync(d).length > 0) { screenshotDir = d; break; } } catch {}
+    }
+    if (!screenshotDir) {
+      return { success: false, error: 'No Windows Screenshots folder found (checked Pictures/Screenshots, OneDrive/Pictures/Screenshots)' };
+    }
+
+    try {
+      let files = fs.readdirSync(screenshotDir)
+        .filter(f => /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(f))
+        .map(f => ({ name: f, path: path.join(screenshotDir, f), mtime: fs.statSync(path.join(screenshotDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+      if (filename) {
+        files = files.filter(f => f.name === filename);
+        if (files.length === 0) return { success: false, error: `File not found in screenshots: ${filename}` };
+      }
+
+      files = files.slice(0, limit);
+      if (files.length === 0) return { success: false, error: `No screenshots found in ${screenshotDir}` };
+
+      const results = [];
+      for (const file of files) {
+        try {
+          const imgBase64 = fs.readFileSync(file.path).toString('base64');
+          const { ollamaChat } = await import('./tools/ollama-chat.mjs');
+          const visionResult = await ollamaChat(prompt, {
+            model,
+            agent: 'vision',
+            source: 'fleet-vision-screenshots',
+            images: [imgBase64],
+            temperature: 0.3,
+            maxTokens: 512,
+            timeout: 90000,
+          });
+          results.push({
+            filename: file.name,
+            mtime: file.mtime,
+            success: !visionResult.error,
+            model: visionResult.model || model,
+            description: visionResult.error ? `Error: ${visionResult.error}` : visionResult.response,
+          });
+        } catch (e) {
+          results.push({ filename: file.name, success: false, error: e.message });
+        }
+      }
+
+      return {
+        success: true,
+        folder: screenshotDir,
+        count: results.length,
+        model,
+        results,
+      };
+    } catch (err) { return { success: false, error: err.message, folder: screenshotDir }; }
   },
 
   'vex-hear': async (args) => {
@@ -5896,7 +5982,8 @@ function getToolDescription(name) {
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
     'github-post': 'Post a comment on a GitHub issue',
-    'vex-vision': 'Capture and describe images from 4 sources: screenshot (screen:true), webcam (default), local file (file:"/path"), or URL (url:"https://..."). Uses kimi-k2.6:cloud vision model by default (zero local RAM). Fallback: moondream.',
+    'vex-vision': 'Vision tool for any agent. Capture a webcam image, screenshot, local image file, or image URL, then describe it with the kimi-k2.6:cloud vision model. Args: prompt (optional), model (optional, default kimi-k2.6:cloud), file (local path), url (image URL), screen:true (screenshot). Uses the Ollama cloud → OpenRouter → local-moondream fallback chain.',
+    'vex-vision-screenshots': 'Vision over historical Windows screenshots. Reads the %USERPROFILE%\\Pictures\\Screenshots folder, describes the latest (or a specific) screenshot(s) with kimi-k2.6:cloud. Args: prompt (optional), model (optional), limit (default 5, max 20), filename (optional specific file). Useful for reviewing what was on screen at a past point in time.',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
@@ -7288,10 +7375,13 @@ async function routeFleetMessage(entry) {
       // Match the FULL line after TOOL_CALL: — parse the entire JSON text (nested braces safe)
           // Strip markdown formatting first (**bold**, *italic*) then check for TOOL_CALL
           const strippedLines = reply.split('\n').map(l => l.trim().replace(/^\*\*|\*\*$/g, '').replace(/^\*|\*$/g, ''));
-          let toolCallLine = strippedLines.find(l => /^TOOL_CALL:\s*\{/.test(l.trim()));
+          // Also strip leading code-fence backticks from each line so a tool
+          // call wrapped in a markdown code block is still detected.
+          const unFencedLines = strippedLines.map(l => l.replace(/^`{1,3}\s*/, '').replace(/\s*`{1,3}$/, ''));
+          let toolCallLine = unFencedLines.find(l => /^TOOL_CALL:\s*\{/.test(l.trim()));
           let jsonText = null;
           let parsed = null;
-    
+
           if (toolCallLine) {
             jsonText = toolCallLine.replace(/^\s*TOOL_CALL:\s*/, '').trim();
             try {
@@ -7304,6 +7394,28 @@ async function routeFleetMessage(entry) {
             const m = reply.match(/TOOL_CALL:\s*(\{[\s\S]*?\})\s*$/);
             if (m) {
               try { parsed = JSON.parse(m[1]); } catch {}
+            }
+          }
+
+          // Fallback: bare JSON tool call (no TOOL_CALL: prefix). Some models
+          // (notably the minimax-m3 cloud model) emit raw JSON objects with
+          // {"tool": "...", "args": {...}} directly in their reply. Detect
+          // any line that starts with a JSON object containing "tool" and
+          // "args" keys and try to parse it.
+          if (!parsed) {
+            const bareJsonLine = unFencedLines.find(l => /^\s*\{\s*"tool"\s*:\s*"[a-z_-]+"/i.test(l));
+            if (bareJsonLine) {
+              try {
+                const obj = JSON.parse(bareJsonLine);
+                if (obj && typeof obj.tool === 'string' && obj.args) parsed = obj;
+              } catch {}
+            }
+          }
+          // Also try multi-line bare JSON (with embedded newlines)
+          if (!parsed) {
+            const m2 = reply.match(/\{\s*"tool"\s*:\s*"([a-z_-]+)"\s*,\s*"args"\s*:\s*\{[\s\S]*?\}\s*\}/i);
+            if (m2) {
+              try { parsed = JSON.parse(m2[0]); } catch {}
             }
           }
 
@@ -7611,9 +7723,20 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
         // Anti-hallucination: flag unverified commit-hash citations
         reply = checkCommitHashes(reply).text;
         if (reply && reply.length > 0) {
-          // Check for tool call — execute it then re-query for synthesis
+          // Check for tool call — execute it then re-query for synthesis.
+          // Strip the tool-call JSON from `reply` first so it doesn't end
+          // up in the posted prose. Models that emit bare JSON (minimax-m3)
+          // or wrap the call in a code block would otherwise dump the raw
+          // JSON into the chat.
           const toolResult = await executeAgentToolCall(agentName, reply, entry);
           if (toolResult.executed) {
+            // Strip the tool call line(s) from the reply so the prose reads clean
+            reply = reply
+              .replace(/```[a-z]*\s*\n?\{\s*"tool"[\s\S]*?\}\s*\n?```/g, '') // code-fenced JSON
+              .replace(/^TOOL_CALL:\s*\{[\s\S]*?\}\s*$/m, '')                    // bare TOOL_CALL line
+              .replace(/^\s*\{\s*"tool"\s*:\s*"[a-z_-]+"[\s\S]*?\}\s*$/im, '')    // bare JSON tool call
+              .replace(/\n{3,}/g, '\n\n')                                       // collapse blank lines
+              .trim();
             // Re-query with tool result for final answer
             const resultData = toolResult.result || toolResult.error;
             // Build a compact summary: count + first result names, then truncated full data
@@ -8520,14 +8643,14 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/fleet-chat/send');
   const { agent, message, channel, attachments } = req.body || {};
-  
+
   if (!agent || !message) {
     return res.status(400).json({ error: 'agent and message are required', usage: { agent: 'vex|eliza|hermes', message: '...', channel: 'fleet|all|vex|eliza|hermes', attachments: '[...]' } });
   }
 
   // Let addFleetMessage handle sanitization
   const entry = addFleetMessage(agent, message, channel || 'fleet', { attachments: attachments || [] });
-  
+
   // Store attachment references in DB (link to message) — synchronous to ensure persistence
   if (attachments && Array.isArray(attachments) && attachments.length > 0) {
     try {
@@ -8542,6 +8665,39 @@ app.post('/api/fleet-chat/send', async (req, res) => {
           [entry.id, agent, filename, file_type || 'text/plain', fileSize, content, preview]
         );
         console.log(`[fleet-attach] Stored ${filename} (${fileSize}b) for message ${entry.id}`);
+
+        // ── Vision ingestion: if the attachment is an image, auto-run
+        // vex-vision on it and post the description back as a reply so
+        // other agents can see the contents. Runs async (fire-and-forget)
+        // so it doesn't block the POST response.
+        const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(filename) || (file_type && file_type.startsWith('image/'));
+        if (isImage) {
+          (async () => {
+            try {
+              // Write the attachment to a temp file so vex-vision can read it
+              const tmpPath = join(DATA_DIR, `vision-attach-${Date.now()}-${filename.replace(/[^a-z0-9._-]/gi, '_')}`);
+              writeFileSync(tmpPath, Buffer.from(content, 'base64'));
+              const visionResult = await toolHandlers['vex-vision']({
+                file: tmpPath,
+                prompt: `What is in this image (${filename})? Be concise.`,
+                model: process.env.VEX_VISION_MODEL || 'kimi-k2.6:cloud',
+              });
+              if (visionResult && !visionResult.error) {
+                // Post the vision result back as a reply from the sender
+                const caption = `🖼️ <b>${agent}</b> attached <code>${filename}</code> — ${visionResult.description?.slice(0, 400) || 'no description'}`;
+                addFleetMessage(agent, caption, 'fleet', { parentId: entry.id, hop: 1 });
+              } else {
+                addFleetMessage('system', `⚠️ Vision on ${filename}: ${visionResult?.error || 'unknown error'}`, 'fleet');
+              }
+              // Clean up temp file after a delay
+              setTimeout(async () => {
+                try { await import('node:fs').then(fs => fs.unlinkSync(tmpPath)); } catch {}
+              }, 5000);
+            } catch (e) {
+              console.log('[fleet-attach-vision] Error:', e.message);
+            }
+          })().catch(e => console.log('[fleet-attach-vision] unhandled:', e.message));
+        }
       }
     } catch (e) {
       console.log('[fleet-attach] Error storing attachments:', e.message);

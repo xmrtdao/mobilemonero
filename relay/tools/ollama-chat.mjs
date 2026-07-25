@@ -67,6 +67,29 @@ async function tryOllamaLocal(payload, signal) {
   return res.json();
 }
 
+/**
+ * Convert Ollama-style messages (with images: [base64] on the user msg)
+ * to OpenAI-compatible format (content: [{type:'text'}, {type:'image_url',...}]).
+ * The Ollama local API uses the `images` field; OpenAI/OpenRouter/Ollama Cloud
+ * use the content-array format with data URLs.
+ */
+function imagesToOpenAI(messages) {
+  return messages.map(msg => {
+    if (!msg.images || msg.images.length === 0) return msg;
+    const imgContent = msg.images.map(b64 => ({
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${b64}` },
+    }));
+    const textContent = msg.content
+      ? [{ type: 'text', text: msg.content }]
+      : [];
+    return {
+      role: msg.role,
+      content: [...textContent, ...imgContent],
+    };
+  });
+}
+
 /** Try Ollama Pro Cloud (api.ollama.com) with a specific model */
 async function tryOllamaCloud(messages, model, signal) {
   const key = OLLAMA_API_KEY || OLLAMA_XMRT_KEY;
@@ -79,7 +102,7 @@ async function tryOllamaCloud(messages, model, signal) {
     },
     body: JSON.stringify({
       model: model.replace(':cloud', ''),   // e.g. minimax-m3 or deepseek-v4-flash
-      messages,
+      messages: imagesToOpenAI(messages),
       stream: false,
       max_tokens: 4096,
     }),
@@ -102,7 +125,7 @@ async function tryOpenRouter(messages, signal) {
     },
     body: JSON.stringify({
       model: 'minimax/minimax-m3',
-      messages,
+      messages: imagesToOpenAI(messages),
       stream: false,
       max_tokens: 4096,
     }),
@@ -187,6 +210,7 @@ export async function ollamaChat(message, options = {}) {
     source = 'relay',
     model = DEFAULT_MODEL,
     tools = [],
+    images = [],          // base64-encoded image data (no data URL prefix)
     system = 'You are Eliza-Dev, a helpful AI assistant for the XMRT DAO ecosystem.\n\n' +
       'Tone rules:\n' +
       '- Be concise, technical, and to the point. No marketing fluff.\n' +
@@ -204,9 +228,12 @@ export async function ollamaChat(message, options = {}) {
     return { error: 'Message is required' };
   }
 
+  const userMsg = { role: 'user', content: message };
+  if (images.length > 0) userMsg.images = images;
+
   const messages = [
     { role: 'system', content: system },
-    { role: 'user', content: message },
+    userMsg,
   ];
 
   const ollamaPayload = {
