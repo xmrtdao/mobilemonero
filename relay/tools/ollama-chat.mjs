@@ -120,10 +120,14 @@ async function tryOllamaCloud(messages, model, signal) {
   return res.json();
 }
 
-/** Try OpenRouter with deepseek-v4-flash as fallback */
-async function tryOpenRouter(messages, signal) {
+/** Try OpenRouter with the requested model (or fallback to deepseek-v4-flash for text, minimax-m3 for vision) */
+async function tryOpenRouter(messages, signal, requestedModel = 'deepseek/deepseek-v4-flash') {
   const key = getOpenRouterKey();
   if (!key) throw new Error('No OPENROUTER_API_KEY configured');
+  // Vision-capable models on OpenRouter: minimax/minimax-m3 supports text+image+video->text.
+  // Text-only: deepseek/deepseek-v4-flash is cheaper and faster.
+  const hasImages = messages.some(m => m.images && m.images.length > 0);
+  const model = hasImages ? 'minimax/minimax-m3' : requestedModel;
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -132,7 +136,7 @@ async function tryOpenRouter(messages, signal) {
       'HTTP-Referer': 'https://relay.mobilemonero.com',
     },
     body: JSON.stringify({
-      model: 'deepseek/deepseek-v4-flash',
+      model,
       messages: imagesToOpenAI(messages),
       stream: false,
       max_tokens: 4096,
@@ -270,11 +274,11 @@ export async function ollamaChat(message, options = {}) {
     }
   }
 
-  // ── 2) Fallback: OpenRouter with minimax-m3 ──────────────────
+  // ── 2) Fallback: OpenRouter ──────────────────────────────────
   if (!result && getOpenRouterKey()) {
     try {
-      const data = await tryOpenRouter(messages, controller.signal);
-      result = normalizeResponse(data, 'minimax/minimax-m3', 'openrouter');
+      const data = await tryOpenRouter(messages, controller.signal, model);
+      result = normalizeResponse(data, result?.model || 'deepseek/deepseek-v4-flash', 'openrouter');
     } catch (err) {
       errors.push(`OpenRouter: ${err.message}`);
     }
@@ -379,8 +383,8 @@ export async function ollamaGenerate(prompt, options = {}) {
         { role: 'system', content: 'You are an AI agent. Be concise, helpful, and do not use emoji sign-offs.' },
         { role: 'user', content: prompt },
       ];
-      const data = await tryOpenRouter(messages, controller.signal);
-      result = normalizeResponse(data, 'minimax/minimax-m3', 'openrouter');
+      const data = await tryOpenRouter(messages, controller.signal, model);
+      result = normalizeResponse(data, result?.model || model, 'openrouter');
     } catch (err) {
       errors.push(`OpenRouter: ${err.message}`);
     }
