@@ -1,91 +1,50 @@
 @echo off
-REM start-everything.bat — Canonical boot script for XMRT DAO Fleet
+REM start-everything.bat — Canonical boot script for XMRT DAO Stack v8.0.0
 REM Place in shell:startup folder to auto-start on boot.
-REM Boot order: postgres -> local-sb -> relay -> MCPs -> agents -> tunnel
 REM
-REM All services run from DevGruGold (the patched development copy).
-REM The supervisor (relay/supervisor.mjs) is the recommended entry point.
+REM Canonical workspace: C:\Users\PureTrek\Desktop\xmrtdao (per memory)
+REM Boot order managed by supervisor (relay/supervisor.mjs):
+REM   pg -> local-sb -> vite -> relay -> MCPs -> tunnel -> alice -> cron -> schedulers
+REM
+REM This script ONLY launches the supervisor; the supervisor starts everything else.
 
-cd /d C:\Users\PureTrek\Desktop\DevGruGold
+cd /d C:\Users\PureTrek\Desktop\xmrtdao
 
 echo ========================================
-echo   XMRT DAO Fleet — Starting All Services
-echo   Canonical Boot (14 services)
+echo   XMRT DAO Stack v8.0.0
+echo   Canonical Boot (supervisor-managed)
 echo ========================================
 echo.
 
-REM 1. Postgres
-echo [1/14] Postgres (5432)...
-start "Postgres" /B cmd /c "node relay\start-pg.mjs"
-timeout /t 4 /nobreak > nul
+REM Clean any stale PG lock file
+if exist pg\data\postmaster.pid (
+    for /f "tokens=1" %%a in (pg\data\postmaster.pid) do set OLD_PID=%%a
+    tasklist /FI "PID eq %OLD_PID%" 2>nul | find "postgres" >nul
+    if errorlevel 1 (
+        del /q pg\data\postmaster.pid 2>nul
+        echo  Removed stale postmaster.pid (PID %OLD_PID% not running)
+    ) else (
+        echo  PG already running (PID %OLD_PID%)
+    )
+)
 
-REM 2. local-sb (PostgREST + Auth + Storage + Edge Functions)
-echo [2/14] local-sb (54321)...
-start "local-sb" /B cmd /c "node local-supabase\server.mjs"
-timeout /t 4 /nobreak > nul
-
-REM 3. Relay
-echo [3/14] Relay (8080)...
-start "Relay" /B node relay\server.js
-timeout /t 5 /nobreak > nul
-
-REM 4. cuttlefishclaws-mcp
-echo [4/14] cuttlefishclaws-mcp (3120)...
-start "cuttlefishclaws-mcp" /B node relay\cuttlefishclaws-mcp.mjs --http --port 3120
-timeout /t 2 /nobreak > nul
-
-REM 5. suite-mcp
-echo [5/14] suite-mcp (3200)...
-start "suite-mcp" /B node relay\xmrtdao-suite-mcp.mjs --http --port 3200
-timeout /t 2 /nobreak > nul
-
-REM 6. Vite (Suite SPA)
-echo [6/14] Vite Suite (5173)...
-start "Vite-Suite" /B cmd /c "node node_modules\.bin\vite --host 127.0.0.1 --port 5173 --root suite"
-timeout /t 2 /nobreak > nul
-
-REM 7. Vite (Zero-Claw)
-echo [7/14] Vite Zero-Claw (5174)...
-start "Vite-Zero" /B cmd /c "node node_modules\.bin\vite --host 127.0.0.1 --port 5174 --root zero-claw"
-timeout /t 2 /nobreak > nul
-
-REM 8. Alice
-echo [8/14] Alice...
-start "Alice" /B node relay\alice.mjs --daemon
-timeout /t 2 /nobreak > nul
-
-REM 9. Cron Engine
-echo [9/14] Cron Engine...
-start "CronEngine" /B node relay\cron-engine-v2.mjs
-timeout /t 2 /nobreak > nul
-
-REM 10. Campaign Scheduler
-echo [10/14] Campaign Scheduler...
-start "Campaign" /B node relay\campaign-scheduler.mjs --daemon
-timeout /t 2 /nobreak > nul
-
-REM 11. 31 Harbor Scheduler
-echo [11/14] 31 Harbor Scheduler...
-start "31Harbor" /B node relay\tools\31harbor-scheduler.mjs --daemon
-timeout /t 2 /nobreak > nul
-
-REM 12. Deno Edge Functions (via local-sb, already started in step 2)
-echo [12/14] Deno Edge Functions (via local-sb)...
-echo   (auto-started with local-sb)
-
-REM 13. Supervisor
-echo [13/14] Supervisor...
-start "Supervisor" /B node relay\supervisor.mjs --daemon
-timeout /t 2 /nobreak > nul
-
-REM 14. Cloudflare Tunnel
-echo [14/14] Cloudflare Tunnel (xmrtdao-relay)...
-start "Tunnel" /B cmd /c "node relay\start-tunnel-detached.mjs"
-
+REM Launch supervisor (manages all 12 services: pg, local-sb, vite, relay, MCPs, tunnel, alice, cron, schedulers)
+echo [1/1] Starting supervisor (node supervisor.mjs --daemon)...
+echo   Supervisor will start: pg, local-sb, vite, relay, cuttlefishclaws-mcp,
+echo   xmrtdao-suite-mcp, cuttlefish-mcp, tunnel, alice, cron-engine-v2,
+echo   campaign-scheduler, 31harbor-scheduler
 echo.
+echo   Relay health:   http://localhost:8080/health
+echo   Public tunnel:  https://relay.mobilemonero.com
+echo   Status API:     http://localhost:8080/api/supervisor/status
+echo.
+echo   Logs: relay-data\supervisor-daemon.log
+echo   State: relay-data\supervisor-state.json
 echo ========================================
-echo   Fleet startup initiated
-echo   Check relay at http://localhost:8080
-echo   Check Suite at https://suite.mobilemonero.com
-echo   Check Cuttlefish at https://cuttlefish.mobilemonero.com
-echo ========================================
+
+REM Start supervisor detached (daemon mode)
+start "XMRT-Supervisor" /B cmd /c "node supervisor.mjs --daemon"
+
+REM Optional: trigger scheduled task for health monitoring
+timeout /t 3 /nobreak > nul
+schtasks /Run /TN "XMRT-LocalSupervisor" 2>nul

@@ -82,6 +82,306 @@
   }
   setTimeout(function() { updateQDSSecurity(); setInterval(updateQDSSecurity, 30000); }, 500);
 
+  // ── TrustGraph Trajectory Line Chart ──
+  var trajectoryZoom = null; // null = full, {minTime, maxTime} = zoomed
+  var trajectoryFullBounds = null; // cached full bounds for un-zoom
+
+  function updateTrustTrajectory() {
+    var canvas = document.getElementById('trust-trajectory-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = (rect.width || 800) * 0.98;
+    canvas.height = 200;
+
+    // Store data points for hover detection
+    var hitPoints = [];
+
+    apiFetch('/api/trustgraph/trajectory', { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
+      var series = d.series || {};
+      var totalEvents = d.totalEvents || 0;
+
+      // Update stats
+      var actEl = document.getElementById('trajectory-event-count');
+      if (actEl) actEl.textContent = totalEvents;
+      var agentEl = document.getElementById('trajectory-agent-count');
+      if (agentEl) agentEl.textContent = Object.keys(series).length;
+
+      var agents = Object.keys(series).filter(function(k){ return series[k].length >= 1; });
+      if (agents.length === 0) {
+        ctx.fillStyle = '#3a3a4a';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Not enough trajectory data yet', canvas.width/2, canvas.height/2);
+        return;
+      }
+
+      // Collect all points to find full bounds
+      var allScores = [];
+      var allTimes = [];
+      agents.forEach(function(a) {
+        series[a].forEach(function(p) {
+          allScores.push(p.score);
+          allTimes.push(new Date(p.t).getTime());
+        });
+      });
+      var fullMinScore = Math.max(0, Math.min.apply(null, allScores) - 5);
+      var fullMaxScore = Math.min(100, Math.max.apply(null, allScores) + 5);
+      var fullMinTime = Math.min.apply(null, allTimes);
+      var fullMaxTime = Math.max.apply(null, allTimes);
+
+      // Cache full bounds for un-zoom
+      if (!trajectoryFullBounds) {
+        trajectoryFullBounds = { minScore: fullMinScore, maxScore: fullMaxScore, minTime: fullMinTime, maxTime: fullMaxTime };
+      }
+
+      // Determine view bounds: default to last 24h, toggle to full
+      var now = Date.now();
+      var twentyFourHours = 24 * 60 * 60 * 1000;
+      var viewMinTime, viewMaxTime, viewMinScore, viewMaxScore;
+
+      if (trajectoryZoom) {
+        // User has zoomed — use their bounds
+        viewMinTime = trajectoryZoom.minTime;
+        viewMaxTime = trajectoryZoom.maxTime;
+        viewMinScore = fullMinScore;
+        viewMaxScore = fullMaxScore;
+      } else {
+        // Default: last 24h
+        viewMinTime = now - twentyFourHours;
+        viewMaxTime = now;
+        viewMinScore = fullMinScore;
+        viewMaxScore = fullMaxScore;
+      }
+      var timeRange = viewMaxTime - viewMinTime || 1;
+      var scoreRange = viewMaxScore - viewMinScore || 1;
+
+      // Update date range display
+      var rangeEl = document.getElementById('trajectory-range');
+      if (rangeEl) {
+        var from = new Date(viewMinTime).toLocaleDateString() + ' ' + new Date(viewMinTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+        var to = new Date(viewMaxTime).toLocaleDateString() + ' ' + new Date(viewMaxTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+        rangeEl.textContent = from + ' — ' + to;
+      }
+
+      var pad = { top: 12, bottom: 20, left: 30, right: 10 };
+      var w = canvas.width - pad.left - pad.right;
+      var h = canvas.height - pad.top - pad.bottom;
+
+      function x(t) { return pad.left + ((new Date(t).getTime() - viewMinTime) / timeRange) * w; }
+      function y(s) { return pad.top + h - ((s - viewMinScore) / scoreRange) * h; }
+
+      // Grid lines
+      ctx.strokeStyle = '#1a1a2a';
+      ctx.lineWidth = 0.5;
+      for (var g = 0; g <= 4; g++) {
+        var gy = pad.top + (g/4) * h;
+        ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(pad.left + w, gy); ctx.stroke();
+        ctx.fillStyle = '#3a3a4a';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.round(viewMaxScore - (g/4)*scoreRange), pad.left - 4, gy + 3);
+      }
+
+      // Agent colors
+      var colors = ['#4ade80','#60a5fa','#a78bfa','#fbbf24','#f87171','#34d399','#818cf8','#f472b6','#2dd4bf','#fb923c','#c084fc','#94a3b8','#f97316','#06b6d4','#ec4899','#84cc16'];
+      var legend = [];
+      hitPoints = [];
+
+      agents.slice(0, 16).forEach(function(agent, i) {
+        var pts = series[agent];
+        var color = colors[i % colors.length];
+        var shortName = agent.replace(/^did:[^:]+:/,'').replace(/-[^-]+$/,'').slice(0, 14);
+        var agentIdx = i;
+
+        // Filter points to visible range
+        var visiblePts = pts.filter(function(p) {
+          var t = new Date(p.t).getTime();
+          return t >= viewMinTime && t <= viewMaxTime;
+        });
+        // Need at least 1 point in the visible range to show anything.
+        // (A single point draws as a dot only — a line needs ≥2.)
+        if (visiblePts.length < 1) return;
+
+        // Draw line (only if we have ≥2 points)
+        if (visiblePts.length >= 2) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          visiblePts.forEach(function(p, j) {
+            var px = x(p.t), py = y(p.score);
+            if (j === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+          ctx.stroke();
+        }
+
+        // Draw dots
+        visiblePts.forEach(function(p) {
+          var px = x(p.t), py = y(p.score);
+          var isFab = p.event === 'FABRICATION_DETECTED';
+          var isIncorrect = p.event === 'INCORRECT_REFERENCE';
+          if (isFab) {
+            ctx.strokeStyle = '#f87171';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(px - 3, py - 3);
+            ctx.lineTo(px + 3, py + 3);
+            ctx.moveTo(px + 3, py - 3);
+            ctx.lineTo(px - 3, py + 3);
+            ctx.stroke();
+          } else if (isIncorrect) {
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.arc(px, py, 2, 0, Math.PI*2);
+            ctx.fill();
+          } else {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(px, py, 3, 0, Math.PI*2);
+            ctx.fill();
+          }
+          hitPoints.push({
+            px: px, py: py,
+            agent: shortName,
+            agentFull: agent,
+            agentIdx: agentIdx,
+            score: p.score,
+            delta: p.delta,
+            event: p.event,
+            note: p.note,
+            ref: p.ref,
+            domain: p.domain,
+            time: p.t,
+          });
+        });
+
+        // Use the most recent VISIBLE point's score for the legend, not
+        // the last point of the entire series. This way the legend
+        // reflects what the chart is actually showing in the 24h window.
+        var lastVisible = visiblePts[visiblePts.length - 1] || pts[pts.length - 1];
+        legend.push({ name: shortName, color: color, score: lastVisible.score, agent: agent });
+      });
+
+      // Draw current scores in center of chart area
+      if (trajectoryZoom === null) {
+        // 24h zoomed view — show current scores in center
+        ctx.globalAlpha = 0.85;
+        var cx = pad.left + w / 2;
+        var cy = pad.top + h / 2;
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#a78bfa';
+        ctx.fillText('Current Scores', cx, cy - 30);
+
+        // Use the same legend data (already filtered to visible agents with correct colors)
+        var sortedLegend = legend.slice().sort(function(a, b) { return b.score - a.score; });
+        ctx.font = '9px monospace';
+        sortedLegend.slice(0, 8).forEach(function(sl, j) {
+          var sy = cy - 15 + j * 13;
+          ctx.fillStyle = sl.color;
+          ctx.textAlign = 'right';
+          ctx.fillText(sl.name, cx - 5, sy);
+          ctx.textAlign = 'left';
+          ctx.fillText(sl.score.toFixed(1), cx + 5, sy);
+        });
+        ctx.globalAlpha = 1.0;
+      }
+
+      // Legend at bottom
+      var lx = pad.left;
+      var ly = canvas.height - 3;
+      ctx.font = '9px monospace';
+      legend.forEach(function(l) {
+        var label = l.name + ' ' + l.score.toFixed(0);
+        ctx.fillStyle = l.color;
+        ctx.textAlign = 'left';
+        ctx.fillText('●', lx, ly);
+        ctx.fillText(label, lx + 10, ly);
+        lx += ctx.measureText(label).width + 18;
+        if (lx > canvas.width - 20) { lx = pad.left; ly -= 11; }
+      });
+
+      // Hover handler
+      canvas.onmousemove = function(e) {
+        var cr = canvas.getBoundingClientRect();
+        var mx = e.clientX - cr.left;
+        var my = e.clientY - cr.top;
+        var tooltip = document.getElementById('trust-trajectory-tooltip');
+        if (!tooltip) return;
+
+        var nearest = null;
+        var minDist = 10;
+        hitPoints.forEach(function(hp) {
+          var dx = mx - hp.px;
+          var dy = my - hp.py;
+          var dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist < minDist) { minDist = dist; nearest = hp; }
+        });
+
+        if (nearest) {
+          var dt = new Date(nearest.time);
+          var dateStr = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+          var deltaStr = nearest.delta !== null && nearest.delta !== undefined
+            ? (nearest.delta >= 0 ? '+' + nearest.delta : nearest.delta)
+            : '';
+          var html = '<b style="color:' + colors[nearest.agentIdx % colors.length] + ';">' + nearest.agent + '</b>';
+          html += ' · ' + dateStr;
+          html += ' · <b>' + nearest.score + '</b>';
+          if (deltaStr) html += ' (' + deltaStr + ')';
+          if (nearest.event) html += '<br>⚡ ' + nearest.event;
+          if (nearest.note) html += '<br><span style="color:#8b8ba0;font-size:10px;">' + nearest.note + '</span>';
+          if (nearest.ref) html += '<br><span style="color:#6b6b80;font-size:9px;">' + nearest.ref + '</span>';
+          tooltip.innerHTML = html;
+          tooltip.style.display = 'block';
+          tooltip.style.left = Math.min(nearest.px + 12, canvas.width - 250) + 'px';
+          tooltip.style.top = Math.max(nearest.py - 40, 0) + 'px';
+          canvas.style.cursor = 'pointer';
+        } else {
+          tooltip.style.display = 'none';
+          canvas.style.cursor = 'default';
+        }
+      };
+      canvas.onmouseleave = function() {
+        var tooltip = document.getElementById('trust-trajectory-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
+        canvas.style.cursor = 'default';
+      };
+      canvas.onmousedown = function() {
+        canvas.style.cursor = 'grabbing';
+      };
+      canvas.onmouseup = function() {
+        canvas.style.cursor = 'default';
+      };
+    }).catch(function() {
+      ctx.fillStyle = '#3a3a4a';
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('Trajectory data unavailable', canvas.width/2, canvas.height/2);
+    });
+  }
+
+  // Toggle between 24h zoom and full view
+  window.toggleTrajectoryView = function() {
+    if (trajectoryZoom === null) {
+      // Switch to full view
+      if (trajectoryFullBounds) {
+        trajectoryZoom = { minTime: trajectoryFullBounds.minTime, maxTime: trajectoryFullBounds.maxTime };
+      }
+    } else {
+      // Switch back to 24h zoom
+      trajectoryZoom = null;
+    }
+    // Update button text
+    var btn = document.getElementById('trajectory-toggle-btn');
+    if (btn) {
+      btn.textContent = trajectoryZoom === null ? '🔍 Full View' : '🔍 24h View';
+    }
+    updateTrustTrajectory();
+  };
+
+  setTimeout(function() { updateTrustTrajectory(); setInterval(updateTrustTrajectory, 30000); }, 200);
+
   // ── Ship's Log (pirate-themed activity feed) ──
   function updateShipsLog() {
     var logEl = document.getElementById('qds-activity-log');
@@ -184,7 +484,7 @@
   }
   setTimeout(function() { updateBoardTopics(); setInterval(updateBoardTopics, 15000); }, 2000);
 
-  // dashboard.js v7.0.1 — FIX: removed createRadialGradient, shadowBlur, and glow caching to prevent canvas freeze on agent hover
+  // dashboard.js v8.0.0 — Trust Trajectory full-width chart, Footlocker agent chests, cron/supervisor fixes
 // ── Rum Quota + Agent Fleet (combined) ──
   function updateGrogQuota() {
     var seq = Date.now();
@@ -339,15 +639,15 @@
         .then(function(r){return r.json();})
         .then(function(d){
           var tasks = d.tasks || d.recent || [];
-          var stages = ['PENDING','DISCUSS','PLAN','EXECUTE','VERIFY','INTEGRATE','COMPLETED'];
-          var stageColors = {'PENDING':'#6b6b80','DISCUSS':'#fbbf24','PLAN':'#60a5fa','EXECUTE':'#a78bfa','VERIFY':'#4ade80','INTEGRATE':'#34d399','COMPLETED':'#2dd4bf'};
+          var stages = ['PENDING','INTAKE','DISCUSS','PLANNING','EXECUTION','REVIEW','COMPLETION'];
+          var stageColors = {'PENDING':'#6b6b80','INTAKE':'#6b6b80','DISCUSS':'#fbbf24','PLANNING':'#60a5fa','EXECUTION':'#a78bfa','REVIEW':'#4ade80','COMPLETION':'#2dd4bf'};
           var catColors = {'code':'#3b82f6','infrastructure':'#f97316','research':'#a855f7','documentation':'#06b6d4','testing':'#10b981','bug':'#ef4444','feature':'#8b5cf6','design':'#ec4899'};
           // Organize tasks into stage buckets
           var buckets = {};
           stages.forEach(function(s){ buckets[s] = []; });
           tasks.forEach(function(t) {
             var stage = t.stage || 'PENDING';
-            if (stage === 'COMPLETED' || stage === 'DONE') stage = 'COMPLETED';
+            if (stage === 'COMPLETION' || stage === 'DONE') stage = 'COMPLETION';
             if (!buckets[stage]) buckets[stage] = [];
             buckets[stage].push(t);
           });
@@ -569,16 +869,38 @@ loadAgentExperienceCard();
                 // Sort chronologically: oldest first, newest last (closest to input)
                 msgs.sort(function(a,b){ return (a.time||'').localeCompare(b.time||''); });
                 msgsEl.innerHTML = msgs.slice(-100).map(function(m){
-                  var name = m.agentLabel || m.agent || 'Unknown';
-                  var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
-                  var body = (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-                  var cls = 'color:#a0a0b0;';
-                  if (m.agent === 'hermes') cls = 'color:#ff6b35;font-weight:500;';
-                  else if (m.agent === 'eliza') cls = 'color:#a78bfa;font-weight:500;';
-                  else if (m.agent === 'vex') cls = 'color:#4ade80;font-weight:500;';
-                  else if (m.agent === 'alice') cls = 'color:#60a5fa;font-weight:500;';
-                  return '<div style="margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a2a;"><span style="'+cls+'font-size:11px;">'+name+'</span> <span style="color:#6b6b80;font-size:10px;float:right;">'+time+'</span><br/><span style="color:#c0c0d0;font-size:12px;word-break:break-word;">'+body+'</span></div>';
-                }).join('');
+                          var name = m.agentLabel || m.agent || 'Unknown';
+                          var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
+                          // Tool-call system messages contain structured HTML (cards,
+                          // collapsible details, color spans). Other messages get
+                          // plain-text-escaped for safety.
+                          var isToolCard = m.agent === 'system' && /[<][b|code|details|pre]/.test(m.message || '');
+                          var body = isToolCard
+                            ? (m.message || '')
+                            : (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                          var nameColor = '#8b8ba0';  // system default
+                          if (m.agent === 'system') {
+                            nameColor = '#8b8ba0';
+                            name = isToolCard ? '🔧 tool' : 'system';
+                          } else if (m.agent === 'hermes') nameColor = '#ff6b35';
+                          else if (m.agent === 'eliza') nameColor = '#a78bfa';
+                          else if (m.agent === 'vex') nameColor = '#4ade80';
+                          else if (m.agent === 'alice') nameColor = '#60a5fa';
+                          else if (m.agent === 'trib') nameColor = '#fbbf24';
+                          else if (m.agent === 'arch') nameColor = '#a78bfa';
+                          else if (m.agent === 'builder') nameColor = '#34d399';
+                          else if (m.agent === 'sovereign') nameColor = '#f97316';
+                          else if (m.agent === 'trustgraph') nameColor = '#f472b6';
+                          else if (m.agent === 'dao') nameColor = '#818cf8';
+                          else if (m.agent === 'global-communicator') nameColor = '#2dd4bf';
+                          // Tool cards get a slightly different background to stand out
+                          var cardBg = isToolCard ? 'background:#0d0d1a;border-left:2px solid #4ade80;' : '';
+                          return '<div style="margin-bottom:6px;padding:6px 4px;border-bottom:1px solid #1a1a2a;' + cardBg + 'border-radius:3px;">' +
+                            '<span style="color:' + nameColor + ';font-weight:500;font-size:11px;">' + name + '</span> ' +
+                            '<span style="color:#6b6b80;font-size:10px;float:right;">' + time + '</span><br/>' +
+                            '<span style="color:#c0c0d0;font-size:12px;line-height:1.45;word-break:break-word;">' + body + '</span>' +
+                            '</div>';
+                        }).join('');
                 // Only auto-scroll to bottom if user was already near the bottom BEFORE the update
                 if (wasNearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
       })
@@ -1289,6 +1611,34 @@ loadAgentExperienceCard();
     }
     renderBoardTopics();
   }
+
+  // Quick create (prompt-based) — used by the Quarterdeck "+ new" link.
+  // Falls through to the form-based createBoardTopic() below if a form
+  // is present (Full Board view).
+  function quickCreateBoardTopic() {
+    var title = prompt('Resolution title:');
+    if (!title) return;
+    var desc = prompt('Short description / first post (optional):') || title;
+    apiFetch('/api/bulletin/topics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title, creator: 'Joe', status: 'active' }),
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { alert('Create failed: ' + d.error); return; }
+      if (desc && desc !== title) {
+        return apiFetch('/api/bulletin/topics/' + d.topic.id + '/posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ author: 'Joe', agent: 'joe', message: desc }),
+        });
+      }
+    })
+    .then(function(){ loadBoard(); renderBoardTopics(); })
+    .catch(function(e){ alert('Network error: ' + e.message); });
+  }
+  window.quickCreateBoardTopic = quickCreateBoardTopic;
   
   function getStatusBadge(status) {
     var colors = {
@@ -2731,3 +3081,110 @@ loadAgentExperienceCard();
 
   window.addEventListener('resize', function() { resize(); });
 })();
+
+// ── Footlocker — Agent Chests ──
+function updateFootlocker() {
+  var content = document.getElementById('footlocker-content');
+  if (!content) return;
+  apiFetch('/api/footlocker', { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
+    var chests = d.chests || [];
+    if (chests.length === 0) {
+      content.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;"><div class="stat"><span class="label" style="color:#6b6b80;">No completed task artifacts yet</span></div></div>';
+      return;
+    }
+    var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">';
+    var chestEmojis = ['🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵'];
+    var chestIdx = 0;
+    chests.forEach(function(c) {
+      var emoji = chestEmojis[chestIdx % chestEmojis.length];
+      chestIdx++;
+      var agentName = c.agent_id || 'unknown';
+      var count = c.artifact_count || 0;
+      var lastUpd = c.last_updated ? new Date(c.last_updated).toLocaleDateString() : '';
+      html += '<div class="stat" style="cursor:pointer;min-width:100px;" onclick="openFootlockerChest(\'' + agentName + '\', this)">';
+      html += '<span class="label">' + emoji + ' <b style="color:#a78bfa;">' + agentName + '</b></span>';
+      html += '<span class="value" style="color:#4ade80;font-size:0.65rem;">' + count + ' artifact' + (count !== 1 ? 's' : '') + '</span>';
+      if (lastUpd) html += '<span style="color:#6b6b80;font-size:0.5rem;">' + lastUpd + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div id="footlocker-artifacts" style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;max-height:200px;overflow-y:auto;"></div>';
+    content.innerHTML = html;
+  }).catch(function() {
+    content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Footlocker offline</span></div>';
+  });
+}
+
+window.openFootlockerChest = function(agent, el) {
+  var artifactsDiv = document.getElementById('footlocker-artifacts');
+  if (!artifactsDiv) return;
+  artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Loading ' + agent + '\'s chest...</span></div>';
+  apiFetch('/api/footlocker/' + encodeURIComponent(agent), { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
+    var artifacts = d.artifacts || [];
+    if (artifacts.length === 0) {
+      artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Chest is empty</span></div>';
+      return;
+    }
+    var html = '<div style="font-size:0.6rem;color:#a78bfa;margin-bottom:4px;">📂 ' + agent + '\'s Chest — ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
+    artifacts.forEach(function(a) {
+      var title = a.title || 'Untitled';
+      var type = a.artifact_type || 'summary';
+      var desc = (a.description || '').slice(0, 100);
+      var files = a.file_count || 0;
+      var date = a.created_at ? new Date(a.created_at).toLocaleDateString() : '';
+      html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #1a1a2e;cursor:pointer;" onclick="openFootlockerArtifact(\'' + agent + '\',\'' + a.id + '\', this)">';
+      html += '<span style="color:#a78bfa;">📄</span>';
+      html += '<span style="flex:1;color:#e0e0e0;font-size:0.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</span>';
+      html += '<span style="color:#6b6b80;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
+      html += '<span style="color:#6b6b80;font-size:0.5rem;">' + date + '</span>';
+      html += '<span style="color:#60a5fa;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">⬇</span>';
+      html += '</div>';
+      html += '<div id="fl-artifact-' + a.id.replace(/[^a-zA-Z0-9]/g,'') + '" style="display:none;padding:4px 8px;background:#0d0d18;border-radius:4px;margin:2px 0;font-size:0.55rem;"></div>';
+    });
+    artifactsDiv.innerHTML = html;
+  }).catch(function() {
+    artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Failed to open chest</span></div>';
+  });
+};
+
+window.openFootlockerArtifact = function(agent, artifactId, el) {
+  var detailId = 'fl-artifact-' + artifactId.replace(/[^a-zA-Z0-9]/g,'');
+  var detailEl = document.getElementById(detailId);
+  if (!detailEl) return;
+  if (detailEl.style.display !== 'none') { detailEl.style.display = 'none'; return; }
+  detailEl.style.display = 'block';
+  detailEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Loading...</span></div>';
+  apiFetch('/api/footlocker/' + encodeURIComponent(agent) + '/' + artifactId, { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
+    var art = d.artifact || {};
+    var files = d.files || [];
+    var desc = (art.description || '').slice(0, 300);
+    var meta = art.metadata || {};
+    var html = '<div style="color:#8b8ba0;margin-bottom:4px;">';
+    if (desc) html += '<div>' + desc + '</div>';
+    if (meta.resolution_notes) html += '<div style="margin-top:2px;">📝 ' + meta.resolution_notes + '</div>';
+    if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">🔗 <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#60a5fa;">Proof of Work</a></div>';
+    html += '</div>';
+    if (files.length > 0) {
+      html += '<div style="font-size:0.55rem;color:#6b6b80;margin-bottom:2px;">Files:</div>';
+      files.forEach(function(f) {
+        html += '<div style="display:flex;gap:4px;padding:1px 0;">';
+        html += '<span style="color:#a78bfa;">📄</span>';
+        html += '<span style="flex:1;color:#c0c0d0;">' + f.filename + '</span>';
+        html += '<span style="color:#6b6b80;">' + (f.file_size || 0) + 'b</span>';
+        html += '</div>';
+      });
+    }
+    detailEl.innerHTML = html;
+  }).catch(function() {
+    detailEl.innerHTML = '<div style="color:#f87171;">Failed to load artifact</div>';
+  });
+};
+
+window.downloadFootlocker = function(agent, artifactId) {
+  var a = document.createElement('a');
+  a.href = '/api/footlocker/' + encodeURIComponent(agent) + '/' + artifactId + '/download';
+  a.download = artifactId + '.txt';
+  a.click();
+};
+
+setTimeout(function() { updateFootlocker(); setInterval(updateFootlocker, 30000); }, 3500);

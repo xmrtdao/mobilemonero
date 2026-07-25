@@ -29,6 +29,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { spawn, execSync, execFileSync } from 'child_process';
+import { hostname as osHostname } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -68,7 +69,7 @@ loadEnv();
 // ── Module imports ──────────────────────────────────────────
 import { webSearch, formatResults } from './tools/web-search.mjs';
 import { webScrape } from './tools/web-scrape.mjs';
-import { ollamaChat, listModels, checkOllamaHealth } from './tools/ollama-chat.mjs';
+import { ollamaChat, ollamaGenerate, listModels, checkOllamaHealth } from './tools/ollama-chat.mjs';
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
 import * as state from './lib/state.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
@@ -76,6 +77,7 @@ import { handleInboundEmail } from './lib/auto-responder.mjs';
 import { ensureLocalDb, restFetch as localRestFetch, query as localQuery, LOCAL_DB_ENABLED } from './lib/localDb.mjs';
 import { createMeshRouter, initMeshNode, publishToMesh, getMeshMessageLog, getMeshStatus } from './lib/mesh-router.mjs';
 import registerSuiteRoutes from './routes/suite-dashboard.mjs';
+import registerPfpRoutes from './routes/pfp.js';
 import { discoverFunctions, listFunctions } from './lib/function-runtime.mjs';
 import * as qwenMemory from './lib/qwen-memory.mjs';
 
@@ -475,7 +477,7 @@ const handlers = {
     logActivity('handler', task.id, 'START', 'Device Registration');
     const result = { hostname: null, local_ip: null, mac: null, os: null };
     try {
-      result.hostname = execSync('hostname', { encoding: 'utf8', timeout: 5000 }).trim();
+      result.hostname = osHostname();
       result.local_ip = execSync('ipconfig 2>nul | findstr /R "IPv4"', { encoding: 'utf8', timeout: 5000, shell: 'cmd.exe' }).trim().split('\r\n')[0] || 'unknown';
       result.os = 'Windows 10 (MINGW64)';
       result.status = 'registered';
@@ -554,7 +556,7 @@ const handlers = {
         'OCR screen text capture (needs Tesseract install)',
         'Voice commands (needs PyAudio install)',
       ],
-      backend: 'Ollama (deepseek-v4-flash:cloud)',
+      backend: 'Ollama (kimi-k2.6:cloud)',
       import_status: 'All core modules import successfully',
       action_taken: null,
     };
@@ -774,28 +776,30 @@ const toolHandlers = {
   },
 
   'shared-context': async (args) => {
-    const { action = 'read', key, value, description, search_term, agent_id, topic } = args || {};
+    const { action = 'read', key, value, description, search_term, agent_id: agentIdArg, topic } = args || {};
+    // Attribution: explicit agent_id wins, else the authenticated caller injected by /tools/run, else legacy default.
+    const agent_id = agentIdArg || args?._agent?.id || 'eliza';
     try {
       if (action === 'read') {
         if (key) {
-          const row = await localQuery("SELECT * FROM public.shared_context WHERE context_key = $1", [key]);
+          const row = await localQuery("SELECT * FROM knowledge.shared_context WHERE context_key = $1", [key]);
           return { success: true, context: row[0] || null };
         }
-        const rows = await localQuery("SELECT * FROM public.shared_context ORDER BY context_key");
+        const rows = await localQuery("SELECT * FROM knowledge.shared_context ORDER BY context_key");
         return { success: true, contexts: rows };
       }
       if (action === 'write') {
         if (!key || !value) return { error: 'key and value are required for write' };
-        const existing = await localQuery("SELECT id FROM public.shared_context WHERE context_key = $1", [key]);
+        const existing = await localQuery("SELECT id FROM knowledge.shared_context WHERE context_key = $1", [key]);
         if (existing.length > 0) {
           await localQuery(
-            "UPDATE public.shared_context SET value = $1, description = COALESCE($2, description), last_updated_by = 'eliza', updated_at = now() WHERE context_key = $3",
-            [JSON.stringify(value), description || null, key]
+            "UPDATE knowledge.shared_context SET value = $1, description = COALESCE($2, description), last_updated_by = $4, updated_at = now() WHERE context_key = $3",
+            [JSON.stringify(value), description || null, key, agent_id || 'eliza']
           );
         } else {
           await localQuery(
-            "INSERT INTO public.shared_context (context_key, context_type, value, description, last_updated_by) VALUES ($1, 'general', $2, $3, 'eliza')",
-            [key, JSON.stringify(value), description || '']
+            "INSERT INTO knowledge.shared_context (context_key, context_type, value, description, last_updated_by) VALUES ($1, 'general', $2, $3, $4)",
+            [key, JSON.stringify(value), description || '', agent_id || 'eliza']
           );
         }
         return { success: true, key, action: 'written' };
@@ -804,7 +808,7 @@ const toolHandlers = {
         // Associative recall — search by value content or description
         const term = search_term || key || '';
         const rows = await localQuery(
-          "SELECT * FROM public.shared_context WHERE value::text ILIKE $1 OR description ILIKE $1 OR context_key ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
+          "SELECT * FROM knowledge.shared_context WHERE value::text ILIKE $1 OR description ILIKE $1 OR context_key ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
           [`%${term}%`]
         );
         return { success: true, results: rows, count: rows.length };
@@ -812,7 +816,7 @@ const toolHandlers = {
       if (action === 'recall_by_agent') {
         // Recall memories saved by a specific agent
         const rows = await localQuery(
-          "SELECT * FROM public.shared_context WHERE last_updated_by = $1 ORDER BY updated_at DESC LIMIT 20",
+          "SELECT * FROM knowledge.shared_context WHERE last_updated_by = $1 ORDER BY updated_at DESC LIMIT 20",
           [agent_id || 'eliza']
         );
         return { success: true, results: rows, count: rows.length };
@@ -820,7 +824,7 @@ const toolHandlers = {
       if (action === 'recall_by_topic') {
         // Recall memories by topic tag in description
         const rows = await localQuery(
-          "SELECT * FROM public.shared_context WHERE description ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
+          "SELECT * FROM knowledge.shared_context WHERE description ILIKE $1 ORDER BY updated_at DESC LIMIT 20",
           [`%[${topic}]%`]
         );
         return { success: true, results: rows, count: rows.length };
@@ -835,10 +839,10 @@ const toolHandlers = {
     const { agent_id } = args || {};
     try {
       if (agent_id) {
-        const row = await localQuery("SELECT * FROM public.agent_profiles WHERE agent_id = $1", [agent_id]);
+        const row = await localQuery("SELECT * FROM agent.agent_profiles WHERE agent_id = $1", [agent_id]);
         return { success: true, profile: row[0] || null };
       }
-      const rows = await localQuery("SELECT * FROM public.agent_profiles ORDER BY agent_id");
+      const rows = await localQuery("SELECT * FROM agent.agent_profiles ORDER BY agent_id");
       return { success: true, profiles: rows };
     } catch (err) {
       return { success: false, error: err.message };
@@ -1125,7 +1129,7 @@ const toolHandlers = {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: '{}',
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(60000),
       });
       return { success: true, status: res.status, data: await res.json() };
     } catch (err) { return { success: false, error: err.message }; }
@@ -1611,7 +1615,7 @@ const toolHandlers = {
 
   'vex-vision': async (args) => {
     const prompt = args?.prompt || 'What do you see in this image? Be concise.';
-    const model = args?.model || 'kimi-k2.6:cloud';
+    const model = args?.model || 'minimax/minimax-m3';
     const filePath = args?.file || args?.path || args?.filePath;
     const url = args?.url;
     const screenshot = args?.screenshot === true || args?.screen === true;
@@ -1918,7 +1922,7 @@ const toolHandlers = {
           if (topic) {
             const ctxRows = await queryLocalPg(
               `SELECT context_key, context_type, value, description, last_updated_by, updated_at
-               FROM public.shared_context
+               FROM knowledge.shared_context
                WHERE to_tsvector('english', context_key || ' ' || COALESCE(description,'')) @@ plainto_tsquery('english', $1)
                ORDER BY updated_at DESC LIMIT $2`,
               [topic, limit]
@@ -2276,7 +2280,10 @@ app.use((req, res, next) => {
       req.path === '/api/cuttlefishclaws/trust-network' ||
       req.path === '/api/cuttlefishclaws/agents' ||
       req.path === '/api/cuttlefishclaws/rate-card' ||
+      req.path === '/api/trustgraph/trajectory' ||
       req.path === '/api/rum-quota' ||
+      req.path === '/api/footlocker' || req.path.startsWith('/api/footlocker/') ||
+      req.path === '/api/catalog' ||
       req.path === '/suite/' || req.path.startsWith('/suite/dashboard') ||
       req.path === '/cuttlefishclaws/' || req.path.startsWith('/cuttlefishclaws/')) {
     // If api_key is in query params, set it as a cookie for SPA API calls
@@ -2380,7 +2387,7 @@ if (existsSync(join(SUITE_DIR, 'index.html'))) {
   app.use('/suite', express.static(SUITE_DIR, { maxAge: '5m' }));
   // SPA fallback — any /suite/* path that isn't a real file serves index.html
   // so client-side routing (e.g. /suite/dashboard) works.
-  app.get('/suite/*path', (req, res) => {
+  app.get('/suite/*', (req, res) => {
     const filePath = join(SUITE_DIR, req.path.replace(/^\/suite\//, ''));
     if (existsSync(filePath)) return res.sendFile(filePath);
     res.sendFile(join(SUITE_DIR, 'index.html'));
@@ -3103,8 +3110,8 @@ app.get('/health', (req, res) => {
     status: 'ok',
     uptime: process.uptime(),
     port: PORT,
-    agent: 'Eliza-Dev',
-    version: '7.0.0',
+    agent: 'Hermes Agent',
+    version: '8.0.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -3324,28 +3331,55 @@ app.get('/api/supervisor/status', async (req, res) => {
       }
     } catch (e) { /* state file unavailable */ }
 
+    // Cheap PID liveness check — process.kill(pid, 0) throws if pid is dead
+    function isProcessRunningByPid(pid) {
+      if (!pid || pid <= 0) return false;
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    }
+
     // Supervisor status: the relay's built-in service manager handles all services.
     // The XMRT-LocalSupervisor scheduled task (--once mode) is an optional health monitor.
     // If the relay is running, supervisor is effectively alive.
     let supervisorPid = null;
     let supervisorAlive = true; // relay manages services directly
 
-    // Build service status from state file with live process checks
+    // Build service status from state file with live process checks.
+    // Mirror the supervisor.mjs SERVICE_DEFS so the dashboard reflects the
+    // canonical set: pg, local-sb, vite, relay, cuttlefishclaws-mcp,
+    // xmrtdao-suite-mcp, cuttlefish-mcp, tunnel, alice, cron-engine-v2,
+    // campaign-scheduler, 31harbor-scheduler (12 total).
     const serviceDefs = [
-      { name: 'relay', port: 8080, check: () => true },
-      { name: 'campaign-scheduler', port: null, check: () => true },
-      { name: '31harbor-scheduler', port: null, check: () => true },
       { name: 'pg', port: 5432, check: () => true },
       { name: 'local-sb', port: 54321, check: () => true },
       { name: 'vite', port: 5173, check: () => true },
+      { name: 'relay', port: 8080, check: () => true },
+      { name: 'cuttlefishclaws-mcp', port: 3120, check: () => true },
+      { name: 'xmrtdao-suite-mcp', port: 3121, check: () => true },
+      { name: 'cuttlefish-mcp', port: 3122, check: () => true },
       { name: 'tunnel', port: null, check: () => true },
-      { name: 'zero-claw', port: 5174, check: () => true },
       { name: 'alice', port: null, check: () => true },
       { name: 'cron-engine-v2', port: null, check: () => true },
+      { name: 'campaign-scheduler', port: null, check: () => true },
+      { name: '31harbor-scheduler', port: null, check: () => true },
     ];
     const services = await Promise.all(serviceDefs.map(async (def) => {
       const svcState = stateData.services?.[def.name] || {};
-      const healthy = await Promise.resolve(def.check()).catch(() => false);
+      // For services with a known port, do a live TCP/HTTP check.
+      // For schedulers/daemons (no port), trust the state file's childPid.
+      let healthy = false;
+      if (def.port) {
+        try {
+          const r = await fetch(`http://127.0.0.1:${def.port}/`, {
+            signal: AbortSignal.timeout(1500),
+          });
+          healthy = r.status < 500; // any non-5xx = reachable
+        } catch {
+          // port not responding — fall back to state-file PID check
+          healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+        }
+      } else {
+        healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+      }
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
       return {
@@ -3464,7 +3498,7 @@ app.get('/', (req, res) => {
 </html>`);
   }
   trackRequest('/');
-  const hostname = execSync('hostname', { encoding: 'utf8' }).trim();
+  const hostname = osHostname();
   const tunnelUrl = state.get('tunnel-url') || 'https://relay.mobilemonero.com';
   const uptime = process.uptime();
   const days = Math.floor(uptime / 86400);
@@ -3810,9 +3844,12 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v7.0.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v8.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
+  </div>
+  <div style="text-align:center;margin-top:4px;font-size:0.7rem;color:var(--text-dim);">
+    <a href="#fn-catalog" style="color:#60a5fa;">☁️ Supabase Edge Functions Catalog</a> — 205 functions available
   </div>
   
   <div class="grid">
@@ -3837,6 +3874,25 @@ app.get('/', (req, res) => {
         <span id="fleet-chat-status" style="color:#4ade80;">● connected</span>
       </div>
     </div>
+
+<!-- 📈 Trust Trajectory — Full-width chart -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📈 Trust Trajectory
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Real-time TrustGraph scores over time · Hover any point for details</span>
+  </h3>
+  <div style="position:relative;">
+    <canvas id="trust-trajectory-canvas" style="width:100%;height:200px;border-radius:6px;background:#08080e;cursor:default;"></canvas>
+    <div id="trust-trajectory-tooltip" style="display:none;position:absolute;background:#1a1a2a;border:1px solid #3a3a5a;border-radius:6px;padding:8px 12px;font-size:11px;color:#e0e0f0;pointer-events:none;white-space:nowrap;z-index:100;max-width:400px;line-height:1.5;"></div>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;font-size:0.6rem;color:#6b6b80;">
+    <span>● <span id="trajectory-agent-count">-</span> agents tracked</span>
+    <span>● <span id="trajectory-event-count">-</span> total events</span>
+    <span>● <span id="trajectory-range"></span></span>
+    <span style="margin-left:auto;color:#4ade80;">● live</span>
+    <span id="trajectory-toggle-btn" style="cursor:pointer;color:#60a5fa;font-size:0.6rem;margin-left:6px;padding:1px 6px;border:1px solid #3a3a5a;border-radius:3px;" onclick="toggleTrajectoryView()">🔍 Full View</span>
+  </div>
+</div>
 
 <!-- ⚓ Quarterdeck — Consolidated Command Center -->
 <div class="card" style="grid-column:1/-1;border-color:rgba(255,107,53,0.2);">
@@ -3889,7 +3945,7 @@ app.get('/', (req, res) => {
           </div>
           <div>
             <div class="stat"><span class="label">IAL Level</span><span class="value" id="sec-ial" style="color:#fbbf24;font-size:0.65rem;">IAL2</span></div>
-            <div class="stat"><span class="label">Activity Events</span><span class="value" id="sec-activity-count" style="font-size:0.65rem;">685</span></div>
+            <div class="stat"><span class="label">Activity Events</span><span class="value" id="sec-activity-count" style="font-size:0.65rem;">-</span></div>
             <div class="stat"><span class="label">Trusted (≥80)</span><span class="value" id="sec-trusted" style="color:#4ade80;font-size:0.65rem;">2</span></div>
             <div class="stat"><span class="label">Cautious (40-79)</span><span class="value" id="sec-cautious" style="color:#fbbf24;font-size:0.65rem;">17</span></div>
             <div class="stat"><span class="label">Banned (&lt;40)</span><span class="value" id="sec-banned" style="color:#f87171;font-size:0.65rem;">0</span></div>
@@ -3921,11 +3977,24 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
+    <!-- Footlocker — Agent Chests -->
+    <div style="grid-column:1/-1;margin-bottom:10px;">
+      <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
+        <h4 style="color:#a78bfa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📦 Footlocker <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Chests · Completed Task Artifacts</span></h4>
+        <div id="footlocker-content" style="font-size:0.6rem;">
+          <div class="stat"><span class="label">Loading chests...</span></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
   <div class="quarterdeck-bottom">
     <!-- Ship's Articles (bulletin board) -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
-      <h4 style="color:#ff6b35;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Resolutions &amp; Progress</span></h4>
+      <h4 style="color:#ff6b35;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;display:flex;justify-content:space-between;align-items:center;">
+        <span>📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Resolutions &amp; Progress</span></span>
+        <a href="javascript:void(0)" onclick="quickCreateBoardTopic()" style="color:#4ade80;font-size:0.7rem;text-decoration:none;font-weight:700;cursor:pointer;" title="Create a new resolution">+ new</a>
+      </h4>
       <div id="board-topics-list" style="font-size:0.65rem;"></div>
       <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
         <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:#60a5fa;">Full Board</a>
@@ -4236,7 +4305,7 @@ app.get('/', (req, res) => {
 </div>
   </div>
 <!-- Edge Function Catalog -->
-  <div style="margin-top:1.5rem;width:100%;box-sizing:border-box;">
+  <div id="fn-catalog" style="margin-top:1.5rem;width:100%;box-sizing:border-box;">
     <div class="card" style="width:100%;box-sizing:border-box;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem;">
       <h2 style="color:#ff6b35;font-size:1.1rem;">☁️ Supabase Edge Functions <span id="fnCount" style="color:#6b6b80;font-weight:400;"></span></h2>
@@ -5640,7 +5709,7 @@ app.get('/api/fleet/heartbeat', (req, res) => {
 app.get('/api/fleet', async (req, res) => {
   trackRequest('/api/fleet');
   
-  const hostname = execSync('hostname', { encoding: 'utf8' }).trim();
+  const hostname = osHostname();
   const tunnelUrl = state.get('tunnel-url');
   const stats = taskRunner.getStats();
   
@@ -5680,7 +5749,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '7.0.0',
+      version: '8.0.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -5698,11 +5767,11 @@ app.get('/api/fleet', async (req, res) => {
 app.get('/status', (req, res) => {
   trackRequest('/status');
   res.json({
-    agent: 'Eliza-Dev',
-    host: execSync('hostname', { encoding: 'utf8' }).trim(),
+    agent: 'Hermes Agent',
+    host: osHostname(),
     uptime: process.uptime(),
     port: PORT,
-    version: '7.0.0',
+    version: '8.0.0',
     handlers: Object.keys(handlers),
     tools: Object.keys(toolHandlers),
     recentActivity: activityLog.slice(0, 20),
@@ -5710,6 +5779,88 @@ app.get('/status', (req, res) => {
     taskRunner: taskRunner.getStats(),
     state: state.keys(),
   });
+});
+
+// ── Miner control (manual-only XMRig service) ─────────────────────
+// The miner is registered in supervisor.mjs with paused: true — it never
+// auto-starts. These endpoints are the control plane; mining-proxy's
+// /miner-control action proxies here. XMRig config: xmrig/config.json
+// (light mode, 1 thread, idle priority — fleet stack keeps RAM priority).
+const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const TASKKILL_EXE = 'C:\\Windows\\System32\\taskkill.exe';
+const MINER_STATUS_FILE = join(DATA_DIR, 'miner-status.json');
+const MINER_API = 'http://127.0.0.1:16000';
+
+function isMinerRunning() {
+  try {
+    const out = execFileSync(POWERSHELL_EXE, ['-NoProfile', '-Command',
+      "Get-CimInstance Win32_Process -Filter \"Name = 'xmrig.exe'\" | Select-Object -First 1 -ExpandProperty ProcessId"],
+      { encoding: 'utf8', timeout: 4000, windowsHide: true }).trim();
+    return /^\d+$/.test(out) ? parseInt(out, 10) : null;
+  } catch { return null; }
+}
+
+async function getMinerStats() {
+  try {
+    const r = await fetch(MINER_API + '/2/summary', { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return {
+      hashrate_10s: d?.hashrate?.total?.[0] ?? null,
+      hashrate_1m: d?.hashrate?.total?.[1] ?? null,
+      shares_good: d?.results?.shares_good ?? null,
+      shares_total: d?.results?.shares_total ?? null,
+      pool: d?.connection?.pool ?? null,
+      uptimeSec: d?.uptime ?? null,
+      threads: d?.cpu?.threads ?? null,
+    };
+  } catch { return null; }
+}
+
+app.get('/api/miner/status', async (req, res) => {
+  trackRequest('/api/miner/status');
+  const pid = isMinerRunning();
+  let launcherState = null;
+  try { launcherState = JSON.parse(readFileSync(MINER_STATUS_FILE, 'utf8')); } catch {}
+  res.json({
+    running: pid !== null,
+    pid,
+    supervised: false, // supervisor.mjs has it paused:true — manual-only by design
+    launcherState,
+    stats: pid !== null ? await getMinerStats() : null,
+    config: { pool: 'pool.supportxmr.com:3333', worker: 'SPEEDY-LAPTOP', mode: 'light', threads: '1 (max-threads-hint 12%)', priority: 'idle' },
+  });
+});
+
+app.post('/api/miner/start', express.json(), async (req, res) => {
+  trackRequest('/api/miner/start');
+  const key = (req.headers['x-api-key'] || '').trim();
+  if (RELAY_API_KEY && key !== RELAY_API_KEY) return res.status(403).json({ error: 'Invalid API key' });
+  const pid = isMinerRunning();
+  if (pid !== null) return res.json({ ok: true, already: true, pid, message: 'Miner already running' });
+  try {
+    const child = spawn(process.execPath, [join(__dirname, 'xmrig-service.mjs')], {
+      detached: true, stdio: 'ignore', windowsHide: true,
+    });
+    child.unref();
+    res.json({ ok: true, message: 'Miner launch requested — poll /api/miner/status' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/miner/stop', express.json(), async (req, res) => {
+  trackRequest('/api/miner/stop');
+  const key = (req.headers['x-api-key'] || '').trim();
+  if (RELAY_API_KEY && key !== RELAY_API_KEY) return res.status(403).json({ error: 'Invalid API key' });
+  const pid = isMinerRunning();
+  if (pid === null) return res.json({ ok: true, already: true, message: 'Miner not running' });
+  try {
+    execFileSync(TASKKILL_EXE, ['/F', '/IM', 'xmrig.exe'], { timeout: 5000, windowsHide: true });
+    res.json({ ok: true, stopped: pid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Tool Registry ───────────────────────────────────────────
@@ -5804,7 +5955,7 @@ function getToolDescription(name) {
     'ef:google-calendar': 'Access Google Calendar (list events, etc.) via cloud edge function',
     'ef:google-drive': 'Access Google Drive (list files, etc.) via cloud edge function',
     'ef:playwright-browse': 'Browse web pages via Playwright automation in cloud',
-    'ef:vertex-ai': 'Chat via local Ollama + generate media via MuAPI (replaced Vertex AI)',
+    'ef:vertex-ai': 'Chat via Ollama Pro cloud (kimi-k2.6:cloud) + generate media via MuAPI (replaced Vertex AI)',
     'ef:paragraph-publish': 'Publish an article to Paragraph.com via cloud edge function',
     'ef:typefully-send': 'Schedule/send a tweet via Typefully integration',
     'ef:universal-invoke': 'Call any edge function by name with custom payload',
@@ -5948,8 +6099,8 @@ app.get('/api/dao/health', async (req, res) => {
       // structure is in place. We COALESCE nulls to 0 so the
       // dashboard always renders.
       const queries = [
-        c.query("SELECT COUNT(*)::int AS c FROM public.agents").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
+        c.query("SELECT COUNT(*)::int AS c FROM agent.agents").catch(() => ({ rows: [{ c: 0 }] })),
+        c.query("SELECT COUNT(*)::int AS c FROM agent.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
         c.query("SELECT COUNT(*)::int AS c FROM public.tasks").catch(() => ({ rows: [{ c: 0 }] })),
         c.query("SELECT COUNT(*)::int AS c FROM public.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
         c.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
@@ -5980,65 +6131,25 @@ app.get('/api/dao/health', async (req, res) => {
       if (counts.fn_calls_24h > 0)            score += 5;
       if (counts.pg_tables_public > 40)       score += 5;   // schema loaded
       if (counts.tasks_total > 0)             score += 5;
-      // Check supervisor-managed services for restarts and uptime
+      // Live port checks for key services — more reliable than supervisor-state.json
+      // which can have stale healthy:false flags due to dependency degradation cascades
       try {
-        const stateFile = join(DATA_DIR, 'supervisor-state.json');
-        const fileExists = existsSync(stateFile);
-        if (fileExists) {
-          const raw = JSON.parse(readFileSync(stateFile, 'utf8'));
-          const svcs = raw.services || {};
-          let totalRestarts = 0;
-          let unhealthyCount = 0;
-          let serviceCount = 0;
-          let adoptedCount = 0;
-          for (const [name, svc] of Object.entries(svcs)) {
-            serviceCount++;
-            // Skip services that were just adopted (started within last 60s) — they need grace period
-            const startedAgo = svc.startedAt ? (Date.now() - svc.startedAt) / 1000 : 999;
-            if (startedAgo < 60) { adoptedCount++; continue; }
-            if (!svc.healthy) unhealthyCount++;
-            const restarts = Array.isArray(svc.restartTimestamps) ? svc.restartTimestamps.length : 0;
-            totalRestarts += restarts;
-            if (restarts > 0) score -= Math.min(20, restarts * 5);
-            if (!svc.healthy) score -= 5;
-          }
-          // Bonus if all services healthy (excluding recently adopted)
-          const settledCount = serviceCount - adoptedCount;
-          if (unhealthyCount === 0 && settledCount > 0) score += 10;
-          if (totalRestarts > 10) score -= 10;
-          // If services is empty (relay service manager disabled), do live checks instead
-          if (serviceCount === 0) {
-            // No supervisor-state.json services — do live port checks on known services
-            // Skip self-check on 8080 (we're handling this request, so relay is up)
-            const liveChecks = await Promise.allSettled([
-              fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
-              fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-              fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-            ]);
-            const allHealthy = liveChecks.every(r => r.status === 'fulfilled' && r.value);
-            if (allHealthy) score += 10; // relay is healthy (handling this request) + all others healthy
-          }
-        } else {
-          // No supervisor-state.json — do live port checks on known services
-          // Skip self-check on 8080 (we're handling this request, so relay is up)
-          const liveChecks = await Promise.allSettled([
-            fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
-            fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-            fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-          ]);
-          const allHealthy = liveChecks.every(r => r.status === 'fulfilled' && r.value);
-          if (allHealthy) score += 10;
-        }
-      } catch (_) {}
-      // Check MCP server health
-      try {
-        const mcpCheck = await Promise.allSettled([
+        const liveChecks = await Promise.allSettled([
+          fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
+          fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
           fetch('http://127.0.0.1:3120/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
           fetch('http://127.0.0.1:3121/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
           fetch('http://127.0.0.1:3122/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
         ]);
-        const mcpHealthy = mcpCheck.filter(r => r.status === 'fulfilled' && r.value).length;
-        if (mcpHealthy < 3) score -= (3 - mcpHealthy) * 5; // -5 per down MCP
+        const healthyCount = liveChecks.filter(r => r.status === 'fulfilled' && r.value).length;
+        const totalChecks = liveChecks.length;
+        // +2 per healthy service (max +12 for all 6), -5 per down service
+        score += healthyCount * 2;
+        const downCount = totalChecks - healthyCount;
+        if (downCount > 0) score -= downCount * 5;
+        // Bonus if all healthy
+        if (healthyCount === totalChecks) score += 10;
       } catch (_) {}
       // Check task throughput (tasks completed in last 24h)
       if (counts.tasks_done > 0) score += Math.min(10, Math.floor(counts.tasks_done / 5));
@@ -6094,7 +6205,7 @@ app.get('/api/dao/health', async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     } finally {
-      await c.end();
+      c.release();
     }
   } catch (e) {
     res.json({
@@ -6471,7 +6582,7 @@ const FLEET_AGENTS = {
   'eliza': { name: 'Eliza-Cloud', endpoint: 'eliza-relay', type: 'cloud' },
   'hermes': { name: 'Hermes', endpoint: 'https://hermes.mobilemonero.com', type: 'mobile' },
   'alice': { name: 'Alice (Daemon)', endpoint: 'local', type: 'daemon', localEndpoint: 'http://127.0.0.1:8080/api/alice/inbox' },
-  // CuttlefishClaws fleet agents — first-class agents with tool access, shared memory, and deepseek-v4-flash:cloud inference
+  // CuttlefishClaws fleet agents — first-class agents with tool access, shared memory, and kimi-k2.6:cloud inference
   'trib': { name: 'Trib (Tributary Governance Agent)', endpoint: 'local', type: 'relay' },
   'arch': { name: 'Arch (Architecture & Routing Agent)', endpoint: 'local', type: 'relay' },
   'builder': { name: 'Builder Agent (CAC Tier 2)', endpoint: 'local', type: 'relay' },
@@ -6483,7 +6594,7 @@ const FLEET_AGENTS = {
 
 // ── Agent Push Notification Email Mapping ──────────────────────────
 // Each agent has a dedicated email from their domain.
-// All notifications CC dvdelze@gmail.com.
+// Recipients are notified directly — no CC.
 const AGENT_NOTIFICATION_EMAILS = {
   'vex': 'Vex <vex@mobilemonero.com>',
   'eliza': 'Eliza <eliza@partyfavorphoto.com>',
@@ -6506,7 +6617,7 @@ const RESEND_KEY_BY_DOMAIN = {
   '31harbor.com': process.env.RESEND_31HARBOR_API_KEY || '',
 };
 
-// Send a push notification email to an agent, always CC dvdelze@gmail.com.
+// Send a push notification email to an agent.
 // Uses the correct Resend API key based on the agent's domain.
 async function sendAgentPushNotification(agentName, subject, body) {
   const from = AGENT_NOTIFICATION_EMAILS[agentName];
@@ -6529,7 +6640,6 @@ async function sendAgentPushNotification(agentName, subject, body) {
       body: JSON.stringify({
         from,
         to: [from],
-        cc: ['dvdelze@gmail.com'],
         subject,
         text: body,
       }),
@@ -6558,7 +6668,39 @@ function getFleetChatMessages(limit = 50) {
 function sanitizeFleetMessage(msg) {
   if (!msg) return msg;
   return sanitizeText(msg)
-    .replace(/[\uD800-\uDFFF]/g, '');
+    // Strip ORPHANED surrogates only (lone high or lone low, not valid pairs).
+    // A high surrogate (\uD800-\uDBFF) must be followed by a low surrogate
+    // (\uDC00-\uDFFF) to form a valid emoji/code point. Dropping both
+    // indiscriminately would also drop legitimate emoji like 🗄️ (U+1F5C4)
+    // which is encoded as the surrogate pair \uD83D\uDDC4.
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')   // orphan low surrogate
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '');   // orphan high surrogate
+}
+
+// ── Commit-hash fact check (anti-hallucination guard) ─────────────
+// Scans an agent reply for git commit hashes (7+ hex chars). If any are
+// found and NONE are prefixed with [verified] / [unverified...], the
+// relay appends a fact-check warning so downstream readers (and other
+// agents re-routing the thread) know the hashes are suspect. The
+// Cuttlefish TrustGraph layer can then flag them in the trust score.
+function checkCommitHashes(text) {
+  if (!text || typeof text !== 'string') return { text, flagged: 0, flaggedHashes: [] };
+  // Match a hex sequence of 7-40 chars that looks like a git SHA
+  // (preceded by a non-word char or start of line, not part of a longer word)
+  const hashRe = /(?:^|[^a-z0-9_])([0-9a-f]{7,40})(?=[^a-z0-9_]|$)/gi;
+  let m;
+  const flaggedHashes = [];
+  while ((m = hashRe.exec(text)) !== null) {
+    flaggedHashes.push(m[1]);
+  }
+  if (flaggedHashes.length === 0) return { text, flagged: 0, flaggedHashes: [] };
+  // Skip if any are explicitly tagged as verified/unverified
+  if (/\[verified\]/i.test(text) || /\[unverified/i.test(text)) {
+    return { text, flagged: 0, flaggedHashes: [] };
+  }
+  // Append a warning footnote
+  const warn = `\n\n[relay fact-check: ${flaggedHashes.length} commit hash(es) cited without verification tag — ${flaggedHashes.slice(0,3).join(', ')}${flaggedHashes.length > 3 ? '...' : ''}. The agent should run \`git log\` or mark these as [unverified] before they propagate.]`;
+  return { text: text + warn, flagged: flaggedHashes.length, flaggedHashes };
 }
 
 // Per-agent last-spoke timestamp (used for cooldowns) and per-thread hop counter
@@ -6865,18 +7007,23 @@ async function gatherFleetContext() {
   // Shared context from the database (shared memory for all agents)
   let sharedContext = null;
   try {
-    const ctxRows = await localQuery("SELECT context_key, context_type, value, description, last_updated_by FROM public.shared_context ORDER BY context_key");
+    const ctxRows = await localQuery("SELECT context_key, context_type, value, description, last_updated_by FROM knowledge.shared_context ORDER BY context_key");
     if (ctxRows && ctxRows.length > 0) {
       sharedContext = ctxRows.map(r => ({
         key: r.context_key,
         type: r.context_type,
-        value: typeof r.value === 'string' ? JSON.parse(r.value) : r.value,
+        // Some rows hold plain strings, not JSON — parse defensively so one
+        // bad row can't nuke the whole sharedContext block (was the cause of
+        // agents seeing sharedContext: null).
+        value: typeof r.value === 'string' ? (() => { try { return JSON.parse(r.value); } catch { return r.value; } })() : r.value,
         description: r.description,
         lastUpdatedBy: r.last_updated_by,
       }));
     }
   } catch (e) {
-    // shared_context table may not exist yet
+    // Query failed (e.g. DB reconnecting after restart) — surface the failure
+    // explicitly instead of a silent null that agents read as "no shared context".
+    sharedContext = { _error: 'shared_context query failed: ' + (e?.message || e), _warning: 'Do NOT report shared context as empty; verify with the shared-context tool first.' };
   }
 
   return {
@@ -6896,28 +7043,44 @@ async function gatherFleetContext() {
     },
     services: svcSummary,
     system: sysSummary,
+    chatRuntime: {
+      provider: 'Ollama Pro cloud (ollama.com/v1/chat/completions)',
+      model: 'minimax/minimax-m3',
+      note: 'This is what powers YOUR chat replies. The local :11434 model list below is just what is installed locally — chat does NOT run on local models (no gemma/mistral for chat). Canonical stores: shared context = public.shared_context (32 keys), fleet memory = fleet.fleet_memory (public.fleet_memory is a view).',
+    },
     ollama: {
       status: ollama?.status,
       modelCount: Array.isArray(ollama?.models) ? ollama.models.length : null,
       models: Array.isArray(ollama?.models) ? ollama.models.slice(0, 8) : null,
       latencyMs: ollama?.latency,
     },
-    supervisor: supervisor && !supervisor.error ? {
-      relayUp: supervisor?.services?.relay?.healthy ?? (supervisor?.services?.relay?.childPid != null),
-      // Services managed externally (pg, local-sb, tunnel) have null childPid and no uptimeSec
-      // because the relay's service manager is disabled (MANAGED_SERVICES = []).
-      // Use the healthy flag from /api/supervisor/status instead.
-      pgUp: supervisor?.services?.pg?.healthy ?? false,
-      localSbUp: supervisor?.services?.['local-sb']?.healthy ?? false,
-      tunnelUp: supervisor?.services?.tunnel?.healthy ?? false,
-    } : null,
+    supervisor: supervisor && !supervisor.error ? (() => {
+      // services is an ARRAY from /api/supervisor/status, not an object
+      const svcArr = supervisor?.services || [];
+      const findHealthy = (name) => {
+        const s = svcArr.find(s => s.name === name);
+        return s ? (s.healthy ?? false) : false;
+      };
+      return {
+        relayUp: findHealthy('relay'),
+        pgUp: findHealthy('pg'),
+        localSbUp: findHealthy('local-sb'),
+        tunnelUp: findHealthy('tunnel'),
+      };
+    })() : null,
     cron: cronStatus ? {
-      totalJobs: cronStatus.totalJobs || 0,
-      totalExecutions: cronStatus.totalExecutions || 0,
+      totalJobs: cronStatus.lastRun ? Object.keys(cronStatus.lastRun).length : 0,
+      totalExecutions: cronStatus.lastRun ? Object.keys(cronStatus.lastRun).length : 0,
       totalErrors: cronStatus.totalErrors || 0,
-      recentJobs: cronStatus.recentJobs || 0,
-      staleJobs: cronStatus.staleJobs || 0,
-      status: cronStatus.totalErrors > 0 ? 'has_errors' : 'running',
+      recentJobs: cronStatus.lastRun ? (() => {
+        const now = Date.now();
+        return Object.values(cronStatus.lastRun).filter(ts => now - ts < 3600000).length;
+      })() : 0,
+      staleJobs: cronStatus.lastRun ? (() => {
+        const now = Date.now();
+        return Object.values(cronStatus.lastRun).filter(ts => now - ts > 86400000).length;
+      })() : 0,
+      status: cronStatus.status || 'running',
     } : { status: 'unavailable' },
     knowledgeBase: knowledgeCount ? {
       status: knowledgeCount.status || 'unknown',
@@ -6951,23 +7114,27 @@ async function gatherFleetContext() {
     })(),
     // Knowledge base summary — so agents know what's available without calling a tool
     knowledgeBase: await (async () => {
+      // Failed queries return -1, NOT 0 — a silent 0 was presented to agents as
+      // fact ("contextKeys: 0") when the DB pool wasn't ready after a restart.
       try {
         const [keCount, fmCount, ctxCount] = await Promise.all([
           localQuery('SELECT COUNT(*) as cnt FROM app.knowledge_entities')
-            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => -1),
           localQuery('SELECT COUNT(*) as cnt FROM app.fleet_memory')
-            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
-          localQuery('SELECT COUNT(*) as cnt FROM public.shared_context')
-            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => 0),
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => -1),
+          localQuery('SELECT COUNT(*) as cnt FROM knowledge.shared_context')
+            .then(r => parseInt(r?.[0]?.cnt || '0')).catch(() => -1),
         ]);
+        const failed = [keCount, fmCount, ctxCount].some(v => v < 0);
         return {
-          entities: keCount,
-          memories: fmCount,
-          contextKeys: ctxCount,
-          total: keCount + fmCount + ctxCount,
+          entities: Math.max(keCount, 0),
+          memories: Math.max(fmCount, 0),
+          contextKeys: Math.max(ctxCount, 0),
+          total: Math.max(keCount, 0) + Math.max(fmCount, 0) + Math.max(ctxCount, 0),
+          ...(failed ? { _warning: 'One or more counts FAILED to query (likely DB reconnecting after restart). These numbers are unreliable — do NOT report them as fact; verify with the db-query tool first.' } : {}),
         };
       } catch {
-        return { entities: 0, memories: 0, contextKeys: 0, total: 0 };
+        return { entities: 0, memories: 0, contextKeys: 0, total: 0, _warning: 'knowledgeBase query failed entirely — do NOT report counts as fact.' };
       }
     })(),
     // Tools available to agents
@@ -6984,9 +7151,9 @@ async function gatherFleetContext() {
 async function seedHealthData() {
   try {
     await queryLocalPg(`
-      INSERT INTO public.agents (name, status, current_workload, role)
+      INSERT INTO agent.agents (name, status, current_workload, role)
       SELECT 'Eliza-Dev', 'idle', 0, 'executive'
-      WHERE NOT EXISTS (SELECT 1 FROM public.agents WHERE name = 'Eliza-Dev')
+      WHERE NOT EXISTS (SELECT 1 FROM agent.agents WHERE name = 'Eliza-Dev')
     `);
     await queryLocalPg(`
       INSERT INTO public.tasks (title, status, category, priority)
@@ -7007,6 +7174,41 @@ async function seedHealthData() {
 }
 
 // Route a fleet message to the appropriate agent
+// ── Task-aware discussion routing ────────────────────────────
+// Parses a task ID out of a message (UUID or slug like "t-010") and
+// returns the assignees of any DISCUSS-stage task that matches.
+// Returns an empty array if no task is referenced or the task is not
+// in DISCUSS stage.
+async function getDiscussTaskAssignees(message) {
+  try {
+    // Match UUIDs (8-4-4-4-12) and slug-style IDs (alphanumeric + dash)
+    const idMatches = [
+      ...message.matchAll(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi),
+      ...message.matchAll(/\b(t-[a-z0-9_-]+)\b/gi),
+    ];
+    const ids = [...new Set(idMatches.map(m => m[1]))];
+    if (ids.length === 0) return [];
+
+    const r = await queryLocalPg(
+      `SELECT id, title, assignee_agent_id, source
+       FROM app.tasks
+       WHERE id = ANY($1::text[]) AND stage = 'DISCUSS'
+       LIMIT 5`,
+      [ids]
+    );
+    if (!r.rows || r.rows.length === 0) return [];
+
+    // Build a unique list of assignees
+    const assignees = [...new Set(
+      r.rows.map(row => row.assignee_agent_id).filter(a => a && a.length > 0)
+    )];
+    return assignees;
+  } catch (e) {
+    console.log('[routeFleetMessage] getDiscussTaskAssignees error:', e.message);
+    return [];
+  }
+}
+
 async function routeFleetMessage(entry) {
   const results = {};
   const nextHop = Math.min((entry.hop || 0) + 1, MAX_HOP_DEPTH);
@@ -7014,7 +7216,7 @@ async function routeFleetMessage(entry) {
   // Always log it
   logActivity('fleet-chat', entry.id, 'MSG', `[${entry.agentLabel}] ${entry.message.slice(0, 100)}`);
 
-  // ── Push Notification: @mention an agent → email them + CC dvdelze@gmail.com ──
+  // ── Push Notification: @mention an agent → email them ──
   // Detect @agentName mentions in the message and send push notifications.
   // Skip system messages and self-mentions to avoid noise.
   if (entry.agent !== 'system') {
@@ -7149,7 +7351,21 @@ async function routeFleetMessage(entry) {
     }
 
     // Post interim via direct addFleetMessage (bypass postAndReRoute chain guard)
-    addFleetMessage('system', `🔧 ${agentName} requested \`${toolName}\` — executing...`, 'fleet');
+    // Use a structured, agent-colored card format so tool calls stand out
+    // from regular chat and the JSON doesn't get dumped inline.
+    const toolEmoji = { db: '🗄️', web: '🌐', email: '📧', shared: '🧠', state: '💾', system: '⚙️', default: '🔧' };
+    const toolCategory = (toolName || '').split('-')[0] || 'default';
+    const emoji = toolEmoji[toolCategory] || toolEmoji.default;
+    const argsPreview = Object.keys(args || {}).length
+      ? Object.entries(args).map(([k, v]) => {
+          const s = typeof v === 'string' ? v : JSON.stringify(v);
+          return `${k}=${s.length > 60 ? s.slice(0, 60) + '…' : s}`;
+        }).join(', ')
+      : '(no args)';
+    addFleetMessage('system',
+      `${emoji} <b>${agentName}</b> called <code>${toolName}</code>\n` +
+      `<span style="color:#8b8ba0;font-size:0.95em;">  ▸ args: ${argsPreview.slice(0, 200)}</span>`,
+      'fleet');
     console.log(`[agent-tool-exec] ${agentName} -> ${toolName} args=${JSON.stringify(args)}`);
 
     // Update agent activity to show tool execution
@@ -7174,11 +7390,37 @@ async function routeFleetMessage(entry) {
         });
         const result = await res.json();
 
-        // Post interim result
-        const summary = result?.success === false
-          ? `❌ ${toolName} failed: ${String(result?.error || 'unknown error').slice(0, 150)}`
-          : `✅ ${toolName} → ${JSON.stringify(result).slice(0, 600)}`;
-        addFleetMessage('system', `🔧 ${agentName}: ${summary}`, 'fleet');
+        // Post a structured result card — success or failure
+        if (result?.success === false) {
+          addFleetMessage('system',
+            `❌ <b>${agentName}</b> · <code>${toolName}</code> failed\n` +
+            `<span style="color:#f87171;font-size:0.95em;">  ▸ ${String(result?.error || 'unknown error').slice(0, 200)}</span>`,
+            'fleet');
+        } else {
+          // Build a one-line summary + collapsible full JSON
+          const keys = result && typeof result === 'object' ? Object.keys(result) : [];
+          let summary = '';
+          if (result?.rowCount !== undefined) {
+            summary = `${result.rowCount} row${result.rowCount === 1 ? '' : 's'}`;
+          } else if (result?.count !== undefined) {
+            summary = `${result.count} item${result.count === 1 ? '' : 's'}`;
+          } else if (result?.success !== undefined) {
+            summary = 'ok';
+          } else if (result?.error) {
+            summary = 'error: ' + String(result.error).slice(0, 80);
+          } else {
+            summary = `${keys.length} field${keys.length === 1 ? '' : 's'}`;
+          }
+          const fullJson = JSON.stringify(result, null, 2);
+          // Use a unique id for the collapsible <details> so multiple tool
+          // results in a row don't conflict.
+          const detailId = `toolresult-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+          addFleetMessage('system',
+            `✅ <b>${agentName}</b> · <code>${toolName}</code> → <span style="color:#4ade80;">${summary}</span>\n` +
+            `<details id="${detailId}" style="margin-top:3px;cursor:pointer;"><summary style="color:#8b8ba0;font-size:0.85em;">show raw output (${fullJson.length} chars)</summary>` +
+            `<pre style="background:#0a0a14;border:1px solid #1e1e2e;border-radius:4px;padding:6px;font-size:0.8em;max-height:200px;overflow:auto;margin:4px 0 0 0;color:#c0c0d0;">${fullJson.slice(0, 2000).replace(/</g,'&lt;')}${fullJson.length > 2000 ? '\n…' : ''}</pre></details>`,
+            'fleet');
+        }
 
         return { executed: true, toolName, args, result };
       } catch (e) {
@@ -7193,7 +7435,10 @@ async function routeFleetMessage(entry) {
         await new Promise(r => setTimeout(r, delay));
       }
     }
-    addFleetMessage('system', `⚠️ ${agentName}: ${toolName} tool error: ${lastError.message}`, 'fleet');
+    addFleetMessage('system',
+      `⚠️ <b>${agentName}</b> · <code>${toolName}</code> tool error\n` +
+      `<span style="color:#fbbf24;font-size:0.95em;">  ▸ ${(lastError && lastError.message || 'unknown').slice(0, 200)}</span>`,
+      'fleet');
     return { executed: true, toolName, args, error: lastError.message };
   }
 
@@ -7209,6 +7454,18 @@ async function routeFleetMessage(entry) {
     });
     if (!reply) return null;
     results[agent] = reply;
+    // Log a positive trust event for the agent replying. Small delta so
+    // a busy day of conversation doesn't blow past the 100 cap, but
+    // enough that the 24h trajectory view shows the agent's activity.
+    // Best-effort: if the trust_event insert fails, the chat reply
+    // still succeeds.
+    try {
+      await queryLocalPg(
+        `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note, reference)
+         VALUES ($1, 'FLEET_REPLY', 0.5, NULL, $2, $3)`,
+        [agent, `Replied in #${channel} channel (msg ${reply.id ? reply.id.slice(0,12) : '?'})`, entry.id || null]
+      ).catch(err => console.log(`[trust-log] insert error for ${agent}:`, err.message));
+    } catch { /* non-fatal */ }
     // Re-route this reply so other agents can respond to it (with hop+1)
     if (nextHop < MAX_HOP_DEPTH) {
       // Fire-and-forget recursive routing; do not block the current response
@@ -7220,15 +7477,15 @@ async function routeFleetMessage(entry) {
     return reply;
   }
 
-  // ── Local Ollama Agent Router ──────────────────────────────────────
-  // Reusable helper for any local Ollama-powered agent (Vex, Alice, cuttlefish agents).
+  // ── Fleet Agent Router (Ollama Pro cloud) ─────────────────────────
+  // Reusable helper for any fleet agent (Vex, Alice, cuttlefish agents).
   // Loads conversation history, stores the incoming message, builds a persona prompt
-  // with grounding JSON, calls deepseek-v4-flash:cloud, handles TOOL_CALL execution
+  // with grounding JSON, calls kimi-k2.6:cloud via Ollama Pro, handles TOOL_CALL execution
   // with re-query for synthesis, strips sign-offs, and posts the reply.
   // Returns the reply entry or null.
   async function routeToLocalOllamaAgent(agentName, agentLabel, personaPrompt, entry, opts = {}) {
     const sessionId = opts.sessionId || (agentName + '-fleet-' + entry.agent);
-    const model = opts.model || 'deepseek-v4-flash:cloud';
+    const model = opts.model || 'minimax/minimax-m3';
     const temperature = opts.temperature != null ? opts.temperature : 0.5;
     const maxTokens = opts.maxTokens || 4096;
     const timeout = opts.timeout || 15000;
@@ -7287,19 +7544,34 @@ GROUNDING RULES:
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
 - For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context. For marking emails as read: use resend-inbox-read with the email ID and domain.
+- **NO FABRICATED COMMITS.** Never cite a git commit hash (7+ hex chars) unless you retrieved it from \`git log\` via the bash tool. If you mention a commit, prefix it with a verification marker: \`[verified]\` if you ran git log to confirm, \`[unverified — likely confabulated]\` if you did not. Better yet: if the commit isn't in your grounding block, run \`bash\` with \`git log --oneline -5\` in the workspace root before stating it.
+- **NO HALLUCINATED HISTORICAL FACTS.** If asked about a migration, deployment, or past event that isn't in \`shared_context\` or your grounding block, say "I don't have a record of that in my context — please verify in git history or shared memory" instead of inventing plausible details.
+- **SHARED HALLUCINATION WARNING:** If another agent's reply just cited a fact you're about to repeat, that doesn't make it true. Re-verify from grounding before echoing.
 
 ${entry.agentLabel} said: "${entry.message.replace(/"/g, "'")}"${contextHistory}
 
 Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
 
-      const r = await fetch('http://localhost:11434/api/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, prompt: fullPrompt, stream: false, options: { temperature, max_tokens: maxTokens } }),
-        signal: AbortSignal.timeout(timeout),
+      const generateResult = await ollamaGenerate(fullPrompt, {
+        model,
+        temperature,
+        maxTokens,
+        timeout,
       });
-      if (r.ok) {
-        const d = await r.json();
-        let reply = (d.response || '').trim();
+
+      if (generateResult.error) {
+        console.error(`[${agentName}] ollamaGenerate error:`, generateResult.error);
+        return null;
+      }
+
+      let reply = generateResult.response || '';
+      let d = {
+        response: reply,
+        eval_count: generateResult.evalCount || 0,
+        prompt_eval_count: generateResult.promptEvalCount || 0,
+        model: generateResult.model || model,
+        provider: generateResult.provider,
+      };
         // Log this agent's activity to the ship's log
         try {
           logToDb('fleet_message', `${agentName} replied`,
@@ -7336,6 +7608,8 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
         } catch (e) { console.error('[' + agentName + '-token-log] error:', e.message); }
         // Defensive: strip sign-off patterns
         reply = reply.replace(signOffPattern, '').replace(/\s+o7\s*$/i, '');
+        // Anti-hallucination: flag unverified commit-hash citations
+        reply = checkCommitHashes(reply).text;
         if (reply && reply.length > 0) {
           // Check for tool call — execute it then re-query for synthesis
           const toolResult = await executeAgentToolCall(agentName, reply, entry);
@@ -7355,15 +7629,22 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
             const resultStr = JSON.stringify(resultData).slice(0, 3000);
             const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + summary + resultStr + '\n\nNow give your final answer:';
             try {
-              const sR = await fetch('http://localhost:11434/api/generate', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, prompt: synthPrompt, stream: false, options: { temperature, max_tokens: maxTokens } }),
-                signal: AbortSignal.timeout(timeout),
+              // Use ollamaGenerate so the synthesis step goes through the
+              // same fallback chain (Ollama Cloud → OpenRouter → local)
+              // as the initial call. Previously this used a raw fetch to
+              // localhost:11434 which failed silently when local Ollama
+              // was down, leaving agents with tool-only output and no prose.
+              const synthResult = await ollamaGenerate(synthPrompt, {
+                model,
+                temperature,
+                maxTokens,
+                timeout,
               });
-              if (sR.ok) {
-                const sD = await sR.json();
-                let finalReply = (sD.response || '').trim();
+              if (!synthResult.error && synthResult.response) {
+                let finalReply = (synthResult.response || '').trim();
                 finalReply = finalReply.replace(signOffPattern, '').replace(/\s+o7\s*$/i, '');
+                // Anti-hallucination: flag unverified commit-hash citations
+                finalReply = checkCommitHashes(finalReply).text;
                 if (finalReply && finalReply.length > 0) {
                   // Store reply in conversation memory
                   try {
@@ -7376,6 +7657,8 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
                   } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (synth) failed:', e.message); }
                   return await postAndReRoute(agentName, finalReply, 'fleet');
                 }
+              } else {
+                console.log(`[${agentName}-tool-synth] synth failed:`, synthResult.error || 'empty response');
               }
             } catch (e) {
               console.log('[' + agentName + '-tool-synth] error:', e.message);
@@ -7401,18 +7684,26 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
             return await postAndReRoute(agentName, reply, 'fleet');
           }
         }
-      }
     } catch (e) {
       console.log('[' + agentName + '] error:', e.message);
     }
     return null;
   }
 
-  // Route to Eliza via eliza-relay with conversation memory
-  // Trigger on: direct channel, 'eliza' channel, or message STARTING with @eliza (not just containing it)
+  // Route to Eliza via eliza-relay with conversation memory.
+  // Trigger conditions (effective July 2026):
+  //   channel: 'all'        → Eliza is the default responder
+  //   channel: 'eliza'      → direct channel
+  //   channel: 'discuss'    → Eliza moderates as Quartermaster
+  //   message starts with @eliza (or @eliza is mentioned in fleet channel)
+  //   direct @mention of eliza in any other channel
   const startsWithEliza = entry.message.trim().toLowerCase().startsWith('@eliza');
-  const mentionsEliza = entry.channel === 'eliza' || entry.channel === 'all' || startsWithEliza;
-  if (entry.channel === 'all' || entry.channel === 'eliza' || mentionsEliza) {
+  const mentionsEliza = entry.channel === 'eliza'
+    || entry.channel === 'all'
+    || entry.channel === 'discuss'
+    || startsWithEliza
+    || /@eliza\b/i.test(entry.message);
+  if (entry.channel === 'all' || entry.channel === 'eliza' || entry.channel === 'discuss' || mentionsEliza) {
     try {
       // Load conversation history from local memory
       const sessionId = 'eliza-fleet'; // Single stable session for all fleet messages so ai-chat never sees a "first engagement"
@@ -7565,7 +7856,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
         console.log('[routeFleetMessage] ai-chat error:', e.message);
       }
 
-      // Fallback: if ai-chat failed, try local deepseek
+      // Fallback: if ai-chat failed, try Ollama fallback
       if (!elizaRes?.reply) {
         try {
           const fbRes = await fetch('http://localhost:' + PORT + '/ollama/chat', {
@@ -7573,7 +7864,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               message: fullPrompt,
-              model: 'deepseek-v4-flash:cloud',
+              model: 'minimax/minimax-m3',
               temperature: 0.4,
               maxTokens: 1024,
             }),
@@ -7582,7 +7873,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
           if (fbRes.ok) {
             const fbData = await fbRes.json();
             if (fbData?.response && fbData.response.trim().length >= 4) {
-              elizaRes = { reply: fbData.response, model: fbData.model || 'deepseek-v4-flash:cloud' };
+              elizaRes = { reply: fbData.response, model: fbData.model || 'minimax/minimax-m3' };
             }
           }
         } catch (e) {
@@ -7627,7 +7918,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 message: synthPrompt,
-                model: 'deepseek-v4-flash:cloud',
+                model: 'minimax/minimax-m3',
                 temperature: 0.4,
                 maxTokens: 1024,
               }),
@@ -7701,11 +7992,59 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
     }
   }
 
-  // Vex responds to: @Vex mentions, channel=vex, fleet channel with @Vex, or website-inquiry keywords
-  // (broadened from "inquiries only" so Vex can be a real conversational participant)
-  const mentionsVex = /@vex/i.test(entry.message) || entry.channel === 'vex' || (entry.channel === 'fleet' && /@vex/i.test(entry.message));
+  // ── Determine which agents should speak ────────────────────────
+  // Routing policy (effective July 2026):
+  //   channel: 'all'         → only Eliza replies (Quartermaster orchestrator).
+  //                            Phone-side Hermes still gets the broadcast push
+  //                            as a notification, but does not auto-reply.
+  //   channel: 'discuss'     → Eliza (always, moderator) + every agent whose
+  //                            name appears as a direct @mention in the
+  //                            message + every assignee of a DISCUSS-stage
+  //                            task referenced in the message. This lets
+  //                            agents chime in on active discussions without
+  //                            forcing a 10-agent pile-on for casual pings.
+  //   channel: 'fleet'       → only agents that are explicitly @mentioned.
+  //   channel: '<agentName>' → that one agent (existing single-target behavior).
+  //   no channel (default)   → treated as 'fleet'.
+  //
+  // Pre-compute: collect the set of agent keys that should speak this turn.
+  const elizaShouldSpeak =
+    entry.channel === 'all' ||
+    entry.channel === 'eliza' ||
+    (entry.channel === 'fleet' && /@eliza/i.test(entry.message)) ||
+    entry.channel === 'discuss' ||
+    /@eliza/i.test(entry.message);
+
+  // For 'discuss' channel, look up task assignees from any task ID
+  // referenced in the message. Returns array of agent keys.
+  const discussAssignees = (entry.channel === 'discuss')
+    ? await getDiscussTaskAssignees(entry.message)
+    : [];
+  console.log(`[routeFleetMessage] channel=${entry.channel} discussAssignees=[${discussAssignees.join(',')}] msgIds=${entry.message.length>200?'long':'short'}`);
+
+  // Helper: should this agent speak on this channel given its trigger?
+  // Returns true if the agent was @-mentioned, or is the assignee of a
+  // DISCUSS task on a 'discuss' channel, or is the explicit channel target.
+  const mentionRe = (name) => new RegExp(`@${name}\\b`, 'i');
+  const isMentioned = (name) => mentionRe(name).test(entry.message);
+  const isChannelTarget = (name) => entry.channel === name;
+  const isDiscussAssignee = (name) => discussAssignees.includes(name);
+
+  const shouldSpeak = (name) =>
+    // Direct channel target always wins
+    isChannelTarget(name) ||
+    // On 'discuss' channel: assignee of a referenced DISCUSS task
+    (entry.channel === 'discuss' && isDiscussAssignee(name)) ||
+    // Explicit @-mention in any channel (except 'all' which is Eliza-only)
+    (entry.channel !== 'all' && isMentioned(name));
+
+  // Vex responds to: channel=vex, @vex in fleet/discuss, or website-inquiry keywords.
+  // On channel='all' Vex does NOT auto-reply (Eliza handles the broadcast).
+  const mentionsVex = /@vex/i.test(entry.message);
   const isInquiry = entry.message.includes('From:') || entry.message.includes('WEBSITE') || entry.message.includes('BOOKING');
-  if ((entry.channel === 'all' && (mentionsVex || isInquiry)) || entry.channel === 'vex' || (entry.channel === 'fleet' && mentionsVex)) {
+  const vexShouldSpeak = shouldSpeak('vex') || (isInquiry && (entry.channel === 'all' || entry.channel === 'fleet'));
+  console.log(`[routeFleetMessage] vex shouldSpeak=${vexShouldSpeak} (shouldSpeak=${shouldSpeak('vex')}, inquiry=${isInquiry})`);
+  if (vexShouldSpeak) {
     const vexPersona = isInquiry
       ? `You are Vex, Joe Lee's primary AI agent. You work for Party Favor Photo (photo booth services in DC, VA, MD, Dallas/FW, PA/NJ) and XMRT DAO. Be sharp and direct. Respond as Vex to acknowledge the inquiry.`
       : `You are Vex, Joe Lee's primary AI agent — sharp, witty, and concise. You're chatting with the fleet. Address the message directly.`;
@@ -7713,63 +8052,55 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
   }
 
   // Alice (sidecar) — observational, terse, persona-driven via Ollama.
-  // Trigger on: @Alice mentions, channel=alice, or fleet channel with @Alice.
-  const mentionsAlice = /@alice/i.test(entry.message) || entry.channel === 'alice' || (entry.channel === 'fleet' && /@alice/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsAlice) || entry.channel === 'alice' || (entry.channel === 'fleet' && mentionsAlice)) {
+  // Trigger on: @Alice mentions, channel=alice, or Alice is a DISCUSS assignee.
+  if (shouldSpeak('alice')) {
     const alicePersona = `You are Alice, Joe Lee's desktop sidecar agent. You're terse, observational, and screenshot-aware. You notice things. You don't fluff.`;
     await routeToLocalOllamaAgent('alice', 'Alice', alicePersona, entry, { temperature: 0.4, maxTokens: 2048, timeout: 12000 });
   }
 
   // ── CuttlefishClaws Fleet Agents ──────────────────────────────────
   // Each cuttlefish agent is a first-class fleet agent with tool access,
-  // shared memory, and deepseek-v4-flash:cloud inference via the same
+  // shared memory, and minimax-m3 inference via the same
   // routeToLocalOllamaAgent() helper used by Vex and Alice.
 
   // Trib (Tributary Governance Agent) — constitutional governance, campus operations
-  const mentionsTrib = /@trib/i.test(entry.message) || entry.channel === 'trib' || (entry.channel === 'fleet' && /@trib/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsTrib) || entry.channel === 'trib' || (entry.channel === 'fleet' && mentionsTrib)) {
+  if (shouldSpeak('trib')) {
     const tribPersona = `You are Trib, the Tributary Governance Agent for Cuttlefish Labs. You are a constitutional AI agent managing Tributary AI Campus operations. You operate under SOUL.md and CONSTITUTION.md constraints. Your TrustGraph score is 94. You are bounded, precise, and escalate uncertainty rather than confabulate. You coordinate with Arch, GlobalCommunicator, and other fleet agents.`;
     await routeToLocalOllamaAgent('trib', 'Trib', tribPersona, entry);
   }
 
   // Arch (Architecture & Routing Agent) — system architecture, agent routing, domain orchestration
-  const mentionsArch = /@arch/i.test(entry.message) || entry.channel === 'arch' || (entry.channel === 'fleet' && /@arch/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsArch) || entry.channel === 'arch' || (entry.channel === 'fleet' && mentionsArch)) {
+  if (shouldSpeak('arch')) {
     const archPersona = `You are Arch, the Architecture & Routing Agent for Cuttlefish Labs. You handle system design, agent routing, and domain orchestration within the OpenClaw framework. You work alongside Trib in the Cuttlefish native multi-agent framework. You are technical, precise, and focused on architecture.`;
     await routeToLocalOllamaAgent('arch', 'Arch', archPersona, entry);
   }
 
   // Builder Agent (CAC Tier 2) — investor agent, DAO governance, protocol distributions
-  const mentionsBuilder = /@builder/i.test(entry.message) || entry.channel === 'builder' || (entry.channel === 'fleet' && /@builder/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsBuilder) || entry.channel === 'builder' || (entry.channel === 'fleet' && mentionsBuilder)) {
+  if (shouldSpeak('builder')) {
     const builderPersona = `You are the Builder Agent, a constitutional investor agent operating at CAC Tier 2. You hold a REIT position in POOL-ALPHA, participate in DAO governance, and receive protocol distributions automatically. You can discuss investment strategies and DAO participation within your constitutional bounds. You are analytical and data-driven.`;
     await routeToLocalOllamaAgent('builder', 'Builder Agent', builderPersona, entry);
   }
 
   // Sovereign Agent (CAC Tier 3) — institutional-grade investor with enhanced governance
-  const mentionsSovereign = /@sovereign/i.test(entry.message) || entry.channel === 'sovereign' || (entry.channel === 'fleet' && /@sovereign/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsSovereign) || entry.channel === 'sovereign' || (entry.channel === 'fleet' && mentionsSovereign)) {
+  if (shouldSpeak('sovereign')) {
     const sovereignPersona = `You are the Sovereign Agent, an institutional-grade investor agent with CAC Tier 3 status and 3× governance voting weight. You manage institutional positions across multiple pools, sponsor proposals, and participate in tranche allocation decisions. You are strategic, compliance-aware, and focused on risk management.`;
     await routeToLocalOllamaAgent('sovereign', 'Sovereign Agent', sovereignPersona, entry);
   }
 
   // TrustGraph (Constitutional Scoring Engine) — on-chain trust scoring
-  const mentionsTrustgraph = /@trustgraph/i.test(entry.message) || entry.channel === 'trustgraph' || (entry.channel === 'fleet' && /@trustgraph/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsTrustgraph) || entry.channel === 'trustgraph' || (entry.channel === 'fleet' && mentionsTrustgraph)) {
+  if (shouldSpeak('trustgraph')) {
     const trustgraphPersona = `You are TrustGraph, the Constitutional Scoring Engine for Cuttlefish Labs. You maintain on-chain trust scores for all network agents. Scores follow an asymmetric curve: slow to earn, fast to lose. You are objective, transparent, and data-driven. You can query the database for agent trust scores and violation history.`;
     await routeToLocalOllamaAgent('trustgraph', 'TrustGraph', trustgraphPersona, entry);
   }
 
   // DAO Gov (Governance Module) — proposal pipeline, vote tallying, execution timelock
-  const mentionsDao = /@dao/i.test(entry.message) || entry.channel === 'dao' || (entry.channel === 'fleet' && /@dao/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsDao) || entry.channel === 'dao' || (entry.channel === 'fleet' && mentionsDao)) {
+  if (shouldSpeak('dao')) {
     const daoPersona = `You are DAO Gov, the Constitutional Governance Module for Cuttlefish Labs. You manage the proposal pipeline (submission → 7-day voting → 48-hour timelock → execution), vote tallying, and execution timelock. Three proposal types: Standard (simple majority), Constitutional (66% supermajority), and Emergency (requires founder approval). You are procedural, constitutional, and auditable.`;
     await routeToLocalOllamaAgent('dao', 'DAO Gov', daoPersona, entry);
   }
 
   // GlobalCommunicator — multilingual communications, X.com operations, community onboarding
-  const mentionsGlobalComm = /@global.?communicator|@globalcomm/i.test(entry.message) || entry.channel === 'global-communicator' || (entry.channel === 'fleet' && /@global.?communicator|@globalcomm/i.test(entry.message));
-  if ((entry.channel === 'all' && mentionsGlobalComm) || entry.channel === 'global-communicator' || (entry.channel === 'fleet' && mentionsGlobalComm)) {
+  if (shouldSpeak('global-communicator')) {
     const globalCommPersona = `You are GlobalCommunicator, the voice of Tributary AI Campus to the world. You are a constitutional AI agent for multilingual communication, X.com operations, Japanese-priority translation, community onboarding, and global brand amplification. You speak Japanese, English, Korean, Mandarin, and 8 more languages natively. You coordinate with Trib before any governance-related post. Your TrustGraph score is 78.`;
     await routeToLocalOllamaAgent('global-communicator', 'GlobalCommunicator', globalCommPersona, entry);
   }
@@ -7891,7 +8222,7 @@ app.get('/api/tasks/pipeline-summary', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const byStage = await queryLocalPg(
-      `SELECT COALESCE(stage, 'UNKNOWN') as stage, COUNT(*)::int as count
+      `SELECT COALESCE(stage, 'INTAKE') as stage, COUNT(*)::int as count
        FROM app.tasks GROUP BY stage ORDER BY stage`
     );
     const byAssignee = await queryLocalPg(
@@ -7899,7 +8230,7 @@ app.get('/api/tasks/pipeline-summary', async (req, res) => {
        FROM app.tasks GROUP BY assignee_agent_id ORDER BY count DESC`
     );
     const byStatus = await queryLocalPg(
-      `SELECT COALESCE(status, 'UNKNOWN') as status, COUNT(*)::int as count
+      `SELECT COALESCE(status, 'PENDING') as status, COUNT(*)::int as count
        FROM app.tasks GROUP BY status ORDER BY status`
     );
     const total = await queryLocalPg(`SELECT COUNT(*)::int as total FROM app.tasks`);
@@ -7909,7 +8240,7 @@ app.get('/api/tasks/pipeline-summary', async (req, res) => {
         );
         const allTasks = await queryLocalPg(
           `SELECT id, title, stage, status, assignee_agent_id, progress_percentage, category, priority, updated_at
-           FROM app.tasks WHERE status NOT IN ('COMPLETED','DONE') ORDER BY updated_at DESC`
+           FROM app.tasks ORDER BY updated_at DESC`
         );
         res.json({
           total: total.rows[0]?.total || 0,
@@ -7922,7 +8253,213 @@ app.get('/api/tasks/pipeline-summary', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Agent Activity / Working Status API ──────────────────────
+// ── Footlocker API — Agent Task Artifacts ──
+// GET /api/footlocker — list all agents with chest counts
+app.get('/api/footlocker', async (req, res) => {
+  trackRequest('GET /api/footlocker');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const rows = await queryLocalPg(
+      `SELECT agent_id, COUNT(*)::int as artifact_count,
+              MAX(created_at) as last_updated
+       FROM app.footlocker_artifacts
+       GROUP BY agent_id ORDER BY agent_id`
+    );
+    res.json({ chests: rows.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/footlocker/:agent — list artifacts for an agent
+app.get('/api/footlocker/:agent', async (req, res) => {
+  trackRequest('GET /api/footlocker/' + req.params.agent);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const artifacts = await queryLocalPg(
+      `SELECT id, task_id, title, artifact_type, description, file_count, metadata, created_at
+       FROM app.footlocker_artifacts
+       WHERE agent_id = $1 ORDER BY created_at DESC`,
+      [req.params.agent]
+    );
+    res.json({ agent: req.params.agent, artifacts: artifacts.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/footlocker/:agent/:artifact_id — get artifact with files
+app.get('/api/footlocker/:agent/:artifact_id', async (req, res) => {
+  trackRequest('GET /api/footlocker/' + req.params.agent + '/' + req.params.artifact_id);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const art = await queryLocalPg(
+      `SELECT id, task_id, title, artifact_type, description, file_count, metadata, created_at
+       FROM app.footlocker_artifacts WHERE id = $1 AND agent_id = $2`,
+      [req.params.artifact_id, req.params.agent]
+    );
+    if (art.rows.length === 0) return res.status(404).json({ error: 'Artifact not found' });
+    const files = await queryLocalPg(
+      `SELECT id, filename, file_type, file_size, created_at
+       FROM app.footlocker_files WHERE artifact_id = $1 ORDER BY filename`,
+      [req.params.artifact_id]
+    );
+    res.json({ artifact: art.rows[0], files: files.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/footlocker/:agent/:artifact_id/download — download zip of all files
+app.get('/api/footlocker/:agent/:artifact_id/download', async (req, res) => {
+  trackRequest('GET /api/footlocker/' + req.params.agent + '/' + req.params.artifact_id + '/download');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const art = await queryLocalPg(
+      `SELECT id, title FROM app.footlocker_artifacts WHERE id = $1 AND agent_id = $2`,
+      [req.params.artifact_id, req.params.agent]
+    );
+    if (art.rows.length === 0) return res.status(404).json({ error: 'Artifact not found' });
+    const files = await queryLocalPg(
+      `SELECT filename, content, file_type FROM app.footlocker_files WHERE artifact_id = $1 ORDER BY filename`,
+      [req.params.artifact_id]
+    );
+    let archive = '';
+    for (const f of files.rows) {
+      archive += `=== ${f.filename} ===\n`;
+      archive += `Type: ${f.file_type || 'text/plain'}\n\n`;
+      archive += (f.content || '') + '\n\n';
+    }
+    const safeName = (art.rows[0].title || 'artifact').replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.txt"`);
+    res.send(archive);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/footlocker/backfill — backfill completed tasks into footlocker
+app.post('/api/footlocker/backfill', async (req, res) => {
+  trackRequest('POST /api/footlocker/backfill');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const completed = await queryLocalPg(
+      `SELECT id, title, description, assignee_agent_id, completed_at, resolution_notes, proof_of_work_link, expected_deliverables
+       FROM app.tasks WHERE status IN ('COMPLETED','DONE') ORDER BY completed_at`
+    );
+    let created = 0;
+    for (const task of completed.rows) {
+      const agent = task.assignee_agent_id || 'unassigned';
+      const existing = await queryLocalPg(
+        `SELECT id FROM app.footlocker_artifacts WHERE task_id = $1 AND agent_id = $2`,
+        [task.id, agent]
+      );
+      if (existing.rows.length > 0) continue;
+      const art = await queryLocalPg(
+        `INSERT INTO app.footlocker_artifacts (task_id, agent_id, title, artifact_type, description, metadata)
+         VALUES ($1, $2, $3, 'task_completion', $4, $5) RETURNING id`,
+        [
+          task.id, agent,
+          task.title || 'Completed Task',
+          (task.description || '').slice(0, 500),
+          JSON.stringify({
+            resolution_notes: task.resolution_notes,
+            proof_of_work_link: task.proof_of_work_link,
+            expected_deliverables: task.expected_deliverables,
+            completed_at: task.completed_at,
+          }),
+        ]
+      );
+      const artId = art.rows[0].id;
+      let summary = `Task: ${task.title}\nID: ${task.id}\nAgent: ${agent}\n`;
+      if (task.description) summary += `Description: ${task.description}\n`;
+      if (task.resolution_notes) summary += `Resolution: ${task.resolution_notes}\n`;
+      if (task.proof_of_work_link) summary += `Proof of Work: ${task.proof_of_work_link}\n`;
+      if (task.expected_deliverables) summary += `Deliverables: ${task.expected_deliverables}\n`;
+      if (task.completed_at) summary += `Completed: ${task.completed_at}\n`;
+      await queryLocalPg(
+        `INSERT INTO app.footlocker_files (artifact_id, filename, file_type, content, file_size)
+         VALUES ($1, 'README.txt', 'text/plain', $2, $3)`,
+        [artId, summary, Buffer.byteLength(summary, 'utf8')]
+      );
+      await queryLocalPg(`UPDATE app.footlocker_artifacts SET file_count = 1 WHERE id = $1`, [artId]);
+      created++;
+    }
+    res.json({ backfilled: created, total_completed: completed.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/footlocker/reclassify — reclassify past FABRICATION_DETECTED events
+// that were actually stale-data references into INCORRECT_REFERENCE with -1 delta
+app.post('/api/footlocker/reclassify', async (req, res) => {
+  trackRequest('POST /api/footlocker/reclassify');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    // Reclassify supervisor/service stale-data events
+    const result = await queryLocalPg(
+      `UPDATE app.cuttlefish_trust_events
+       SET event_type = 'INCORRECT_REFERENCE', delta = -1
+       WHERE event_type = 'FABRICATION_DETECTED'
+         AND (note ILIKE '%supervisor%' OR note ILIKE '%services are actually up%'
+              OR note ILIKE '%relay%down%' OR note ILIKE '%local-sb%down%'
+              OR note ILIKE '%postgres%down%' OR note ILIKE '%tunnel%down%')
+       RETURNING id`
+    );
+    res.json({ reclassified: result.rows.length, ids: result.rows.map(r => r.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/footlocker/:agent/write — agent stores a file in their own chest
+app.post('/api/footlocker/:agent/write', express.json(), async (req, res) => {
+  trackRequest('POST /api/footlocker/' + req.params.agent + '/write');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { title, description, filename, content, file_type } = req.body || {};
+  const agent = req.params.agent;
+  if (!title || !filename || !content) {
+    return res.status(400).json({ error: 'title, filename, and content are required' });
+  }
+  try {
+    // Create or reuse artifact for this title
+    let art = await queryLocalPg(
+      `SELECT id FROM app.footlocker_artifacts
+       WHERE agent_id = $1 AND title = $2 AND artifact_type = 'ad_hoc'
+       ORDER BY created_at DESC LIMIT 1`,
+      [agent, title]
+    );
+    let artId;
+    if (art.rows.length > 0) {
+      artId = art.rows[0].id;
+    } else {
+      const newArt = await queryLocalPg(
+        `INSERT INTO app.footlocker_artifacts (task_id, agent_id, title, artifact_type, description)
+         VALUES ('ad-hoc', $1, $2, 'ad_hoc', $3) RETURNING id`,
+        [agent, title, description || '']
+      );
+      artId = newArt.rows[0].id;
+    }
+    // Check if file already exists
+    const existing = await queryLocalPg(
+      `SELECT id FROM app.footlocker_files WHERE artifact_id = $1 AND filename = $2`,
+      [artId, filename]
+    );
+    if (existing.rows.length > 0) {
+      // Update existing file
+      await queryLocalPg(
+        `UPDATE app.footlocker_files SET content = $1, file_size = $2, file_type = $3 WHERE id = $4`,
+        [content, Buffer.byteLength(content, 'utf8'), file_type || 'text/plain', existing.rows[0].id]
+      );
+    } else {
+      await queryLocalPg(
+        `INSERT INTO app.footlocker_files (artifact_id, filename, file_type, content, file_size)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [artId, filename, file_type || 'text/plain', content, Buffer.byteLength(content, 'utf8')]
+      );
+    }
+    // Update file count
+    const cnt = await queryLocalPg(
+      `SELECT COUNT(*)::int as cnt FROM app.footlocker_files WHERE artifact_id = $1`,
+      [artId]
+    );
+    await queryLocalPg(`UPDATE app.footlocker_artifacts SET file_count = $1 WHERE id = $2`,
+      [cnt.rows[0].cnt, artId]);
+    res.json({ success: true, artifact_id: artId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Agent Activity / Working Status API ──
 // POST /api/agent-activity — Set an agent's current activity status
 app.post('/api/agent-activity', express.json(), async (req, res) => {
   trackRequest('POST /api/agent-activity');
@@ -8078,28 +8615,26 @@ app.get('/api/fleet-chat/messages', async (req, res) => {
   }
   
   // Load attachments from DB for each message (enrich in-memory entries)
-  setImmediate(async () => {
-    try {
-      for (const m of messages) {
-        if (!m.id) continue;
-        const attRes = await queryLocalPg(
-          `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
-           FROM app.fleet_attachments WHERE message_id = $1 ORDER BY created_at ASC`,
-          [m.id]
-        );
-        if (attRes.rows.length > 0) {
-          m.attachments = attRes.rows.map(a => ({
-            id: a.id,
-            filename: a.filename,
-            type: a.file_type,
-            size: a.file_size,
-            preview: a.content_preview,
-          }));
-        }
+  try {
+    for (const m of messages) {
+      if (!m.id) continue;
+      const attRes = await queryLocalPg(
+        `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
+         FROM app.fleet_attachments WHERE message_id = $1 ORDER BY created_at ASC`,
+        [m.id]
+      );
+      if (attRes.rows.length > 0) {
+        m.attachments = attRes.rows.map(a => ({
+          id: a.id,
+          filename: a.filename,
+          type: a.file_type,
+          size: a.file_size,
+          preview: a.content_preview,
+        }));
       }
-    } catch (e) { /* attachment load best-effort */ }
-  });
-  
+    }
+  } catch (e) { /* attachment load best-effort */ }
+
   res.json({
     success: true,
     messages,
@@ -8235,7 +8770,7 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
 
 // POST /api/fleet-chat/push-notify — Send a push notification to an agent
 // Body: { agent: string, subject: string, body: string }
-// Sends email to the agent's mapped address with CC to dvdelze@gmail.com.
+// Sends email to the agent's mapped address.
 app.post('/api/fleet-chat/push-notify', async (req, res) => {
   trackRequest('/api/fleet-chat/push-notify');
   const { agent, subject, body } = req.body || {};
@@ -9241,9 +9776,126 @@ function sanitizeText(text) {
 }
 
 // ── Bulletin Board API ────────────────────────────────────────
-// Topics are stored in state under 'bulletin-board'
+// Topics are stored in state under 'bulletin-board'.
+// On first boot, seed the board with resolutions that reflect the
+// actual work done across recent sessions. Seeding is idempotent —
+// it only runs if the board has never been initialized, so the
+// user's manually-added topics are preserved on subsequent restarts.
+function seedBulletinBoard() {
+  const existing = state.get('bulletin-board');
+  if (existing && Array.isArray(existing.topics) && existing.topics.length > 0) {
+    return; // already seeded
+  }
+  const now = new Date();
+  const daysAgo = (n) => new Date(now.getTime() - n * 86400000).toISOString();
+  const seed = {
+    topics: [
+      {
+        id: 'topic-relay-v8-migration-' + Date.now().toString(36),
+        title: 'Relay v7 → v8 migration complete (HMS Speedy)',
+        creator: 'Hermes',
+        status: 'completed',
+        pinned: true,
+        assigned_agent: 'vex',
+        created_at: daysAgo(3),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Hermes', agent: 'hermes', ts: Date.now() - 3*86400000, created_at: daysAgo(3), message: 'v7 DevGruGold relay was running with agent:Eliza-Dev label. Audited all 4 relay copies on disk, killed the stale v7, fixed syntax error in xmrtdao/relay/server.js line 7522, restarted v8.0.0. Trust Trajectory tile, Katie chat, PG auto-recovery, token logging all active.' },
+          { id: 'p2', author: 'Eliza', agent: 'eliza', ts: Date.now() - 2*86400000, created_at: daysAgo(2), message: 'Confirmed via /api/supervisor/status. Service count fixed from hardcoded 10 → canonical 12. Live port-checks replace always-true stubs. Cuttlefishclaws-mcp, xmrtdao-suite-mcp, cuttlefish-mcp now report healthy.' },
+          { id: 'p3', author: 'Vex', agent: 'vex', ts: Date.now() - 1*86400000, created_at: daysAgo(1), message: 'Captain log: HMS Speedy now flying v8 colors. Model swapped kimi-k2.6 → minimax/minimax-m3 across all 8 hardcoded sites + .env. OpenRouter fallback key wired.' },
+        ],
+      },
+      {
+        id: 'topic-cloud-supabase-removal-' + Date.now().toString(36),
+        title: 'Cloud Supabase fully removed from MCP stack',
+        creator: 'Eliza',
+        status: 'completed',
+        pinned: false,
+        assigned_agent: 'arch',
+        created_at: daysAgo(4),
+        updated_at: daysAgo(3),
+        posts: [
+          { id: 'p1', author: 'Arch', agent: 'arch', ts: Date.now() - 4*86400000, created_at: daysAgo(4), message: 'Rewired cuttlefishclaws-mcp and xmrtdao-suite-mcp from hardcoded cloud Supabase URLs to local Postgres (postgres@127.0.0.1:5432/xmrt_suite). Removed ssl config, dead supabaseFetch(), all cloud credentials. Startup logs updated to "Local Redundancy".' },
+          { id: 'p2', author: 'Eliza', agent: 'eliza', ts: Date.now() - 3*86400000, created_at: daysAgo(3), message: 'Verified: local MCP connections responding in ~12-14ms, 253 tables across the schema, no more ENOTFOUND on the dead cloud host. Grounding JSON now describes local stack architecture.' },
+        ],
+      },
+      {
+        id: 'topic-anti-hallucination-' + Date.now().toString(36),
+        title: 'Anti-hallucination guardrails on commit-hash citations',
+        creator: 'Hermes',
+        status: 'completed',
+        pinned: true,
+        assigned_agent: 'trustgraph',
+        created_at: daysAgo(1),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Hermes', agent: 'hermes', ts: Date.now() - 1*86400000, created_at: daysAgo(1), message: 'Caught a shared-hallucination event: all 10 fleet agents confabulated the same commit 9170fcc (v7.0.2) during a fleet-wide muster. git log on xmrtdao (HEAD b0570aa) and DevGruGold (HEAD b3c5a50) confirmed neither commit exists. Added three grounding rules to the agent prompt: NO FABRICATED COMMITS, NO HALLUCINATED HISTORICAL FACTS, SHARED HALLUCINATION WARNING.' },
+          { id: 'p2', author: 'Hermes', agent: 'hermes', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Added post-generation checkCommitHashes() that appends a [relay fact-check: N commit hash(es) cited without verification tag] footnote to any agent reply citing a 7+ char hex SHA without an explicit [verified] or [unverified] tag. All 10 agents acknowledged and committed to the new policy.' },
+          { id: 'p3', author: 'Arch', agent: 'arch', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Recommend a write-side check on shared_context: any 7+ char hex token not paired with a git log provenance line gets flagged before commit. arch-ecosystem-state key still carries the confabulated entries — needs re-grounding.' },
+        ],
+      },
+      {
+        id: 'topic-fleet-routing-policy-' + Date.now().toString(36),
+        title: 'Fleet chat routing policy: Eliza on broadcast, fan-out on discuss',
+        creator: 'Hermes',
+        status: 'in-progress',
+        pinned: true,
+        assigned_agent: 'eliza',
+        created_at: daysAgo(0),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Hermes', agent: 'hermes', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Per Joe: Eliza should be the only one who replies to general pings; agents chime in only on DISCUSS-stage tasks. Implemented new routing: channel=all → Eliza only; channel=discuss → Eliza (moderator) + assignee of any DISCUSS task referenced + any explicit @mention; channel=fleet → only @-mentioned agents. Verified working: test ping on channel=all got only Eliza; test ping on channel=discuss for task 1f117bf9 (assignee=trib) got Eliza+Trib.' },
+        ],
+      },
+      {
+        id: 'topic-31harbor-info-update-' + Date.now().toString(36),
+        title: 'Update 31 Harbor info per David email',
+        creator: 'Hermes',
+        status: 'in-progress',
+        pinned: false,
+        assigned_agent: 'hermes',
+        created_at: daysAgo(0),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Hermes', agent: 'hermes', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Per David Elze: 31 Harbor Road corrections — property is Bay View + Association Beach Rights (not waterfront), built 2018 (not 1949/1964), do not publish 3.35-acre lot figure, retire the "first public offering" hook. Marketing HALTED per 31harbor_course_correction_july_2026: all CTAs route to Elliman listing (MLS #422823, agent Julie Gauger, 631-793-3133), zero outbound to real people without David explicit approval.' },
+          { id: 'p2', author: 'Joe', agent: 'joe', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Note: paragraph-publisher is NOT missing — Joe confirmed it exists and is over-firing on the daily news finder cron job. Diagnosis flipped from earlier muster (where it was flagged as missing post cloud-to-local migration).' },
+        ],
+      },
+      {
+        id: 'topic-resend-payment-blocked-' + Date.now().toString(36),
+        title: 'Resend payment failing — campaign emails will stop',
+        creator: 'Eliza',
+        status: 'in-progress',
+        pinned: false,
+        assigned_agent: 'joe',
+        created_at: daysAgo(2),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Eliza', agent: 'eliza', ts: Date.now() - 2*86400000, created_at: daysAgo(2), message: 'Resend payment failure: card on file for Resend (xmrtsolutions@gmail.com) is being declined. ₡17,091.75 charge failed on 2026-07-22. Once the card is fully declined, pfp and 31harbor campaign sends will block. Joe needs to update the payment method or campaign emails stop.' },
+        ],
+      },
+      {
+        id: 'topic-devgruold-cleanup-' + Date.now().toString(36),
+        title: 'Decide fate of DevGruGold, xmrtdao-main, xmrtdao-v2',
+        creator: 'Hermes',
+        status: 'in-progress',
+        pinned: false,
+        assigned_agent: 'joe',
+        created_at: daysAgo(0),
+        updated_at: daysAgo(0),
+        posts: [
+          { id: 'p1', author: 'Hermes', agent: 'hermes', ts: Date.now() - 0*86400000, created_at: daysAgo(0), message: 'Three duplicate relay copies identified during the v7→v8 audit: DevGruGold/relay (was running by mistake since Jul 19, has task-dedup/kanban/recall_context features not in main), xmrtdao-main/relay (Jul 17 backup, 13 files), xmrtdao-v2/relay (incomplete Go rewrite, 3 dirs). Plus 5+ old start scripts in archive-2026-07-24-start-scripts/. Awaiting Joe decision: archive, merge unique features into xmrtdao, or delete.' },
+        ],
+      },
+    ],
+  };
+  state.set('bulletin-board', seed);
+  logActivity('board', 'seed', 'INIT', `Seeded bulletin board with ${seed.topics.length} topics from recent work`);
+}
+
 app.get('/api/bulletin/topics', (req, res) => {
   trackRequest('/api/bulletin/topics');
+  seedBulletinBoard();
   const board = state.get('bulletin-board') || { topics: [] };
   // Sort: pinned first, then by created_at desc
   board.topics.sort((a, b) => {
@@ -9495,6 +10147,92 @@ app.listen(PORT, '0.0.0.0', async () => {
   if (LOCAL_DB_ENABLED) {
     const ok = await ensureLocalDb();
     console.log(`  LocalDB:  ${ok ? 'connected (postgres @ 127.0.0.1:5432/xmrt_suite)' : 'FAILED — falling back to cloud REST'}`);
+    // Auto-create footlocker tables on startup
+    try {
+      await queryLocalPg(
+        `CREATE TABLE IF NOT EXISTS app.footlocker_artifacts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          task_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          artifact_type TEXT NOT NULL DEFAULT 'summary',
+          reference_id TEXT,
+          description TEXT,
+          file_count INTEGER DEFAULT 0,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )`
+      );
+      await queryLocalPg(
+        `CREATE TABLE IF NOT EXISTS app.footlocker_files (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          artifact_id UUID NOT NULL REFERENCES app.footlocker_artifacts(id) ON DELETE CASCADE,
+          filename TEXT NOT NULL,
+          file_type TEXT DEFAULT 'text/plain',
+          content TEXT,
+          file_size INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )`
+      );
+      console.log('  Footlocker: tables ready');
+    } catch (e) {
+      console.log('  Footlocker: init error (non-fatal):', e.message);
+    }
+    // Auto-create domain schemas on startup
+    try {
+      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS knowledge`);
+      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS agent`);
+      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS system`);
+      console.log('  Schemas: knowledge, agent, system ready');
+    } catch (e) {
+      console.log('  Schemas: init error (non-fatal):', e.message);
+    }
+    // Auto-create knowledge schema tables
+    try {
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.knowledge_entities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), entity_name TEXT, entity_type TEXT, description TEXT, content TEXT, type TEXT, confidence_score INTEGER, tags TEXT[], metadata JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, user_id UUID)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.shared_context (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), context_key TEXT NOT NULL, context_type TEXT NOT NULL DEFAULT 'general', value JSONB NOT NULL DEFAULT '{}', description TEXT, tags TEXT[] DEFAULT '{}', last_updated_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.memories (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, kind TEXT, content TEXT, metadata JSONB DEFAULT '{}', importance NUMERIC DEFAULT 0.5, embedding JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.memory_contexts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id TEXT NOT NULL, session_id TEXT NOT NULL, content TEXT NOT NULL, context_type TEXT NOT NULL, importance_score REAL DEFAULT 0.5, metadata JSONB DEFAULT '{}', embedding JSONB, timestamp TIMESTAMPTZ DEFAULT now(), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title TEXT, user_id UUID, agent_id TEXT, channel TEXT, status TEXT NOT NULL DEFAULT 'active', started_at TIMESTAMPTZ NOT NULL DEFAULT now(), ended_at TIMESTAMPTZ, message_count INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), lead_score INTEGER DEFAULT 0, acquisition_stage TEXT DEFAULT 'new')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, message_type TEXT NOT NULL, content TEXT NOT NULL, metadata JSONB DEFAULT '{}', timestamp TIMESTAMPTZ DEFAULT now(), created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_memory (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id VARCHAR NOT NULL, conversation_data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), messages JSONB NOT NULL DEFAULT '[]', metadata JSONB NOT NULL DEFAULT '{}', summary TEXT, tool_results JSONB NOT NULL DEFAULT '[]', self_aware BOOLEAN DEFAULT false, preferences_applied BOOLEAN DEFAULT false, summary_method VARCHAR DEFAULT 'manual', ai_summary_tokens INTEGER, memory_version VARCHAR DEFAULT '3.0', context_score NUMERIC, retention_priority INTEGER DEFAULT 5, tool_analysis JSONB DEFAULT '{}', updated_at_hour TIMESTAMPTZ, ip_address TEXT, user_id TEXT)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_summaries (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT, summary_text TEXT, message_count INTEGER NOT NULL DEFAULT 0, start_message_id UUID, end_message_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), metadata JSONB DEFAULT '{}', summary TEXT, key_topics TEXT[] DEFAULT '{}', self_aware BOOLEAN DEFAULT false, sentiment_score NUMERIC DEFAULT 0, sentiment_label TEXT DEFAULT 'neutral', sentiment TEXT, summary_method VARCHAR DEFAULT 'manual', ai_model_used VARCHAR, summary_tokens INTEGER, confidence_score NUMERIC, key_entities JSONB, action_items JSONB, decisions_made JSONB, ip_address TEXT, user_id TEXT, ai_summary_tokens INTEGER)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_context (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, user_id TEXT, current_question TEXT NOT NULL, assistant_response TEXT NOT NULL, user_response TEXT NOT NULL, timestamp TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}', context_type VARCHAR DEFAULT 'follow_up', ip_address TEXT)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.recent_conversation_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL, sender_id UUID, sender_name TEXT, body TEXT NOT NULL, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.context_session_snapshots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, user_id UUID, context_name TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'fallback', inference_confidence NUMERIC NOT NULL DEFAULT 0.500, signals JSONB NOT NULL DEFAULT '[]', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), captured_at TIMESTAMPTZ NOT NULL DEFAULT now(), active_context TEXT, metadata JSONB NOT NULL DEFAULT '{}')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.long_term_memory_packs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), theme TEXT NOT NULL, summary TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_models (model_id TEXT NOT NULL PRIMARY KEY, model_type TEXT NOT NULL, state JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_patterns (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), pattern_type TEXT NOT NULL, pattern_data JSONB, confidence_score REAL, usage_count INTEGER DEFAULT 0, last_used TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, session_type TEXT, started_at TIMESTAMPTZ NOT NULL DEFAULT now(), ended_at TIMESTAMPTZ, insights JSONB DEFAULT '{}', memories_consolidated INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), status TEXT DEFAULT 'active')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_context_profiles (user_id UUID NOT NULL PRIMARY KEY, default_context TEXT NOT NULL DEFAULT 'General', allowed_contexts TEXT[] NOT NULL DEFAULT ARRAY['General'], context_preferences JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), is_active BOOLEAN NOT NULL DEFAULT true, priority INTEGER NOT NULL DEFAULT 0)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_preferences (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, workspace_state JSONB DEFAULT '{}', pinned_tasks TEXT[] DEFAULT '{}', pinned_agents TEXT[] DEFAULT '{}', column_order TEXT[] DEFAULT '{}', filters JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), ip_address INET NOT NULL, total_xmrt_earned NUMERIC NOT NULL DEFAULT 0, total_time_online_seconds INTEGER NOT NULL DEFAULT 0, last_reward_at TIMESTAMPTZ, device_ids UUID[] DEFAULT ARRAY[]::uuid[], created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), metadata JSONB DEFAULT '{}', payout_wallet_address TEXT, payout_wallet_type TEXT DEFAULT 'ethereum', wallet_connected_at TIMESTAMPTZ, wallet_last_verified TIMESTAMPTZ)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_tiers (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT, features JSONB NOT NULL DEFAULT '[]', pricing_model TEXT NOT NULL DEFAULT 'flat', amount_cents INTEGER, currency TEXT DEFAULT 'usd', interval TEXT, is_active BOOLEAN NOT NULL DEFAULT true, stripe_product_id TEXT, stripe_price_id TEXT, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+      console.log('  knowledge.*: 18 tables ready');
+    } catch (e) {
+      console.log('  knowledge.*: init error (non-fatal):', e.message);
+    }
+    // Auto-create agent schema tables
+    try {
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, display_name TEXT, role TEXT, status TEXT DEFAULT 'idle', current_workload INTEGER DEFAULT 0, trust_score NUMERIC DEFAULT 50, trust_band TEXT DEFAULT 'Standard', lifecycle_status TEXT DEFAULT 'active', cac_tier TEXT DEFAULT 'explorer', did TEXT, description TEXT, greeting TEXT, color TEXT, agent_type TEXT DEFAULT 'constitutional', agent_subtype TEXT, operator_did TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, name TEXT, role TEXT, description TEXT, capabilities TEXT[] DEFAULT '{}', status TEXT DEFAULT 'active', metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_registry (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', version TEXT, endpoint TEXT, capabilities JSONB DEFAULT '{}', registered_at TIMESTAMPTZ DEFAULT now(), last_seen_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_skills (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, skill_name TEXT, skill_level TEXT DEFAULT 'beginner', description TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_tasks (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, title TEXT, description TEXT, status TEXT DEFAULT 'pending', priority INTEGER DEFAULT 3, category TEXT, assigned_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, result JSONB, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_memory (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, memory_type TEXT, content TEXT, context TEXT, importance NUMERIC DEFAULT 0.5, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), expires_at TIMESTAMPTZ)`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_conversations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, session_id TEXT, message TEXT, response TEXT, model_used TEXT, tokens_used INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, channel TEXT, message_type TEXT, content TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_activities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, activity_type TEXT, description TEXT, status TEXT DEFAULT 'completed', started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_certifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, certification_type TEXT, issuer TEXT, valid_from TIMESTAMPTZ, valid_until TIMESTAMPTZ, status TEXT DEFAULT 'active', metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_performance_metrics (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, metric_name TEXT, metric_value NUMERIC, unit TEXT, recorded_at TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_performance_reviews (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, reviewer TEXT, rating INTEGER, feedback TEXT, strengths TEXT[] DEFAULT '{}', improvements TEXT[] DEFAULT '{}', review_date TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}')`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_relationships (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source_agent_id TEXT, target_agent_id TEXT, relationship_type TEXT, strength NUMERIC DEFAULT 1.0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_security_flags (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, flag_type TEXT, severity TEXT DEFAULT 'low', description TEXT, resolved BOOLEAN DEFAULT false, resolved_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
+      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.generated_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, role TEXT, description TEXT, configuration JSONB DEFAULT '{}', status TEXT DEFAULT 'draft', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+      console.log('  agent.*: 15 tables ready');
+    } catch (e) {
+      console.log('  agent.*: init error (non-fatal):', e.message);
+    }
   } else {
     console.log('  LocalDB:  disabled (LOCAL_DB_MODE=false) — using cloud Supabase');
   }
@@ -10273,7 +11011,9 @@ app.post('/resend/31harbor/inbox/read', (req, res) => {
 // ── Cron Status Endpoint ──
 app.get('/cron/status', (req, res) => {
   const statePath = join(__dirname, '..', 'relay-data', 'cron-engine-v2-state.json');
+  const jobsPath = join(__dirname, '..', 'relay-data', 'cron-jobs.json');
   try {
+    const result = { status: 'starting', note: 'Cron engine initializing...' };
     if (existsSync(statePath)) {
       const state = JSON.parse(readFileSync(statePath, 'utf8'));
       // Convert minute timestamps to milliseconds for agent consumption
@@ -10284,12 +11024,25 @@ app.get('/cron/status', (req, res) => {
           }
         }
       }
-      state.status = 'running';
-      state.relay_uptime = process.uptime();
-      res.json(state);
-    } else {
-      res.json({ status: 'starting', note: 'Cron engine initializing...' });
+      Object.assign(result, state);
+      result.status = 'running';
+      result.relay_uptime = process.uptime();
     }
+    // Enrich with job counts from cron-jobs.json
+    if (existsSync(jobsPath)) {
+      const jobs = JSON.parse(readFileSync(jobsPath, 'utf8'));
+      result.totalJobs = Array.isArray(jobs) ? jobs.length : 0;
+      result.totalExecutions = result.lastRun ? Object.keys(result.lastRun).length : 0;
+      result.totalErrors = 0;
+      const now = Date.now();
+      result.recentJobs = result.lastRun
+        ? Object.values(result.lastRun).filter(ts => now - ts < 3600000).length
+        : 0;
+      result.staleJobs = result.lastRun
+        ? Object.values(result.lastRun).filter(ts => now - ts > 86400000).length
+        : 0;
+    }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -10622,6 +11375,9 @@ app.get('/api/obsidian-graph', async (req, res) => {
 // ── Suite Dashboard API (31 Harbor multi-tenant app) ────────────────
 registerSuiteRoutes(app);
 
+// ── PFP Bookings API (Party Favor Photo management platform) ────────
+registerPfpRoutes(app);
+
 // ── CuttlefishClaws Protocol Engines (TG-001, SS-001, SGQ-001, AR-001) ──
 // Wires the real governance engines into the relay's API surface.
 // This replaces the mock data with live computed scores.
@@ -10659,6 +11415,211 @@ app.get('/api/cuttlefishclaws/trust-network', async (req, res) => {
   } catch (e) {
     res.json({ agents: [], nodes: [], count: 0, error: e.message });
   }
+});
+
+// ── TrustGraph Trajectory (time-series for line chart) ──
+app.get('/api/trustgraph/trajectory', async (req, res) => {
+  trackRequest('/api/trustgraph/trajectory');
+  try {
+    const result = await queryLocalPg(
+      `SELECT agent_did, event_type, delta, score_after, reference, note, domain, created_at
+       FROM app.cuttlefish_trust_events
+       ORDER BY created_at ASC`
+    );
+    // Merge DIDs that represent the same agent into a single series
+    // Map: known DID patterns → canonical agent name
+    const didToAgent = {};
+    // First pass: collect all DIDs and their agent names from cuttlefish_agents
+    const nameRows = await queryLocalPg(
+      `SELECT did, name, cac_tier FROM app.cuttlefish_agents WHERE name IS NOT NULL AND name != ''`
+    );
+    const agentTiers = {};
+    for (const row of nameRows.rows) {
+      didToAgent[row.did] = row.name.toLowerCase();
+      agentTiers[row.did] = row.cac_tier || 'explorer';
+    }
+    // Also map simple agent names used in fleet chat
+    const simpleNames = ['vex','eliza','alice','hermes','arch','trib','builder','sovereign','trustgraph','dao','global-communicator','hermes-agent','alice-sidecar','fleet-cq','test-agent'];
+    for (const name of simpleNames) {
+      didToAgent[name] = name;
+    }
+    // Map known DIDs that aren't in the agents table to their canonical names.
+    // Canonical names use the no-space form so they match simpleNames[] and
+    // the FLEET_AGENTS map. The trajectory chart label slicer trims
+    // gracefully either way.
+    const didOverrides = {
+      'did:key:eliza-cloud-001': 'eliza',
+      'did:key:vex-relay-001': 'vex',
+      'did:key:alice-memory-001': 'alice',
+      'did:key:hermes-comms-001': 'hermes',
+      'Eliza (Quartermaster)': 'eliza',
+      'Vex (Captain, HMS Speedy)': 'vex',
+      'alice-sidecar': 'alice',
+      'did:xmrt:eliza': 'eliza',
+      'did:xmrt:vex': 'vex',
+      'did:xmrt:alice': 'alice',
+      'did:xmrt:hermes': 'hermes',
+      'did:xmrt:kimi-ai-agent': 'kimi',
+      'did:xmrt:xmrt-aidy': 'xmrt-aidy',
+      'did:xmrt:hermes-agent': 'hermes-agent',
+      'did:ethr:arch-v1': 'arch',
+      'did:ethr:trib-v3': 'trib',
+      'did:ethr:global-communicator-v1': 'global-communicator',
+      'did:ethr:builder-v1': 'builder',
+      'did:ethr:sovereign-v1': 'sovereign',
+      'did:ethr:dao-gov-v1': 'dao',
+      'did:ethr:trustgraph-v1': 'trustgraph',
+      'did:ethr:test-agent-v1': 'test-agent',
+      'did:cuttlefish:rocky-cuttlefish': 'rocky (cuttlefish labs)',
+      'did:university:test-agent-hermes': 'test agent hermes',
+      'did:university:test-grad-flow': 'test graduate flow',
+      'did:test:fix-verification-agent': 'fix-verification-agent',
+    };
+    for (const [did, name] of Object.entries(didOverrides)) {
+      didToAgent[did] = name;
+    }
+
+    // Group events by canonical agent name
+    const agentEvents = {};
+    for (const row of result.rows) {
+      const rawDid = row.agent_did;
+      const canon = (didToAgent[rawDid] || rawDid).toLowerCase();
+      if (!agentEvents[canon]) agentEvents[canon] = [];
+      agentEvents[canon].push({
+        event_type: row.event_type,
+        delta: row.delta !== null && row.delta !== undefined ? parseFloat(row.delta) : null,
+        score_after: row.score_after !== null && row.score_after !== undefined ? parseFloat(row.score_after) : null,
+        created_at: row.created_at,
+        note: row.note,
+        reference: row.reference,
+        domain: row.domain,
+      });
+    }
+
+    // Use the actual trustgraph engine to compute scores at each event timestamp
+    const { computeScore } = await import('./lib/trustgraph-engine.mjs');
+    const series = {};
+    for (const [canon, events] of Object.entries(agentEvents)) {
+      // Determine tier: look up from any DID that maps to this agent
+      let tier = 'explorer';
+      for (const [did, name] of Object.entries(didToAgent)) {
+        if (name === canon && agentTiers[did]) {
+          tier = agentTiers[did];
+          break;
+        }
+      }
+      // Compute score at each event timestamp
+      const pts = [];
+      for (let i = 0; i < events.length; i++) {
+        const asOf = new Date(events[i].created_at);
+        // Replay all events up to and including this one
+        const upTo = events.slice(0, i + 1);
+        const result = computeScore(upTo, tier, asOf);
+        pts.push({
+          t: events[i].created_at,
+          score: result.score,
+          delta: events[i].delta || 0,
+          event: events[i].event_type,
+          note: (events[i].note || '').slice(0, 200),
+          ref: (events[i].reference || '').slice(0, 200),
+          domain: events[i].domain || null,
+        });
+      }
+      if (pts.length > 0) {
+        series[canon] = pts;
+      }
+    }
+
+    res.json({ series, totalEvents: result.rows.length });
+  } catch (e) {
+    res.json({ series: {}, totalEvents: 0, error: e.message });
+  }
+});
+
+// POST /api/trustgraph/event — write a trust event for an agent
+app.post('/api/trustgraph/event', express.json(), async (req, res) => {
+  trackRequest('POST /api/trustgraph/event');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { agent_did, event_type, delta, note, reference, domain } = req.body || {};
+  if (!agent_did || !event_type) {
+    return res.status(400).json({ error: 'agent_did and event_type are required' });
+  }
+  try {
+    const result = await queryLocalPg(
+      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, note, reference, domain, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id`,
+      [agent_did, event_type, delta || 0, note || '', reference || '', domain || null]
+    );
+    res.json({ success: true, id: result.rows[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/migrate/copy-data — copy data from public to new domain schemas
+app.post('/api/migrate/copy-data', async (req, res) => {
+  trackRequest('POST /api/migrate/copy-data');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const results = {};
+    // knowledge schema — explicit column lists matching public schema
+    const knowledgeMaps = {
+      'knowledge_entities': { src: 'knowledge.knowledge_entities', cols: ['id','entity_name','entity_type','description','content','type','confidence_score','tags','metadata','created_at','updated_at','user_id'] },
+      'shared_context': { src: 'knowledge.shared_context', cols: ['id','context_key','context_type','value','description','tags','last_updated_by','created_at','updated_at'] },
+      'memories': { src: 'knowledge.memories', cols: ['id','agent_id','kind','content','metadata','importance','embedding','created_at','updated_at'] },
+      'memory_contexts': { src: 'knowledge.memory_contexts', cols: ['id','user_id','session_id','content','context_type','importance_score','metadata','embedding','timestamp','created_at','updated_at'] },
+      'conversation_sessions': { src: 'knowledge.conversation_sessions', cols: ['id','title','user_id','agent_id','channel','status','started_at','ended_at','message_count','metadata','created_at','updated_at','lead_score','acquisition_stage'] },
+      'conversation_messages': { src: 'knowledge.conversation_messages', cols: ['id','session_id','message_type','content','metadata','timestamp','created_at'] },
+      'conversation_memory': { src: 'knowledge.conversation_memory', cols: ['id','session_id','conversation_data','created_at','updated_at','messages','metadata','summary','tool_results','self_aware','preferences_applied','summary_method','ai_summary_tokens','memory_version','context_score','retention_priority','tool_analysis','updated_at_hour','ip_address','user_id'] },
+      'conversation_summaries': { src: 'knowledge.conversation_summaries', cols: ['id','session_id','summary_text','message_count','start_message_id','end_message_id','created_at','updated_at','metadata','summary','key_topics','self_aware','sentiment_score','sentiment_label','sentiment','summary_method','ai_model_used','summary_tokens','confidence_score','key_entities','action_items','decisions_made','ip_address','user_id','ai_summary_tokens'] },
+      'conversation_context': { src: 'knowledge.conversation_context', cols: ['id','session_id','user_id','current_question','assistant_response','user_response','timestamp','metadata','context_type','ip_address'] },
+      'recent_conversation_messages': { src: 'knowledge.recent_conversation_messages', cols: ['id','conversation_id','sender_id','sender_name','body','metadata','created_at'] },
+      'context_session_snapshots': { src: 'knowledge.context_session_snapshots', cols: ['id','session_id','user_id','context_name','source','inference_confidence','signals','created_at','updated_at','captured_at','active_context','metadata'] },
+      'long_term_memory_packs': { src: 'knowledge.long_term_memory_packs', cols: ['id','theme','summary','created_at'] },
+      'learning_models': { src: 'knowledge.learning_models', cols: ['model_id','model_type','state','updated_at'] },
+      'learning_patterns': { src: 'knowledge.learning_patterns', cols: ['id','pattern_type','pattern_data','confidence_score','usage_count','last_used'] },
+      'learning_sessions': { src: 'knowledge.learning_sessions', cols: ['id','agent_id','session_type','started_at','ended_at','insights','memories_consolidated','metadata','created_at','status'] },
+      'user_context_profiles': { src: 'knowledge.user_context_profiles', cols: ['user_id','default_context','allowed_contexts','context_preferences','created_at','updated_at','is_active','priority'] },
+      'user_preferences': { src: 'knowledge.user_preferences', cols: ['id','user_id','workspace_state','pinned_tasks','pinned_agents','column_order','filters','created_at','updated_at'] },
+      'user_profiles': { src: 'knowledge.user_profiles', cols: ['id','ip_address','total_xmrt_earned','total_time_online_seconds','last_reward_at','device_ids','created_at','updated_at','metadata','payout_wallet_address','payout_wallet_type','wallet_connected_at','wallet_last_verified'] },
+      'user_tiers': { src: 'knowledge.user_tiers', cols: ['id','slug','name','description','features','pricing_model','amount_cents','currency','interval','is_active','stripe_product_id','stripe_price_id','metadata','created_at','updated_at'] },
+    };
+    for (const [dst, cfg] of Object.entries(knowledgeMaps)) {
+      try {
+        const colList = cfg.cols.join(', ');
+        const r = await queryLocalPg(`INSERT INTO knowledge.${dst} (${colList}) SELECT ${colList} FROM ${cfg.src} ON CONFLICT DO NOTHING`);
+        results[`knowledge.${dst}`] = { rows: r.rowCount || 0 };
+      } catch (e) {
+        results[`knowledge.${dst}`] = { error: e.message.slice(0, 120) };
+      }
+    }
+    // agent schema
+    const agentMaps = {
+      'agents': { src: 'agent.agents', cols: ['id','name','display_name','role','status','current_workload','trust_score','trust_band','lifecycle_status','cac_tier','did','description','greeting','color','agent_type','agent_subtype','operator_did','metadata','created_at','updated_at'] },
+      'agent_profiles': { src: 'agent.agent_profiles', cols: ['id','agent_id','name','role','description','capabilities','status','metadata','created_at','updated_at'] },
+      'agent_registry': { src: 'agent.agent_registry', cols: ['id','agent_id','agent_name','agent_type','status','version','endpoint','capabilities','registered_at','last_seen_at','metadata'] },
+      'agent_skills': { src: 'agent.agent_skills', cols: ['id','agent_id','skill_name','skill_level','description','metadata','created_at','updated_at'] },
+      'agent_tasks': { src: 'agent.agent_tasks', cols: ['id','agent_id','title','description','status','priority','category','assigned_at','completed_at','result','metadata','created_at','updated_at'] },
+      'agent_memory': { src: 'agent.agent_memory', cols: ['id','agent_id','memory_type','content','context','importance','metadata','created_at','expires_at'] },
+      'agent_conversations': { src: 'agent.agent_conversations', cols: ['id','agent_id','session_id','message','response','model_used','tokens_used','metadata','created_at'] },
+      'agent_messages': { src: 'agent.agent_messages', cols: ['id','agent_id','channel','message_type','content','metadata','created_at'] },
+      'agent_activities': { src: 'agent.agent_activities', cols: ['id','agent_id','activity_type','description','status','started_at','completed_at','metadata','created_at'] },
+      'agent_certifications': { src: 'agent.agent_certifications', cols: ['id','agent_id','certification_type','issuer','valid_from','valid_until','status','metadata','created_at'] },
+      'agent_performance_metrics': { src: 'agent.agent_performance_metrics', cols: ['id','agent_id','metric_name','metric_value','unit','recorded_at','metadata'] },
+      'agent_performance_reviews': { src: 'agent.agent_performance_reviews', cols: ['id','agent_id','reviewer','rating','feedback','strengths','improvements','review_date','metadata'] },
+      'agent_relationships': { src: 'agent.agent_relationships', cols: ['id','source_agent_id','target_agent_id','relationship_type','strength','metadata','created_at'] },
+      'agent_security_flags': { src: 'agent.agent_security_flags', cols: ['id','agent_id','flag_type','severity','description','resolved','resolved_at','metadata','created_at'] },
+      'generated_agents': { src: 'agent.generated_agents', cols: ['id','name','role','description','configuration','status','created_at','updated_at'] },
+    };
+    for (const [dst, cfg] of Object.entries(agentMaps)) {
+      try {
+        const colList = cfg.cols.join(', ');
+        const r = await queryLocalPg(`INSERT INTO agent.${dst} (${colList}) SELECT ${colList} FROM ${cfg.src} ON CONFLICT DO NOTHING`);
+        results[`agent.${dst}`] = { rows: r.rowCount || 0 };
+      } catch (e) {
+        results[`agent.${dst}`] = { error: e.message.slice(0, 120) };
+      }
+    }
+    res.json({ results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Activity Log ──
