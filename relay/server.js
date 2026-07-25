@@ -5982,8 +5982,8 @@ function getToolDescription(name) {
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
     'github-post': 'Post a comment on a GitHub issue',
-    'vex-vision': 'Vision tool for any agent. Capture a webcam image, screenshot, local image file, or image URL, then describe it with the kimi-k2.6:cloud vision model. Args: prompt (optional), model (optional, default kimi-k2.6:cloud), file (local path), url (image URL), screen:true (screenshot). Uses the Ollama cloud → OpenRouter → local-moondream fallback chain.',
-    'vex-vision-screenshots': 'Vision over historical Windows screenshots. Reads the %USERPROFILE%\\Pictures\\Screenshots folder, describes the latest (or a specific) screenshot(s) with kimi-k2.6:cloud. Args: prompt (optional), model (optional), limit (default 5, max 20), filename (optional specific file). Useful for reviewing what was on screen at a past point in time.',
+    'vex-vision': 'Vision tool for any agent. Capture a screenshot (screen:true), webcam image (default), local image file (file:"/path"), or image URL (url:"https://..."), then describe it with the cloud vision model. Model default: kimi-k2.6:cloud (no local models on this 6GB laptop). Fallback: OpenRouter. Best for: "what is on screen right now?", "describe this image". Output: plain text description of the image contents.',
+    'vex-vision-screenshots': 'Read historical Windows screenshots from %USERPROFILE%\\Pictures\\Screenshots. Returns descriptions of the latest N screenshots (limit, default 5). Optionally filter to a specific filename. Uses kimi-k2.6:cloud via OpenRouter (no local models). Best for: "what was on screen yesterday?", "find the screenshot from last week with the error message".',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
@@ -8711,7 +8711,7 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
   
   // Wait for routing if it's quick, otherwise return immediately
-  const timeout = new Promise(r => setTimeout(r, 60000));
+  const timeout = new Promise(r => setTimeout(r, 180000));
   const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
   
   res.json({
