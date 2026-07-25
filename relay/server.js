@@ -1734,7 +1734,7 @@ const toolHandlers = {
         images: [imgBase64],
         temperature: 0.3,
         maxTokens: 512,
-        timeout: 90000,
+        timeout: 180000,  // 3 min — moondream local model has ~2 min cold start on first load
       });
       if (visionResult.error) {
         return { success: false, error: `Vision model failed: ${visionResult.error}`, model, source: sourceLabel };
@@ -1803,7 +1803,7 @@ const toolHandlers = {
             images: [imgBase64],
             temperature: 0.3,
             maxTokens: 512,
-            timeout: 90000,
+            timeout: 180000,  // 3 min — moondream ~2 min cold start on first load
           });
           results.push({
             filename: file.name,
@@ -10419,8 +10419,31 @@ app.listen(PORT, '0.0.0.0', async () => {
     '  Handlers: ' + handlersCount + ' task handlers\n' +
     '  State keys: ' + state.keys().length + '\n');
   logActivity('system', '-', 'STARTUP', 'Relay v2 listening on port ' + PORT);
-  
-  // ── Start Local Cron Engine ──
+
+    // ── Pre-warm local vision model ─────────────────────────
+    // moondream is a 1.7GB local model that takes ~2 min to load on
+    // first inference. Fire a dummy call at startup so the first
+    // real vision request doesn't hit a cold-start timeout.
+    if (OLLAMA_HOST && !(process.env.VEX_VISION_MODEL || '').includes(':cloud')) {
+      (async () => {
+        try {
+          console.log('  Vision:  pre-warming moondream...');
+          const start = Date.now();
+          await toolHandlers['vex-vision']({
+            file: 'C:\\Users\\PureTrek\\Pictures\\Screenshots\\Screenshot (1).png',
+            prompt: 'warmup',
+            model: 'moondream',
+          });
+          console.log('  Vision:  moondream warm in', Math.round((Date.now()-start)/1000), 's');
+        } catch (e) {
+          console.log('  Vision:  warm-up skipped (' + (e.message || '').slice(0, 60) + ')');
+        }
+      })();
+    } else {
+      console.log('  Vision:  cloud model (' + (process.env.VEX_VISION_MODEL || 'kimi-k2.6:cloud') + ') — no warm-up needed');
+    }
+
+    // ── Start Local Cron Engine ──
   // 2026-06-07: The old cron-engine.mjs used `psql -U postgres` and
   // `cmd.exe` spawns that hung waiting for a password. The
   // `pg/bin/` path it references doesn't exist on this machine
