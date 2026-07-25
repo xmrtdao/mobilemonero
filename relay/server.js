@@ -1866,12 +1866,17 @@ const toolHandlers = {
           });
         }
       }
-      const stdout = execSync('"' + pyPath + '" -c ' + JSON.stringify(code), {
+      // Write code to temp file to avoid shell escaping issues with triple quotes
+      const tmpFile = join(DATA_DIR, 'py-exec-' + Date.now() + '.py');
+      writeFileSync(tmpFile, code, 'utf8');
+      const stdout = execSync('"' + pyPath + '" "' + tmpFile + '"', {
         timeout: timeout * 1000,
         maxBuffer: 512 * 1024,
         windowsHide: true,
         encoding: 'utf8',
       });
+      // Clean up temp file
+      try { unlinkSync(tmpFile); } catch {}
       return {
         success: true,
         output: stdout.slice(0, 10000),
@@ -2323,6 +2328,18 @@ const app = express();
 app.use(express.json({ limit: '5mb' }));
 const _require = createRequire(import.meta.url);
 app.use(_require('cookie-parser')());
+
+// ── Global CORS Middleware ──
+// Must run before auth middleware so OPTIONS preflight requests pass through.
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, x-agent-id, x-agent, Authorization, Cf-Access-Jwt-Assertion, Cf-Access-Client-Id, Cf-Access-Client-Secret');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
 
 // ── Cloudflare Access JWT Verification Middleware ─────────
 // Validates Cf-Access-Jwt-Assertion header against Cloudflare's JWKS.
@@ -3249,8 +3266,8 @@ app.get('/health', (req, res) => {
     status: 'ok',
     uptime: process.uptime(),
     port: PORT,
-    agent: 'Hermes Agent',
-    version: '8.0.0',
+    agent: 'XMRT-DAO Relay Server',
+    version: '8.5.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -3525,26 +3542,8 @@ app.get('/api/supervisor/status', async (req, res) => {
           }
         }
       } else {
-        // No-port services: live process lookup by script name
-        const scriptArg = { 'tunnel': 'cloudflared.exe', 'alice': 'alice.mjs', 'cron-engine-v2': 'cron-engine-v2.mjs', 'campaign-scheduler': 'campaign-scheduler.mjs', '31harbor-scheduler': '31harbor-scheduler.mjs' }[def.name];
-        if (scriptArg) {
-          try {
-            let pid = null;
-            if (scriptArg.endsWith('.exe')) {
-              const { execSync } = require('child_process');
-              const out = execSync(`tasklist /NH /FO CSV /FI "IMAGENAME eq ${scriptArg}"`, { stdio: ['pipe', 'pipe', 'ignore'], timeout: 3000, windowsHide: true, encoding: 'utf8' });
-              pid = out.trim().length > 0 ? 1 : 0;  // any line = running
-            } else {
-              const { execSync } = require('child_process');
-              const out = execSync(`wmic process where "name='node.exe' and commandline like '%${scriptArg}%'" get processid /format:csv`, { stdio: ['pipe', 'pipe', 'ignore'], timeout: 5000, windowsHide: true, encoding: 'utf8' });
-              // Match rows where the second csv column is numeric (skip "Node,ProcessId" header)
-              const dataRows = out.trim().split('\n').filter(l => /,\d+\s*$/.test(l));
-              pid = dataRows.length > 0 ? parseInt(dataRows[0].split(',').pop().trim(), 10) : null;
-            }
-            if (pid) healthy = true;
-          } catch {}
-        }
-        if (!healthy && svcState.childPid && isProcessRunningByPid(svcState.childPid)) healthy = true;
+        // No-port services: check state file childPid only (avoids execSync blocking)
+        healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
       }
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
@@ -4010,7 +4009,7 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v8.0.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v8.5.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
@@ -5388,6 +5387,54 @@ app.all(['/ai-chat', '/ai-chat/*path'], async (req, res) => {
   await proxyToRuntime(req, res, `/functions/v1/ai-chat${tail}`);
 });
 
+// ── Suite Dashboard Chat History ────────────────────────────
+// WorkspaceChatService.ts calls these to persist conversation across turns.
+// Each user gets their own message history keyed by auth token.
+app.get('/api/chat/history', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '') || '';
+    if (!token) return res.json({ ok: false, error: 'no auth', messages: [] });
+    const limit = Math.min(parseInt(req.query.limit) || 200, 500);
+    const offset = parseInt(req.query.offset) || 0;
+    const rows = await queryLocalPg(
+      'SELECT id, content, sender, metadata, created_at FROM app.chat_messages WHERE token = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3',
+      [token, limit, offset]
+    );
+    res.json({ ok: true, messages: (rows.rows || []).map(r => ({
+      id: r.id + '',
+      content: r.content,
+      sender: r.sender,
+      timestamp: r.created_at,
+      metadata: r.metadata || null,
+    })) });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, messages: [] });
+  }
+});
+
+app.post('/api/chat/message', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '') || '';
+    if (!token) return res.status(401).json({ ok: false, error: 'no auth' });
+    const { content, sender, metadata } = req.body || {};
+    if (!content || !sender) return res.status(400).json({ ok: false, error: 'content and sender required' });
+    const r = await queryLocalPg(
+      'INSERT INTO app.chat_messages (token, content, sender, metadata) VALUES ($1,$2,$3,$4) RETURNING id, created_at',
+      [token, content, sender, metadata || null]
+    );
+    const row = r.rows[0];
+    res.json({ ok: true, message: {
+      id: row.id + '',
+      content,
+      sender,
+      timestamp: row.created_at,
+      metadata: metadata || null,
+    } });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Local runtime health (combined: relay + embedded PG + edge runtime)
 app.get('/local-runtime/health', async (req, res) => {
   const out = { relay: 'up', ts: Date.now() };
@@ -5915,7 +5962,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '8.0.0',
+      version: '8.5.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -5933,7 +5980,7 @@ app.get('/api/fleet', async (req, res) => {
 app.get('/status', (req, res) => {
   trackRequest('/status');
   res.json({
-    agent: 'Hermes Agent',
+    agent: 'XMRT-DAO Relay Server',
     host: osHostname(),
     uptime: process.uptime(),
     port: PORT,
