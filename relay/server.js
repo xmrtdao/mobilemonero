@@ -7132,14 +7132,17 @@ async function gatherFleetContext() {
     system: sysSummary,
     chatRuntime: {
       provider: 'Ollama Pro cloud (ollama.com/v1/chat/completions)',
-      model: 'minimax/minimax-m3',
-      note: 'This is what powers YOUR chat replies. The local :11434 model list below is just what is installed locally — chat does NOT run on local models (no gemma/mistral for chat). Canonical stores: shared context = public.shared_context (32 keys), fleet memory = fleet.fleet_memory (public.fleet_memory is a view).',
+      model: 'deepseek-v4-flash:cloud',
+      visionModel: 'kimi-k2.6:cloud (for images only — use vex-vision tool)',
+      note: 'heavy-lift chat uses deepseek-v4-flash:cloud (cheap/fast). Vision uses kimi-k2.6:cloud. No local models used — this 6GB laptop cannot run inference.',
     },
     ollama: {
       status: ollama?.status,
-      modelCount: Array.isArray(ollama?.models) ? ollama.models.length : null,
-      models: Array.isArray(ollama?.models) ? ollama.models.slice(0, 8) : null,
+      modelCount: 0,  // local models exist on disk but are NOT usable on this 6GB laptop
+      models: null,   // removed from grounding to prevent agents from trying local models
       latencyMs: ollama?.latency,
+      chatModel: 'minimax/minimax-m3 (via OpenRouter, cloud-only)',
+      visionModel: 'kimi-k2.6:cloud (via OpenRouter, cloud-only)',
     },
     supervisor: supervisor && !supervisor.error ? (() => {
       // services is an ARRAY from /api/supervisor/status, not an object
@@ -7948,7 +7951,9 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 - \`state-get\` — Read a value from persistent state. Args: key.
 - \`state-set\` — Write a value to persistent state. Args: key, value.
 - \`agent-profile\` — Read agent profiles from the database. Args: agent_id or list all.
-- \`knowledge-sync\` — Sync local knowledge base.
+|- \`knowledge-sync\` — Sync local knowledge base.
+|- \`vex-vision\` — **Vision tool.** Capture a screenshot (screen:true) or describe an image file/URL. Returns plain text description. Cloud-only — kimi-k2.6:cloud via OpenRouter. No local models on this 6GB laptop.
+|- \`vex-vision-screenshots\` — **Historical screenshots.** Read and describe recent screenshots from Windows Pictures/Screenshots folder. Args: limit (default 5), filename (optional specific file).
 For ALL tools and their descriptions, check the \`tools\` array in the JSON grounding block.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):

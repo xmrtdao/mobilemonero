@@ -112,7 +112,7 @@ async function tryOllamaCloud(messages, model, signal) {
   return res.json();
 }
 
-/** Try OpenRouter with minimax-m3 */
+/** Try OpenRouter with deepseek-v4-flash as fallback */
 async function tryOpenRouter(messages, signal) {
   const key = getOpenRouterKey();
   if (!key) throw new Error('No OPENROUTER_API_KEY configured');
@@ -124,7 +124,7 @@ async function tryOpenRouter(messages, signal) {
       'HTTP-Referer': 'https://relay.mobilemonero.com',
     },
     body: JSON.stringify({
-      model: 'minimax/minimax-m3',
+      model: 'deepseek/deepseek-v4-flash',
       messages: imagesToOpenAI(messages),
       stream: false,
       max_tokens: 4096,
