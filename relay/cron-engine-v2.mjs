@@ -28,7 +28,10 @@ const { Client, Pool } = pg;
 // competed with server.js's pool (max 5) and localDb.mjs's pool (max 5).
 // Consolidated July 17, 2026.
 import { getPool as getSharedPool, query as dbQuery } from './lib/db.mjs';
-const pool = getSharedPool();
+// NOTE: Do NOT capture the pool at import time — getSharedPool() returns
+// the current _pool reference, but the health check in db.mjs may replace
+// it (calling oldPool.end()) after 3 consecutive failures. Always call
+// getSharedPool() right before use to get the live pool reference.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', 'relay-data');
@@ -85,8 +88,24 @@ function parseCron(expr) {
   };
 }
 
+// ── DB Activity Logger ──────────────────────────────────
+// Logs to the relay's activity feed table so the Ships Log
+// shows cron executions and edge function calls.
+async function logToDb(activityType, title, status, description, metadata = {}, agentId = null) {
+  try {
+    const pool = getSharedPool();
+    await pool.query(
+      `INSERT INTO public.eliza_activity_log (activity_type, title, description, status, agent_id, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [activityType, title || activityType, description || '', status || 'info', agentId || 'cron', JSON.stringify(metadata)]
+    );
+  } catch (e) {
+    // Silently fail — logging is best-effort
+  }
+}
+
 async function loadJobsFromPg() {
-  const c = await pool.connect();
+  const c = await getSharedPool().connect();
   try {
     // The supabase schema has cron jobs in cron.job (pg_cron). The
     // local PG might or might not have pg_cron installed; if not,
@@ -127,7 +146,7 @@ async function loadJobsFromPg() {
 }
 
 async function runSql(sql) {
-  const c = await pool.connect();
+  const c = await getSharedPool().connect();
   try {
     const r = await c.query(sql);
     return { ok: true, rows: r.rowCount };
@@ -358,8 +377,24 @@ async function tick() {
     state.lastRun[job.id] = thisMin;
     if (res.ok) {
       log(`[${job.id}] OK (${res.rows ?? res.status ?? '?'} rows/ms)`);
+      logToDb(
+        job.type === 'sql' ? 'cron_execution' : 'edge_function',
+        `${job.name || job.fn || `job-${job.id}`}`,
+        `completed`,
+        `${job.type}: ${job.name || job.fn || job.command?.slice(0, 80)}`,
+        { jobId: job.id, rows: res.rows, status: res.status },
+        'cron'
+      );
     } else {
       log(`[${job.id}] FAIL: ${res.error}`, 'WARN');
+      logToDb(
+        job.type === 'sql' ? 'cron_execution' : 'edge_function',
+        `${job.name || job.fn || `job-${job.id}`}`,
+        `failed`,
+        `Error: ${(res.error || '').slice(0, 200)}`,
+        { jobId: job.id, error: res.error },
+        'cron'
+      );
     }
   }
   saveState(state);
