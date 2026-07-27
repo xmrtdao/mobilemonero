@@ -14,7 +14,7 @@
  */
 
 import { spawn, execSync } from 'node:child_process';
-import { existsSync, writeFileSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, appendFileSync, statSync, openSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -47,10 +47,23 @@ const SERVICE_DEFS = [
     cmd: 'node',
     args: ['--max-old-space-size=512', 'relay/server.js'],
     cwd: ROOT,
-    healthUrl: 'http://127.0.0.1:8080/health',
-    healthCheck: (body) => body && body.status === 'ok',
-    startupGraceMs: 8000,
-    dependsOn: ['pg', 'local-sb'],
+    tcpPort: 8080,
+    startupGraceMs: 60000,
+    maxFailures: 2,
+    dependsOn: ['pg', 'local-sb', 'health-server'],
+  },
+  {
+    name: 'health-server',
+    cmd: 'node',
+    args: ['relay/health-server.mjs'],
+    cwd: ROOT,
+    healthUrl: 'http://127.0.0.1:8088/ping',
+    healthCheck: (body) => {
+      try { const d = JSON.parse(body); return d && d.ok === true; } catch { return false; }
+    },
+    startupGraceMs: 3000,
+    maxFailures: 3,
+    dependsOn: [],
   },
   {
     name: 'campaign-scheduler',
@@ -101,6 +114,20 @@ const SERVICE_DEFS = [
     healthCheck: () => true,
     startupGraceMs: 10000,
     dependsOn: ['pg'],
+  },
+  {
+    name: 'page-agent-mcp',
+    // Alibaba Page Agent — JavaScript in-page GUI agent for natural language web control.
+    // Provides MCP stdio server on port 38401 (hub) for browser automation.
+    // Used for dashboard observation, E2E testing, and fleet chat interaction.
+    // Chrome extension at ~/Desktop/page-agent-extension connects to localhost:38401.
+    cmd: 'C:\\Program Files\\nodejs\\node.exe',
+    args: ['C:\\Users\\PureTrek\\Desktop\\page-agent\\packages\\mcp\\src\\index.js'],
+    cwd: 'C:\\Users\\PureTrek\\Desktop\\page-agent\\packages\\mcp',
+    healthUrl: null, // check via process existence (stdio MCP)
+    healthCheck: null,
+    startupGraceMs: 5000,
+    dependsOn: [],
   },
   {
     name: 'pg',
@@ -170,7 +197,7 @@ const SERVICE_DEFS = [
   },
 ];
 
-const START_ORDER = ['pg', 'local-sb', 'vite', 'relay', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'cuttlefish-mcp', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', '31harbor-scheduler'];
+const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'cuttlefish-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', '31harbor-scheduler'];
 
 // ── State ────────────────────────────────────────────────────────────
 const state = {};
@@ -257,8 +284,11 @@ function findProcessByScript(scriptName) {
         `wmic process where "name='node.exe' and commandline like '%${scriptName}%'" get processid /format:csv 2>nul`,
         { stdio: ['pipe', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true }
       );
-      const lines = out.trim().split('\n').filter(l => l.includes(','));
-      return lines.length > 0 ? parseInt(lines[0].split(',')[1]) : null;
+      // Skip the header row ("Node,ProcessId") — only data rows have an integer pid
+      const dataRows = out.trim().split('\n')
+        .filter(l => l.includes(','))
+        .filter(l => /,\d+\s*$/.test(l));
+      return dataRows.length > 0 ? parseInt(dataRows[0].split(',').pop().trim(), 10) : null;
     }
     const out = execSync(`pgrep -f "node.*${scriptName}" 2>/dev/null`, {
       stdio: ['pipe', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8',
@@ -318,6 +348,23 @@ async function findExistingProcess(name) {
     try {
       const alive = await checkHttp(def.healthUrl, 2000);
       if (alive) return -1; // running externally, unknown PID
+      // If health check fails but port is open, kill the stale process
+      if (def.tcpPort || tcpPorts[name]) {
+        const port = def.tcpPort || tcpPorts[name];
+        const portOpen = await checkTcpPort('127.0.0.1', port, 1000);
+        if (portOpen) {
+          log(`${name} port ${port} is open but health check failed — killing stale process`);
+          // Find what's on that port and kill it
+          try {
+            const pids = execSync(`netstat -ano | findstr ":${port} " | findstr LISTENING`, { encoding: 'utf8', timeout: 5000 });
+            const pidMatch = pids.match(/(\d+)\s*$/m);
+            if (pidMatch) {
+              killProcess(parseInt(pidMatch[1]));
+              log(`${name} killed stale pid ${pidMatch[1]} on port ${port}`);
+            }
+          } catch {}
+        }
+      }
     } catch {}
   }
 
@@ -359,12 +406,47 @@ function startService(name) {
   log(`starting ${name}: ${def.cmd} ${def.args.join(' ')}`);
 
   try {
+    // ── Redirect stdio to log files ─────────────────────────────
+    // Pipes ('pipe') fill up the 64KB OS buffer and block the child's event
+    // loop. 'ignore' maps to NUL on Windows which can also block console.log
+    // in detached processes. Redirecting to a file is the only safe option —
+    // files have no buffer limit, writes never block, and we get crash logs.
+    const serviceLogPath = join(LOG_DIR, `${name}.log`);
+    let logFd, errFd;
+    try {
+      // Truncate if > 5MB, otherwise append
+      try {
+        const st = statSync(serviceLogPath);
+        if (st.size > 5 * 1024 * 1024) {
+          logFd = openSync(serviceLogPath, 'w');
+        } else {
+          logFd = openSync(serviceLogPath, 'a');
+        }
+      } catch {
+        logFd = openSync(serviceLogPath, 'w');
+      }
+      errFd = logFd; // stdout + stderr go to same file
+    } catch (e) {
+      log(`Warning: could not open log file for ${name}: ${e.message}`);
+    }
     const child = spawn(def.cmd, def.args, {
       cwd: def.cwd,
       detached: true,
-      stdio: ['ignore', 'ignore', 'ignore'],
+      stdio: ['ignore', logFd || 'ignore', errFd || 'ignore'],
       windowsHide: true,
       env: { ...process.env },
+    });
+    let stderrBuf = '';
+    // Flush on exit — write any captured stderr to the crash log
+    child.on('exit', (code, signal) => {
+      log(`${name} EXIT: code=${code} signal=${signal}`);
+      if (stderrBuf) {
+        log(`${name} STDERR (last 10KB):\n${stderrBuf}`);
+        try {
+          const crashEntry = `[${new Date().toISOString()}] ${name} (pid=${child.pid}) EXIT code=${code} signal=${signal}\n${stderrBuf.slice(-2000)}\n---\n`;
+          appendFileSync('C:/Users/PureTrek/Desktop/xmrtdao/logs/process-crashes.log', crashEntry);
+        } catch (e) { /* best effort */ }
+      }
     });
     child.unref();
     state[name] = {
@@ -421,21 +503,19 @@ async function checkServiceHealth(name) {
   }
 
   // 4. Our child process is alive (for spawned services without HTTP/TCP like schedulers)
-  if (s && s.child) return true;
+  if (s && s.child) {
+    try { process.kill(s.child.pid, 0); return true; } catch {}
+  }
 
-  // 5. For externally adopted services with no HTTP/TCP: check process by name
-  if (s && s.isExternal) {
-    // Use the script name from args to find the process
-    const scriptName = def.args.find(a => a.endsWith('.mjs') || a.endsWith('.js') || a.endsWith('.exe'));
-    if (scriptName) {
-      const pid = findProcessByScript(scriptName.replace(/^.*\//, ''));
-      if (pid) return true;
-    }
-    // For processes like cloudflared.exe, check by binary name
-    if (def.cmd && def.cmd.endsWith('.exe')) {
-      const exeName = def.cmd.split(/[/\\]/).pop();
-      if (findProcessByName(exeName)) return true;
-    }
+  // 5. For services with no HTTP/TCP/child: check process by script name in the live table
+  // This catches cases where the child reference is stale but a healthy instance exists.
+  const scriptName = def.args.find(a => a.endsWith('.mjs') || a.endsWith('.js') || a.endsWith('.exe'));
+  if (scriptName) {
+    if (findProcessByScript(scriptName.replace(/^.*\//, ''))) return true;
+  }
+  if (def.cmd && def.cmd.endsWith('.exe')) {
+    const exeName = def.cmd.split(/[/\\]/).pop();
+    if (findProcessByName(exeName)) return true;
   }
 
   return false;
@@ -511,12 +591,28 @@ async function performHealthCheck(name, def) {
     s.healthy = true;
     s.failures = 0;
   } else {
+    const maxFail = def.maxFailures || 3;
     s.failures = (s.failures || 0) + 1;
-    log(`${name} unhealthy (failure ${s.failures}/3)`);
-    if (s.failures >= 3) {
-      log(`${name} 3 consecutive failures — restarting`);
+    log(`${name} unhealthy (failure ${s.failures}/${maxFail})`);
+    if (s.failures >= maxFail) {
+      log(`${name} ${maxFail} consecutive failures — restarting`);
       // Kill and re-spawn
       if (s.child) killProcess(s.child.pid);
+      // Wait for port to be released before spawning new instance
+      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'cuttlefish-mcp': 3122 };
+      const port = def.tcpPort || tcpPorts[name];
+      if (port) {
+        let waited = 0;
+        while (waited < 10000) {
+          try {
+            const inUse = await checkTcpPort('127.0.0.1', port, 500);
+            if (!inUse) break;
+          } catch {}
+          await new Promise(r => setTimeout(r, 500));
+          waited += 500;
+        }
+        if (waited > 0) log(`${name} waited ${waited}ms for port ${port} to be released`);
+      }
       delete state[name];
       startService(name);
     }
