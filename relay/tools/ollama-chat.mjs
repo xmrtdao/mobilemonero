@@ -11,15 +11,13 @@
 
 const OLLAMA_HOST       = process.env.OLLAMA_HOST       || 'http://localhost:11434';
 const DEFAULT_MODEL     = process.env.OLLAMA_MODEL       || 'deepseek-v4-flash:cloud';
-const OLLAMA_API_KEY    = process.env.OLLAMA_API_KEY    || '';
-const OLLAMA_XMRT_KEY   = process.env.OLLAMA_XMRT_API_KEY || '';
-const OLLAMA_3RD_KEY    = process.env.OLLAMA_3RD_API_KEY  || '';
-// OPENROUTER_API_KEY is read lazily to avoid a module-load-order bug:
+// All API keys are read lazily to avoid a module-load-order bug:
 // server.js imports ollama-chat.mjs BEFORE calling loadEnv(), so env
 // vars set in relay/.env are not yet available at import time.
-function getOpenRouterKey() {
-  return process.env.OPENROUTER_API_KEY || '';
-}
+function getOllamaKey()    { return process.env.OLLAMA_API_KEY    || ''; }
+function getOllamaXmrtKey() { return process.env.OLLAMA_XMRT_API_KEY || ''; }
+function getOllama3rdKey() { return process.env.OLLAMA_3RD_API_KEY  || ''; }
+function getOpenRouterKey() { return process.env.OPENROUTER_API_KEY || ''; }
 
 // ASCII emoticons that small LLMs emit as chatty sign-offs.
 const EMOJI_SIGNOFFS = ['o7', 'O7', '👋', '😊', '🎉', '✨', '👍', '🙏', '😄', '😁'];
@@ -96,9 +94,9 @@ function imagesToOpenAI(messages) {
  * Returns on first success, throws if all fail. */
 async function tryOllamaCloud(messages, model, signal) {
   const keys = [
-    { key: OLLAMA_API_KEY, label: 'primary' },
-    { key: OLLAMA_XMRT_KEY, label: 'xmrt' },
-    { key: OLLAMA_3RD_KEY, label: '3rd' },
+    { key: getOllamaKey(), label: 'primary' },
+    { key: getOllamaXmrtKey(), label: 'xmrt' },
+    { key: getOllama3rdKey(), label: '3rd' },
   ].filter(k => k.key);
   if (keys.length === 0) throw new Error('No OLLAMA_API_KEY configured');
   
@@ -283,7 +281,7 @@ export async function ollamaChat(message, options = {}) {
   let result = null;
 
   // ── 1) Try Ollama Pro Cloud (primary) ─────────────────────
-  if (OLLAMA_API_KEY || OLLAMA_XMRT_KEY) {
+  if (getOllamaKey() || getOllamaXmrtKey()) {
     try {
       const data = await tryOllamaCloud(messages, model, controller.signal);
       result = normalizeResponse(data, model, 'ollama-cloud');
@@ -381,7 +379,7 @@ export async function ollamaGenerate(prompt, options = {}) {
   let result = null;
 
   // ── 1) Try Ollama Pro Cloud via /api/chat with system prompt converted ──
-  if (OLLAMA_API_KEY || OLLAMA_XMRT_KEY) {
+  if (getOllamaKey() || getOllamaXmrtKey()) {
     try {
       const messages = [
         { role: 'system', content: 'You are an AI agent. Be concise, helpful, and do not use emoji sign-offs.' },
