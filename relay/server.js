@@ -1330,7 +1330,7 @@ const toolHandlers = {
 
   'ef:functions-list': async () => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions?category=all`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: '{}',
