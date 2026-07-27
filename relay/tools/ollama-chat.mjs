@@ -121,7 +121,7 @@ async function tryOllamaCloud(messages, model, signal) {
             stream: false,
             max_tokens: 4096,
           });
-      const res = await fetch('https://api.ollama.com/v1/chat/completions', {
+      const res = await fetch('https://ollama.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body,
