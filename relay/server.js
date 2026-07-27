@@ -2697,7 +2697,7 @@ const CF_SERVICE_TOKENS = {
 // ── Rate Limiter ──────────────────────────────────────────
 const rateLimitBuckets = new Map();
 const RATE_LIMIT_WINDOW = 60000;
-const RATE_LIMIT_MAX = 300;
+const RATE_LIMIT_MAX = 600;
 const SEND_EMAIL_RATE_MAX = 10;
 
 function rateLimit(ip, path) {
