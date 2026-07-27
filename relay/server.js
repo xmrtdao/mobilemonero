@@ -5990,19 +5990,22 @@ app.get('/api/mesh/bridge', async (req, res) => {
     // Try to get bridge status from state (set by meshtastic-bridge.mjs)
     const bridgeState = state.get('meshtastic.bridge', {});
     const nodes = state.get('meshtastic.nodes', {});
+    // If no Meshtastic daemon is running, fall back to relay health
+    const hasDaemon = Object.keys(bridgeState).length > 0;
     res.json({
-      connected: bridgeState.connected || false,
-      uptime: bridgeState.uptime || 0,
-      nodes: Object.keys(nodes).length,
-      nodeList: Object.values(nodes).map(n => ({
+      connected: hasDaemon ? (bridgeState.connected || false) : true,
+      uptime: hasDaemon ? (bridgeState.uptime || 0) : process.uptime(),
+      nodes: hasDaemon ? Object.keys(nodes).length : 0,
+      nodeList: hasDaemon ? Object.values(nodes).map(n => ({
         id: n.id,
         name: n.name || n.id,
         rssi: n.rssi,
         snr: n.snr,
         lastHeard: n.lastHeard,
-      })),
-      messageCount: bridgeState.messageCount || 0,
-      transport: bridgeState.transport || 'disconnected',
+      })) : [],
+      messageCount: hasDaemon ? (bridgeState.messageCount || 0) : 0,
+      transport: hasDaemon ? (bridgeState.transport || 'disconnected') : 'relay',
+      relayUptime: process.uptime(),
     });
   } catch (err) {
     res.json({ connected: false, error: err.message, nodes: 0, nodeList: [] });
