@@ -8110,7 +8110,7 @@ async function routeFleetMessage(entry) {
   // Returns the reply entry or null.
   async function routeToLocalOllamaAgent(agentName, agentLabel, personaPrompt, entry, opts = {}) {
     const sessionId = opts.sessionId || (agentName + '-fleet-' + entry.agent);
-    const model = opts.model || 'minimax/minimax-m3';
+    const model = opts.model || 'deepseek-v4-flash:cloud';
     const temperature = opts.temperature != null ? opts.temperature : 0.5;
     const maxTokens = opts.maxTokens || 4096;
     const timeout = opts.timeout || 15000;
@@ -8503,7 +8503,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               message: fullPrompt,
-              model: 'minimax/minimax-m3',
+              model: 'deepseek-v4-flash:cloud',
               temperature: 0.4,
               maxTokens: 1024,
             }),
@@ -8512,7 +8512,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
           if (fbRes.ok) {
             const fbData = await fbRes.json();
             if (fbData?.response && fbData.response.trim().length >= 4) {
-              elizaRes = { reply: fbData.response, model: fbData.model || 'minimax/minimax-m3' };
+              elizaRes = { reply: fbData.response, model: fbData.model || 'deepseek-v4-flash:cloud' };
             }
           }
         } catch (e) {
@@ -8557,7 +8557,7 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 message: synthPrompt,
-                model: 'minimax/minimax-m3',
+                model: 'deepseek-v4-flash:cloud',
                 temperature: 0.4,
                 maxTokens: 1024,
               }),
