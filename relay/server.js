@@ -1330,7 +1330,7 @@ const toolHandlers = {
 
   'ef:functions-list': async () => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions?category=all`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: '{}',
@@ -1355,7 +1355,7 @@ const toolHandlers = {
   // ── More Edge Function Tools (probe-confirmed working) ──
   'ef:functions-catalog': async () => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions?category=all`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: '{}',
