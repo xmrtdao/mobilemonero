@@ -7277,9 +7277,9 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
           // Write trust event for each violation
           try {
             await queryLocalPg(
-              `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, reference, note, domain)
-               VALUES ($1, $2, $3, $4, $5, $6)`,
-              [agent, v.type, v.delta, `Pre-flight: ${v.claim}`, `Corrected: ${v.reality}`, 'fleet-chat']
+              `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, reference, note)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [agent, v.type, v.delta, `Pre-flight: ${v.claim}`, `Corrected: ${v.reality}`]
             );
             // Log to activity feed
             logToDb('tool_execution', `🔍 Pre-flight: ${agent} — ${v.type}`,
