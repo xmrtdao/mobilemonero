@@ -1292,7 +1292,12 @@ const toolHandlers = {
         body: JSON.stringify(typeof action === 'object' ? action : { action }),
         signal: AbortSignal.timeout(10000),
       });
-      return { success: true, status: res.status, data: await res.json() };
+      const data = await res.json();
+      // Unwrap nested data to avoid [object Object] serialization
+      if (data && typeof data === 'object' && data.data) {
+        return { success: true, ...data.data };
+      }
+      return { success: true, ...data };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
