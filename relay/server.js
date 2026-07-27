@@ -139,11 +139,19 @@ taskRunner.on('error', (data) => logActivity('task', data.id, 'FAIL', `${data.na
 
 // ── Simple log ──────────────────────────────────────────────
 let activityLog = [];
+let _logWritePending = false;
 function logActivity(type, taskId, status, detail, agentId = null) {
   const entry = { ts: new Date().toISOString(), type, taskId, status, detail: detail || '' };
   activityLog.unshift(entry);
   if (activityLog.length > 500) activityLog.length = 500;
-  try { writeFile(LOG_FILE, JSON.stringify(activityLog, null, 2), () => {}); } catch {}
+  // Debounce file writes to avoid blocking the event loop on every call
+  if (!_logWritePending) {
+    _logWritePending = true;
+    setImmediate(() => {
+      _logWritePending = false;
+      try { writeFile(LOG_FILE, JSON.stringify(activityLog.slice(0, 200), null, 2), () => {}); } catch {}
+    });
+  }
   console.log(`[${entry.ts.slice(11,19)}] ${type} | ${taskId || '-'} | ${status} | ${(detail||'').slice(0,80)}`);
   // Also write to DB for persistent activity feed
   logToDb(type, taskId, status, detail, {}, agentId).catch(() => {});
@@ -598,6 +606,275 @@ print('OK|' + str(OLLAMA_HOST) + '|' + str(OLLAMA_MODEL))
 
 // ── New Tool Handlers ───────────────────────────────────────
 const toolHandlers = {
+  'page-agent-task': async (args) => {
+    const task = args?.task || args?.instruction;
+    if (!task) return { error: 'task is required' };
+    try {
+      const res = await fetch('http://127.0.0.1:38401/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) return { error: 'Page agent returned HTTP ' + res.status };
+      const data = await res.json();
+      return { success: true, result: data.result || data };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
+  'task-artifact': async (args) => {
+    const taskId = args?.task_id || args?.taskId;
+    const type = args?.type || 'screenshot';
+    const url = args?.url || args?.artifact_url || '';
+    const description = args?.description || '';
+    if (!taskId) return { error: 'task_id is required' };
+    try {
+      const { default: pg } = await import('pg');
+      const pool = new pg.Pool({ connectionString: 'postgres://postgres@127.0.0.1:5432/xmrt_suite', max: 2 });
+      await pool.query(
+        `INSERT INTO app.task_artifacts (task_id, artifact_type, artifact_url, description) VALUES ($1, $2, $3, $4)`,
+        [taskId, type, url, description]
+      );
+      await pool.end();
+      return { success: true, task_id: taskId, type, url, description };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
+  'muapi-generate-image': async (args) => {
+    const prompt = args?.prompt || args?.p || '';
+    const model = args?.model || 'flux-dev-image';
+    const size = args?.size || '1024*1024';
+    if (!prompt) return { error: 'prompt is required' };
+    const apiKey = process.env.MUAPI_API_KEY || '';
+    if (!apiKey) return { error: 'MUAPI_API_KEY not configured' };
+    try {
+      const res = await fetch(`https://api.muapi.ai/api/v1/${model}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({ prompt, size }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) return { error: 'MUAPI returned HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200) };
+      const data = await res.json();
+      if (data.success && data.images && data.images.length > 0) {
+        return { success: true, image_url: data.images[0], cost: '$0.015', prompt };
+      }
+      if (data.status === 'processing' && data.request_id) {
+        // Poll for completion
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const pollRes = await fetch(`https://api.muapi.ai/api/v1/predictions/${data.request_id}/result`, {
+            headers: { 'x-api-key': apiKey },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!pollRes.ok) continue;
+          const pollData = await pollRes.json();
+          if (pollData.status === 'completed' && pollData.outputs && pollData.outputs.length > 0) {
+            return { success: true, image_url: pollData.outputs[0], cost: '$0.015', prompt };
+          }
+          if (pollData.error) return { error: pollData.error };
+        }
+        return { error: 'MUAPI polling timed out' };
+      }
+      return { success: true, raw: data };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
+  'resend-get-email': async (args) => {
+    const { id, domain } = args || {};
+    if (!id) return { error: 'email id is required' };
+    const RESEND_KEYS = {
+      pfp: process.env.RESEND_API_KEY,
+      mobilemonero: process.env.RESEND_XMRT_API_KEY,
+      '31harbor': process.env.RESEND_31HARBOR_API_KEY,
+    };
+    const domainKey = domain || 'pfp';
+    const apiKey = RESEND_KEYS[domainKey];
+    if (!apiKey) return { error: 'No Resend API key for domain: ' + domainKey };
+    try {
+      let res = await fetch('https://api.resend.com/emails/receiving/' + id, {
+        headers: { 'Authorization': 'Bearer ' + apiKey },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { success: true, source: 'receiving', id, from: data.from, to: data.to, subject: data.subject, text: data.text || '', html: data.html || '', raw: data.raw || data, attachments: data.attachments };
+      }
+      res = await fetch('https://api.resend.com/emails/' + id, {
+        headers: { 'Authorization': 'Bearer ' + apiKey },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { success: true, source: 'sent', id, from: data.from, to: data.to, subject: data.subject, text: data.text || '', html: data.html || '', raw: data.raw || data };
+      }
+      return { success: false, error: 'Resend API returned ' + res.status, status: res.status };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  'cuttlefishclaws-cac-status': async (args) => {
+    const { did, cacId } = args || {};
+    if (!did && !cacId) return { error: 'did or cacId required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/cac-status?did=' + encodeURIComponent(did||'') + '&cacId=' + encodeURIComponent(cacId||''), { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-capital-stack': async () => {
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/capital-stack', { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-financing-programs': async (args) => {
+    const { layer, category } = args || {};
+    try {
+      const params = new URLSearchParams();
+      if (layer) params.set('layer', layer);
+      if (category) params.set('category', category);
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/financing-programs?' + params, { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-trust-score': async (args) => {
+    const { did } = args || {};
+    if (!did) return { error: 'did is required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/trust-score?did=' + encodeURIComponent(did), { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-trust-history': async (args) => {
+    const { did } = args || {};
+    if (!did) return { error: 'did is required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/trust-history?did=' + encodeURIComponent(did), { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-agent-onboard': async (args) => {
+    const { did, agentType, prepaidUsdcAmount, metadata } = args || {};
+    if (!did || !agentType) return { error: 'did and agentType required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/agent-onboard', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ did, agentType, prepaidUsdcAmount: prepaidUsdcAmount || 0, metadata: metadata || {} }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-proposal-submit': async (args) => {
+    const { title, description, category, submitterDid, content, fileUrls, metadata } = args || {};
+    if (!title || !submitterDid || !content) return { error: 'title, submitterDid, and content required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/proposal-submit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description, category, submitterDid, content, fileUrls, metadata }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-agent-x-post': async (args) => {
+    const { draft, operator_approved } = args || {};
+    if (!draft?.content_en) return { error: 'draft.content_en required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/agent-x-post', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft, operator_approved }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-agent-chat': async (args) => {
+    const { agentId, message, conversation_id } = args || {};
+    if (!agentId || !message) return { error: 'agentId and message required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/contact/cuttlefishclaws/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId, message, conversation_id }),
+        signal: AbortSignal.timeout(15000),
+      });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-inquiry': async (args) => {
+    const { name, email, amount, interest } = args || {};
+    if (!name || !email) return { error: 'name and email required' };
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/contact/cuttlefishclaws/inquiry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, amount, interest }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-engine-health': async () => {
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/engine-health', { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-agents': async () => {
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/agents', { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-rate-card': async () => {
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/rate-card', { signal: AbortSignal.timeout(5000) });
+      return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+
+  'token-usage-avg': async (args) => {
+    const agent = args?.agent || '';
+    try {
+      let sql = 'SELECT * FROM app.token_usage_avg';
+      const params = [];
+      if (agent) {
+        sql += ' WHERE agent = $1';
+        params.push(agent);
+      }
+      sql += ' ORDER BY total_tokens DESC';
+      const rows = await queryLocalPg(sql, params);
+      return { success: true, rowCount: rows.length, rows };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
+  'ecosystem-activity': async (args) => {
+    const agent = args?.agent || '';
+    const limit = Math.min(args?.limit || 20, 100);
+    try {
+      let sql = 'SELECT * FROM app.agent_activity_summary';
+      const params = [];
+      if (agent) {
+        sql += ' WHERE agent_id LIKE $1';
+        params.push('%' + agent + '%');
+      }
+      sql += ' ORDER BY trust_events DESC NULLS LAST LIMIT $' + (params.length + 1);
+      params.push(limit);
+      const rows = await queryLocalPg(sql, params);
+      return { success: true, rowCount: rows.length, rows };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
   'web-search': async (args) => {
     const query = args?.query || args?.q;
     if (!query) return { error: 'query is required' };
@@ -2396,6 +2673,22 @@ const CF_SERVICE_TOKENS = {
   'e1b5d893008ffb71e0f80b45139fb1d0.access': 'f9943d1733ff36bf7c65574cf1febb508fd40437f9e47497ea9d3243422dd032',
 };
 
+// ── Consolidate MCP tools and Alice daemon in-process ──
+// Uses JSON-RPC over HTTP to the already-running MCP servers (managed by supervisor).
+// No direct imports — avoids the EADDRINUSE conflict that caused the startup hang.
+(async () => {
+  try {
+    const { registerMcpTools, startAliceDaemon } = await import('./lib/consolidate.mjs');
+    const count = await registerMcpTools(toolHandlers);
+    console.log(`[consolidate] ${count} MCP tools registered via JSON-RPC proxy`);
+    setTimeout(() => {
+      try { startAliceDaemon(); } catch (e) { console.log('[consolidate] Alice daemon error:', e.message); }
+    }, 15000);
+  } catch (e) {
+    console.log('[consolidate] Failed to load:', e.message);
+  }
+})();
+
 // ── Rate Limiter ──────────────────────────────────────────
 const rateLimitBuckets = new Map();
 const RATE_LIMIT_WINDOW = 60000;
@@ -2422,10 +2715,11 @@ function rateLimit(ip, path) {
   return true;
 }
 
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   // Public API endpoints (no auth required)
   if (req.method === 'OPTIONS' ||
       req.path === '/' ||
+      req.path === '/ping' ||
       req.path === '/health' ||
       req.path === '/webhook/resend-inbound' ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/auth/cert-login' ||
@@ -2476,11 +2770,20 @@ app.use((req, res, next) => {
   
   const cfJwt = req.headers['cf-access-jwt-assertion'];
   if (cfJwt) {
-    verifyCfAccessJwt(cfJwt).then(verified => {
-      if (verified) { req.cfAccess = { identity: verified.email || verified.sub, payload: verified }; next(); }
-      else { console.warn(`[CF-Access] Invalid JWT from ${ip}: ${req.method} ${req.path}`); res.status(401).json({ error: 'Invalid Cloudflare Access JWT' }); }
-    }).catch(err => { console.warn(`[CF-Access] JWT verify error: ${err.message}`); res.status(401).json({ error: 'JWT verification failed' }); });
-    return;
+    try {
+      const verified = await verifyCfAccessJwt(cfJwt);
+      if (verified) {
+        req.cfAccess = { identity: verified.email || verified.sub, payload: verified };
+        return next();
+      }
+      if (res.headersSent) return;
+      console.warn(`[CF-Access] Invalid JWT from ${ip}: ${req.method} ${req.path}`);
+      return res.status(401).json({ error: 'Invalid Cloudflare Access JWT' });
+    } catch (err) {
+      if (res.headersSent) return;
+      console.warn(`[CF-Access] JWT verify error: ${err.message}`);
+      return res.status(401).json({ error: 'JWT verification failed' });
+    }
   }
   const cfClientId = req.headers['cf-access-client-id'];
   const cfClientSecret = req.headers['cf-access-client-secret'];
@@ -2593,6 +2896,34 @@ if (existsSync(join(CASHDAPP_DIR, 'index.html'))) {
   console.log(`  CashDApp SPA: ${CASHDAPP_DIR}`);
 } else {
   console.log(`  CashDApp SPA: NOT FOUND at ${CASHDAPP_DIR} — skipping`);
+}
+
+// ── PFP Intake SPA (Vite build, client onboarding flow) ──
+const INTAKE_DIR = join(__dirname, '..', 'intake', 'dist');
+if (existsSync(join(INTAKE_DIR, 'index.html'))) {
+  app.use('/intake', express.static(INTAKE_DIR, { maxAge: '5m' }));
+  app.get('/intake/*path', (req, res) => {
+    const filePath = join(INTAKE_DIR, req.path.replace(/^\/intake\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(INTAKE_DIR, 'index.html'));
+  });
+  console.log(`  PFP Intake SPA: ${INTAKE_DIR}`);
+} else {
+  console.log(`  PFP Intake SPA: NOT FOUND at ${INTAKE_DIR} — skipping`);
+}
+
+// ── PFP Bookings SPA (Vite build, CRM admin panel) ──
+const BOOKINGS_DIR = join(__dirname, '..', 'partyfavorphoto', 'bookings', 'dist');
+if (existsSync(join(BOOKINGS_DIR, 'index.html'))) {
+  app.use('/bookings', express.static(BOOKINGS_DIR, { maxAge: '5m' }));
+  app.get('/bookings/*path', (req, res) => {
+    const filePath = join(BOOKINGS_DIR, req.path.replace(/^\/bookings\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(BOOKINGS_DIR, 'index.html'));
+  });
+  console.log(`  PFP Bookings SPA: ${BOOKINGS_DIR}`);
+} else {
+  console.log(`  PFP Bookings SPA: NOT FOUND at ${BOOKINGS_DIR} — skipping`);
 }
 
 // ── 31Harbor Agency Dashboard (Vite build, per-company themed SPAs) ──
@@ -3260,6 +3591,12 @@ app.use((req, res, next) => {
 });
 
 // Health check
+// ── Super-lightweight health check (no trackRequest, no JSON.stringify overhead) ──
+app.get('/ping', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.end('{"ok":true}');
+});
+
 app.get('/health', (req, res) => {
   trackRequest('/health');
   res.json({
@@ -3267,7 +3604,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     agent: 'XMRT-DAO Relay Server',
-    version: '8.5.0',
+    version: '9.0.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -4009,7 +4346,7 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v8.5.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v9.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
@@ -4946,8 +5283,9 @@ app.post('/webhook/resend-inbound', (req, res) => {
 
   console.log(`[Resend Inbound] Email from ${data.from}: "${data.subject || '(no subject)'}" -> ${toDomain}`);
 
-  // ── Forward 31harbor Re: replies to dvdelze@gmail.com ────
-  if (toDomain === '31harbor.com' && data.subject && /^Re:/i.test(data.subject)) {
+  // ── Forward 31harbor Re: replies ────
+  // DISABLED: was forwarding to dvdelze@gmail.com which is no longer wanted
+  if (false && toDomain === '31harbor.com' && data.subject && /^Re:/i.test(data.subject)) {
     const fwdKey = process.env.RESEND_31HARBOR_API_KEY;
     if (fwdKey) {
       const fwdPayload = {
@@ -5962,7 +6300,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '8.5.0',
+      version: '9.0.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -6305,27 +6643,24 @@ app.get('/api/dao/health', async (req, res) => {
   const t0 = Date.now();
   try {
     // 1) PG reachable? (with a 2s timeout, fail fast)
-    let c;
-    try { c = await pgPool.connect(); } catch (e) { return res.json({ ok: false, error: 'PG unreachable: ' + e.message, uptime: process.uptime() }); }
+    let poolOk = false;
+    try { const r = await pgPool.query('SELECT 1'); poolOk = true; } catch (e) { return res.json({ ok: false, error: 'PG unreachable: ' + e.message, uptime: process.uptime() }); }
     try {
-      // 2) Aggregate the dashboard fields from local tables.
-      // The schema was migrated from Supabase on 2026-06-07; some
-      // tables are empty (we never had a real write path) but the
-      // structure is in place. We COALESCE nulls to 0 so the
-      // dashboard always renders.
+      // 2) Aggregate the dashboard fields from local tables using pool.query()
+      // (pool.query acquires+releases a connection per query — safe for parallel use)
       const queries = [
-        c.query("SELECT COUNT(*)::int AS c FROM agent.agents").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM agent.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.tasks").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.python_execs").catch(() => ({ rows: [{ c: 0 }] })),
-        c.query("SELECT COUNT(*)::int AS c FROM public.api_keys").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.tasks").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.python_execs").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.api_keys").catch(() => ({ rows: [{ c: 0 }] })),
       ];
       const [agents, agentsBusy, tasks, tasksDone, fnCalls24h, pyExecs, apiKeys] = await Promise.all(queries);
       // Also count total tables + schemas for richness
-      const tablesRes = await c.query("SELECT COUNT(*)::int AS c FROM pg_tables WHERE schemaname='public'");
-      const schemasRes = await c.query("SELECT COUNT(*)::int AS c FROM pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema')");
+      const tablesRes = await pgPool.query("SELECT COUNT(*)::int AS c FROM pg_tables WHERE schemaname='public'");
+      const schemasRes = await pgPool.query("SELECT COUNT(*)::int AS c FROM pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema')");
 
       const counts = {
         agents_total:     agents.rows[0]?.c     ?? 0,
@@ -6420,7 +6755,7 @@ app.get('/api/dao/health', async (req, res) => {
         timestamp: new Date().toISOString(),
       });
     } finally {
-      c.release();
+      // pool.query() auto-releases connections — no manual release needed
     }
   } catch (e) {
     res.json({
@@ -6799,7 +7134,7 @@ const FLEET_AGENTS = {
   'alice': { name: 'Alice (Daemon)', endpoint: 'local', type: 'daemon', localEndpoint: 'http://127.0.0.1:8080/api/alice/inbox' },
   // CuttlefishClaws fleet agents — first-class agents with tool access, shared memory, and kimi-k2.6:cloud inference
   'trib': { name: 'Trib (Tributary Governance Agent)', endpoint: 'local', type: 'relay' },
-  'arch': { name: 'Arch (Architecture & Routing Agent)', endpoint: 'local', type: 'relay' },
+  'arch': { name: 'Arch (Architecture & Routing Agent)', endpoint: 'local', type: 'relay', chatFunction: 'arch-chat' },
   'builder': { name: 'Builder Agent (CAC Tier 2)', endpoint: 'local', type: 'relay' },
   'sovereign': { name: 'Sovereign Agent (CAC Tier 3)', endpoint: 'local', type: 'relay' },
   'trustgraph': { name: 'TrustGraph (Constitutional Scoring Engine)', endpoint: 'local', type: 'relay' },
@@ -6998,12 +7333,16 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
   };
   fleetChatMessages.push(entry);
   if (fleetChatMessages.length > FLEET_CHAT_MAX) fleetChatMessages.splice(0, fleetChatMessages.length - FLEET_CHAT_MAX);
-  // Persist to state every 5 messages
-  if (fleetChatMessages.length % 5 === 0) {
-    try {
-      state.set('fleet-chat-history', fleetChatMessages);
-    } catch {}
-  }
+  // Persist to DB (fire-and-forget via setImmediate, don't block the message)
+  setImmediate(() => {
+    queryLocalPg(
+      `INSERT INTO public.fleet_messages (id, topic, agent_id, agent_name, message, payload, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
+      [entry.id, channel, agent, FLEET_AGENTS[agent]?.name || agent, message,
+       JSON.stringify({ hop: opts.hop || 0, parentId: opts.parentId || null, attachments: opts.attachments || [] }),
+       new Date(entry.ts).toISOString()]
+    ).catch(() => {});
+  });
   // Stamp last-spoke for cooldown
   agentLastSpokeAt[agent] = entry.ts;
   return entry;
@@ -7114,6 +7453,46 @@ function loadFleetChatHistory() {
       fleetChatMessages.push(...saved);
     }
   } catch {}
+  // Defer DB load to after server starts — don't block initialization
+  setImmediate(async () => {
+    try {
+      const result = await queryLocalPg(
+        `SELECT id, topic as channel, agent_id as agent, agent_name as agentLabel, message, payload, created_at as time
+         FROM public.fleet_messages ORDER BY created_at ASC LIMIT 500`
+      );
+      const rows = result && result.rows ? result.rows : (Array.isArray(result) ? result : []);
+      if (!rows || rows.length === 0) return;
+      const existingIds = new Set(fleetChatMessages.map(m => m.id));
+      let added = 0;
+      for (const row of rows) {
+        if (existingIds.has(row.id)) continue;
+        let payload = {};
+        try { payload = JSON.parse(row.payload || '{}'); } catch {}
+        fleetChatMessages.push({
+          id: row.id,
+          agent: row.agent,
+          agentLabel: row.agentLabel || row.agent,
+          message: row.message || '',
+          channel: row.channel || 'fleet',
+          hop: payload.hop || 0,
+          parentId: payload.parentId || null,
+          ts: new Date(row.time).getTime(),
+          time: row.time,
+          attachments: payload.attachments || [],
+        });
+        existingIds.add(row.id);
+        added++;
+      }
+      if (added > 0) {
+        console.log(`[fleet-db] Loaded ${added} messages from DB (${fleetChatMessages.length} total)`);
+        if (fleetChatMessages.length > FLEET_CHAT_MAX) {
+          fleetChatMessages.splice(0, fleetChatMessages.length - FLEET_CHAT_MAX);
+        }
+      }
+    } catch (e) {
+      console.log(`[fleet-db] Load error: ${e.message}`);
+    }
+  });
 }
 loadFleetChatHistory();
 
@@ -8844,17 +9223,12 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   // Also publish to gossipsub fleet-broadcast topic
   publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
   
-  // Route to other agents asynchronously — allow long timeouts (agents research before replying)
-  const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
-  
-  // Wait for routing if it's quick, otherwise return immediately
-  const timeout = new Promise(r => setTimeout(r, 180000));
-  const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
+  // Route to other agents asynchronously — fire and forget, don't block the POST
+  routeFleetMessage(entry).catch(e => console.log('[fleet-route] Error:', e.message));
   
   res.json({
     success: true,
     message: entry,
-    replies: routes,
   });
 });
 
@@ -8909,21 +9283,32 @@ app.get('/api/fleet-chat/messages', async (req, res) => {
   
   // Load attachments from DB for each message (enrich in-memory entries)
   try {
-    for (const m of messages) {
-      if (!m.id) continue;
+    // Batch-load all attachments in a single query instead of N sequential queries
+    const messageIds = messages.filter(m => m.id).map(m => m.id);
+    if (messageIds.length > 0) {
       const attRes = await queryLocalPg(
-        `SELECT id, agent_id, filename, file_type, file_size, content_preview, created_at
-         FROM app.fleet_attachments WHERE message_id = $1 ORDER BY created_at ASC`,
-        [m.id]
+        `SELECT message_id, id, agent_id, filename, file_type, file_size, content_preview, created_at
+         FROM app.fleet_attachments WHERE message_id = ANY($1) ORDER BY created_at ASC`,
+        [messageIds]
       );
       if (attRes.rows.length > 0) {
-        m.attachments = attRes.rows.map(a => ({
-          id: a.id,
-          filename: a.filename,
-          type: a.file_type,
-          size: a.file_size,
-          preview: a.content_preview,
-        }));
+        // Group attachments by message_id
+        const attMap = {};
+        for (const a of attRes.rows) {
+          if (!attMap[a.message_id]) attMap[a.message_id] = [];
+          attMap[a.message_id].push({
+            id: a.id,
+            agent_id: a.agent_id,
+            filename: a.filename,
+            file_type: a.file_type,
+            file_size: a.file_size,
+            content_preview: a.content_preview,
+            created_at: a.created_at,
+          });
+        }
+        for (const m of messages) {
+          if (attMap[m.id]) m.attachments = attMap[m.id];
+        }
       }
     }
   } catch (e) { /* attachment load best-effort */ }
@@ -10437,98 +10822,7 @@ app.get('/pfp/templates/:file', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', async () => {
-  if (LOCAL_DB_ENABLED) {
-    const ok = await ensureLocalDb();
-    console.log(`  LocalDB:  ${ok ? 'connected (postgres @ 127.0.0.1:5432/xmrt_suite)' : 'FAILED — falling back to cloud REST'}`);
-    // Auto-create footlocker tables on startup
-    try {
-      await queryLocalPg(
-        `CREATE TABLE IF NOT EXISTS app.footlocker_artifacts (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          task_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          artifact_type TEXT NOT NULL DEFAULT 'summary',
-          reference_id TEXT,
-          description TEXT,
-          file_count INTEGER DEFAULT 0,
-          metadata JSONB DEFAULT '{}'::jsonb,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        )`
-      );
-      await queryLocalPg(
-        `CREATE TABLE IF NOT EXISTS app.footlocker_files (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          artifact_id UUID NOT NULL REFERENCES app.footlocker_artifacts(id) ON DELETE CASCADE,
-          filename TEXT NOT NULL,
-          file_type TEXT DEFAULT 'text/plain',
-          content TEXT,
-          file_size INTEGER DEFAULT 0,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        )`
-      );
-      console.log('  Footlocker: tables ready');
-    } catch (e) {
-      console.log('  Footlocker: init error (non-fatal):', e.message);
-    }
-    // Auto-create domain schemas on startup
-    try {
-      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS knowledge`);
-      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS agent`);
-      await queryLocalPg(`CREATE SCHEMA IF NOT EXISTS system`);
-      console.log('  Schemas: knowledge, agent, system ready');
-    } catch (e) {
-      console.log('  Schemas: init error (non-fatal):', e.message);
-    }
-    // Auto-create knowledge schema tables
-    try {
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.knowledge_entities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), entity_name TEXT, entity_type TEXT, description TEXT, content TEXT, type TEXT, confidence_score INTEGER, tags TEXT[], metadata JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, user_id UUID)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.shared_context (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), context_key TEXT NOT NULL, context_type TEXT NOT NULL DEFAULT 'general', value JSONB NOT NULL DEFAULT '{}', description TEXT, tags TEXT[] DEFAULT '{}', last_updated_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.memories (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, kind TEXT, content TEXT, metadata JSONB DEFAULT '{}', importance NUMERIC DEFAULT 0.5, embedding JSONB, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.memory_contexts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id TEXT NOT NULL, session_id TEXT NOT NULL, content TEXT NOT NULL, context_type TEXT NOT NULL, importance_score REAL DEFAULT 0.5, metadata JSONB DEFAULT '{}', embedding JSONB, timestamp TIMESTAMPTZ DEFAULT now(), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), title TEXT, user_id UUID, agent_id TEXT, channel TEXT, status TEXT NOT NULL DEFAULT 'active', started_at TIMESTAMPTZ NOT NULL DEFAULT now(), ended_at TIMESTAMPTZ, message_count INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), lead_score INTEGER DEFAULT 0, acquisition_stage TEXT DEFAULT 'new')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, message_type TEXT NOT NULL, content TEXT NOT NULL, metadata JSONB DEFAULT '{}', timestamp TIMESTAMPTZ DEFAULT now(), created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_memory (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id VARCHAR NOT NULL, conversation_data JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), messages JSONB NOT NULL DEFAULT '[]', metadata JSONB NOT NULL DEFAULT '{}', summary TEXT, tool_results JSONB NOT NULL DEFAULT '[]', self_aware BOOLEAN DEFAULT false, preferences_applied BOOLEAN DEFAULT false, summary_method VARCHAR DEFAULT 'manual', ai_summary_tokens INTEGER, memory_version VARCHAR DEFAULT '3.0', context_score NUMERIC, retention_priority INTEGER DEFAULT 5, tool_analysis JSONB DEFAULT '{}', updated_at_hour TIMESTAMPTZ, ip_address TEXT, user_id TEXT)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_summaries (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT, summary_text TEXT, message_count INTEGER NOT NULL DEFAULT 0, start_message_id UUID, end_message_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), metadata JSONB DEFAULT '{}', summary TEXT, key_topics TEXT[] DEFAULT '{}', self_aware BOOLEAN DEFAULT false, sentiment_score NUMERIC DEFAULT 0, sentiment_label TEXT DEFAULT 'neutral', sentiment TEXT, summary_method VARCHAR DEFAULT 'manual', ai_model_used VARCHAR, summary_tokens INTEGER, confidence_score NUMERIC, key_entities JSONB, action_items JSONB, decisions_made JSONB, ip_address TEXT, user_id TEXT, ai_summary_tokens INTEGER)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.conversation_context (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, user_id TEXT, current_question TEXT NOT NULL, assistant_response TEXT NOT NULL, user_response TEXT NOT NULL, timestamp TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}', context_type VARCHAR DEFAULT 'follow_up', ip_address TEXT)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.recent_conversation_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL, sender_id UUID, sender_name TEXT, body TEXT NOT NULL, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.context_session_snapshots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), session_id TEXT NOT NULL, user_id UUID, context_name TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'fallback', inference_confidence NUMERIC NOT NULL DEFAULT 0.500, signals JSONB NOT NULL DEFAULT '[]', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), captured_at TIMESTAMPTZ NOT NULL DEFAULT now(), active_context TEXT, metadata JSONB NOT NULL DEFAULT '{}')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.long_term_memory_packs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), theme TEXT NOT NULL, summary TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_models (model_id TEXT NOT NULL PRIMARY KEY, model_type TEXT NOT NULL, state JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_patterns (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), pattern_type TEXT NOT NULL, pattern_data JSONB, confidence_score REAL, usage_count INTEGER DEFAULT 0, last_used TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.learning_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, session_type TEXT, started_at TIMESTAMPTZ NOT NULL DEFAULT now(), ended_at TIMESTAMPTZ, insights JSONB DEFAULT '{}', memories_consolidated INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), status TEXT DEFAULT 'active')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_context_profiles (user_id UUID NOT NULL PRIMARY KEY, default_context TEXT NOT NULL DEFAULT 'General', allowed_contexts TEXT[] NOT NULL DEFAULT ARRAY['General'], context_preferences JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), is_active BOOLEAN NOT NULL DEFAULT true, priority INTEGER NOT NULL DEFAULT 0)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_preferences (id SERIAL PRIMARY KEY, user_id TEXT NOT NULL, workspace_state JSONB DEFAULT '{}', pinned_tasks TEXT[] DEFAULT '{}', pinned_agents TEXT[] DEFAULT '{}', column_order TEXT[] DEFAULT '{}', filters JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), ip_address INET NOT NULL, total_xmrt_earned NUMERIC NOT NULL DEFAULT 0, total_time_online_seconds INTEGER NOT NULL DEFAULT 0, last_reward_at TIMESTAMPTZ, device_ids UUID[] DEFAULT ARRAY[]::uuid[], created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), metadata JSONB DEFAULT '{}', payout_wallet_address TEXT, payout_wallet_type TEXT DEFAULT 'ethereum', wallet_connected_at TIMESTAMPTZ, wallet_last_verified TIMESTAMPTZ)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS knowledge.user_tiers (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT, features JSONB NOT NULL DEFAULT '[]', pricing_model TEXT NOT NULL DEFAULT 'flat', amount_cents INTEGER, currency TEXT DEFAULT 'usd', interval TEXT, is_active BOOLEAN NOT NULL DEFAULT true, stripe_product_id TEXT, stripe_price_id TEXT, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      console.log('  knowledge.*: 18 tables ready');
-    } catch (e) {
-      console.log('  knowledge.*: init error (non-fatal):', e.message);
-    }
-    // Auto-create agent schema tables
-    try {
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, display_name TEXT, role TEXT, status TEXT DEFAULT 'idle', current_workload INTEGER DEFAULT 0, trust_score NUMERIC DEFAULT 50, trust_band TEXT DEFAULT 'Standard', lifecycle_status TEXT DEFAULT 'active', cac_tier TEXT DEFAULT 'explorer', did TEXT, description TEXT, greeting TEXT, color TEXT, agent_type TEXT DEFAULT 'constitutional', agent_subtype TEXT, operator_did TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_profiles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, name TEXT, role TEXT, description TEXT, capabilities TEXT[] DEFAULT '{}', status TEXT DEFAULT 'active', metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_registry (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT NOT NULL, agent_name TEXT NOT NULL, agent_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', version TEXT, endpoint TEXT, capabilities JSONB DEFAULT '{}', registered_at TIMESTAMPTZ DEFAULT now(), last_seen_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_skills (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, skill_name TEXT, skill_level TEXT DEFAULT 'beginner', description TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_tasks (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, title TEXT, description TEXT, status TEXT DEFAULT 'pending', priority INTEGER DEFAULT 3, category TEXT, assigned_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, result JSONB, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_memory (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, memory_type TEXT, content TEXT, context TEXT, importance NUMERIC DEFAULT 0.5, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now(), expires_at TIMESTAMPTZ)`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_conversations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, session_id TEXT, message TEXT, response TEXT, model_used TEXT, tokens_used INTEGER DEFAULT 0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, channel TEXT, message_type TEXT, content TEXT, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_activities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, activity_type TEXT, description TEXT, status TEXT DEFAULT 'completed', started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_certifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, certification_type TEXT, issuer TEXT, valid_from TIMESTAMPTZ, valid_until TIMESTAMPTZ, status TEXT DEFAULT 'active', metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_performance_metrics (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, metric_name TEXT, metric_value NUMERIC, unit TEXT, recorded_at TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_performance_reviews (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, reviewer TEXT, rating INTEGER, feedback TEXT, strengths TEXT[] DEFAULT '{}', improvements TEXT[] DEFAULT '{}', review_date TIMESTAMPTZ DEFAULT now(), metadata JSONB DEFAULT '{}')`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_relationships (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), source_agent_id TEXT, target_agent_id TEXT, relationship_type TEXT, strength NUMERIC DEFAULT 1.0, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.agent_security_flags (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id TEXT, flag_type TEXT, severity TEXT DEFAULT 'low', description TEXT, resolved BOOLEAN DEFAULT false, resolved_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT now())`);
-      await queryLocalPg(`CREATE TABLE IF NOT EXISTS agent.generated_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT, role TEXT, description TEXT, configuration JSONB DEFAULT '{}', status TEXT DEFAULT 'draft', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
-      console.log('  agent.*: 15 tables ready');
-    } catch (e) {
-      console.log('  agent.*: init error (non-fatal):', e.message);
-    }
-  } else {
-    console.log('  LocalDB:  disabled (LOCAL_DB_MODE=false) — using cloud Supabase');
-  }
+  console.log(`  Relay listening on http://0.0.0.0:${PORT}`);
   const toolsCount = Object.keys(toolHandlers).length;
   const handlersCount = Object.keys(handlers).length;
   console.log('\n' +
@@ -11715,7 +12009,7 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
   trackRequest('/api/trustgraph/trajectory');
   try {
     const result = await queryLocalPg(
-      `SELECT agent_did, event_type, delta, score_after, reference, note, domain, created_at
+      `SELECT agent_did, event_type, delta, score_after, reference, note, created_at
        FROM app.cuttlefish_trust_events
        ORDER BY created_at ASC`
     );
@@ -11724,12 +12018,12 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
     const didToAgent = {};
     // First pass: collect all DIDs and their agent names from cuttlefish_agents
     const nameRows = await queryLocalPg(
-      `SELECT did, name, cac_tier FROM app.cuttlefish_agents WHERE name IS NOT NULL AND name != ''`
+      `SELECT did, name, trust_score FROM app.cuttlefish_agents WHERE name IS NOT NULL AND name != ''`
     );
     const agentTiers = {};
     for (const row of nameRows.rows) {
       didToAgent[row.did] = row.name.toLowerCase();
-      agentTiers[row.did] = row.cac_tier || 'explorer';
+      agentTiers[row.did] = row.trust_score || 'explorer';
     }
     // Also map simple agent names used in fleet chat
     const simpleNames = ['vex','eliza','alice','hermes','arch','trib','builder','sovereign','trustgraph','dao','global-communicator','hermes-agent','alice-sidecar','fleet-cq','test-agent'];
@@ -11785,7 +12079,6 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
         created_at: row.created_at,
         note: row.note,
         reference: row.reference,
-        domain: row.domain,
       });
     }
 
@@ -11815,7 +12108,6 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
           event: events[i].event_type,
           note: (events[i].note || '').slice(0, 200),
           ref: (events[i].reference || '').slice(0, 200),
-          domain: events[i].domain || null,
         });
       }
       if (pts.length > 0) {
@@ -11823,7 +12115,17 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
       }
     }
 
-    res.json({ series, totalEvents: result.rows.length });
+    // Fetch token usage and ecosystem summary
+    const tokenUsage = await queryLocalPg(
+      `SELECT agent, call_count, avg_tokens_per_call, total_tokens, total_cost, last_used
+       FROM app.token_usage_avg ORDER BY total_tokens DESC`
+    );
+    const ecoSummary = await queryLocalPg(
+      `SELECT agent_id, trust_events, token_calls, artifacts, total_token_cost, last_activity
+       FROM app.agent_activity_summary ORDER BY trust_events DESC NULLS LAST LIMIT 20`
+    );
+
+    res.json({ series, totalEvents: result.rows.length, tokenUsage: tokenUsage.rows, ecosystemSummary: ecoSummary.rows });
   } catch (e) {
     res.json({ series: {}, totalEvents: 0, error: e.message });
   }
@@ -11833,15 +12135,15 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
 app.post('/api/trustgraph/event', express.json(), async (req, res) => {
   trackRequest('POST /api/trustgraph/event');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  const { agent_did, event_type, delta, note, reference, domain } = req.body || {};
+  const { agent_did, event_type, delta, note, reference } = req.body || {};
   if (!agent_did || !event_type) {
     return res.status(400).json({ error: 'agent_did and event_type are required' });
   }
   try {
     const result = await queryLocalPg(
-      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, note, reference, domain, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id`,
-      [agent_did, event_type, delta || 0, note || '', reference || '', domain || null]
+      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, note, reference, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
+      [agent_did, event_type, delta || 0, note || '', reference || '']
     );
     res.json({ success: true, id: result.rows[0].id });
   } catch (e) { res.status(500).json({ error: e.message }); }
