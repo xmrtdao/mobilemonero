@@ -1355,7 +1355,7 @@ const toolHandlers = {
   // ── More Edge Function Tools (probe-confirmed working) ──
   'ef:functions-catalog': async () => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions?category=all`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
         body: '{}',
@@ -5787,10 +5787,18 @@ app.get('/local-runtime/health', async (req, res) => {
   res.json(out);
 });
 
-app.get('/api/catalog', (req, res) => {
-  const catalogPath = join(__dirname, 'edge-function-catalog.json');
+app.get('/api/catalog', async (req, res) => {
   try {
-    const data = JSON.parse(readFileSync(catalogPath, 'utf8'));
+    const efRes = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!efRes.ok) {
+      return res.status(502).json({ error: 'Edge function catalog unavailable', status: efRes.status });
+    }
+    const data = await efRes.json();
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Catalog not available', message: e.message });
