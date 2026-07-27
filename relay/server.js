@@ -4725,9 +4725,9 @@ app.get('/', (req, res) => {
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🔧 Tools</div>
-      <div class="tools-list-mobile">${tools.map(t => '<div class="stat"><span class="label">' + t + '</span><span class="value badge badge-info">ready</span></div>').join('')}</div>
-      <div class="tools-count-mobile"><div class="stat"><span class="label">Total Tools</span><span class="value">${toolCount}</span></div></div>
-      ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;"><div style="font-size:0.6rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px;">Local Functions</div>' + localFunctions.map(f => '<div class="stat"><span class="label" style="color:#4ade80;">fn:' + f.name + '</span><span class="value badge badge-info">local</span></div>').join('') + '</div>' : ''}
+      <div class="stat"><span class="label">Relay Tools</span><span class="value" id="dao-tool-count">${toolCount}</span></div>
+      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
+      ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#4ade80;">Local: ' + localFunctions.map(f => f.name).join(', ') + '</div>' : ''}
       <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
         <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
       </div>

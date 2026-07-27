@@ -10,28 +10,38 @@
 
   // ── Quarterdeck Supervisor Watch ──
   function updateQDSupervisor() {
-    apiFetch('/api/supervisor/status').then(r=>r.json()).then(d => {
-      const up = d.services.filter(s => s.healthy).length;
-      const down = d.services.filter(s => !s.healthy).length;
-      const flapping = d.services.filter(s => s.flapping).map(s => s.name);
-      const taskIssues = d.tasks.filter(t => t.missed > 0 || (t.ageHours > 30));
-      document.getElementById('qds-supervisor').textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
-      document.getElementById('qds-supervisor').style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
-      document.getElementById('qds-services-up').textContent = up + '/' + d.services.length;
-      document.getElementById('qds-services-up').style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
-      document.getElementById('qds-services-down').textContent = down > 0 ? down : '0';
-      document.getElementById('qds-services-down').style.color = down > 0 ? '#f87171' : '#4ade80';
-      document.getElementById('qds-flapping').textContent = flapping.length > 0 ? flapping.join(', ') : 'none';
-      document.getElementById('qds-flapping').style.color = flapping.length > 0 ? '#f87171' : '#4ade80';
-      document.getElementById('qds-task-issues').textContent = taskIssues.length > 0 ? taskIssues.length + ' issue(s)' : 'none';
-      document.getElementById('qds-task-issues').style.color = taskIssues.length > 0 ? '#fbbf24' : '#4ade80';
-      document.getElementById('qds-last-check').textContent = new Date(d.checkedAt).toLocaleTimeString();
-    }).catch(() => {
-      document.getElementById('qds-supervisor').textContent = '○ offline';
-      document.getElementById('qds-supervisor').style.color = '#6b6b80';
-    });
-  }
-  setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
+      apiFetch('/api/supervisor/status').then(r=>r.json()).then(d => {
+        const up = d.services.filter(s => s.healthy).length;
+        const down = d.services.filter(s => !s.healthy).length;
+        const flapping = d.services.filter(s => s.flapping).map(s => s.name);
+        const taskIssues = d.tasks.filter(t => t.missed > 0 || (t.ageHours > 30));
+        const el = function(id) { return document.getElementById(id); };
+        const supEl = el('qds-supervisor');
+        if (supEl) supEl.textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
+        if (supEl) supEl.style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
+        const upEl = el('qds-services-up');
+        if (upEl) upEl.textContent = up + '/' + d.services.length;
+        if (upEl) upEl.style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
+        const downEl = el('qds-services-down');
+        if (downEl) downEl.textContent = down > 0 ? down : '0';
+        if (downEl) downEl.style.color = down > 0 ? '#f87171' : '#4ade80';
+        const flapEl = el('qds-flapping');
+        if (flapEl) flapEl.textContent = flapping.length > 0 ? flapping.join(', ') : 'none';
+        if (flapEl) flapEl.style.color = flapping.length > 0 ? '#f87171' : '#4ade80';
+        const taskEl = el('qds-task-issues');
+        if (taskEl) taskEl.textContent = taskIssues.length > 0 ? taskIssues.length + ' issue(s)' : 'none';
+        if (taskEl) taskEl.style.color = taskIssues.length > 0 ? '#fbbf24' : '#4ade80';
+        const checkEl = el('qds-last-check');
+        if (checkEl) checkEl.textContent = new Date(d.checkedAt).toLocaleTimeString();
+      }).catch(() => {
+        const el = function(id) { return document.getElementById(id); };
+        const supEl = el('qds-supervisor');
+        if (supEl) supEl.textContent = '○ offline';
+        if (supEl) supEl.style.color = '#6b6b80';
+              });
+          }
+
+          setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
 
   // ── Security Tile — TrustGraph · CAC Tiers · Access Control ──
   function updateQDSSecurity() {
@@ -130,10 +140,7 @@
       var fullMinTime = Math.min.apply(null, allTimes);
       var fullMaxTime = Math.max.apply(null, allTimes);
 
-      // Cache full bounds for un-zoom
-      if (!trajectoryFullBounds) {
-        trajectoryFullBounds = { minScore: fullMinScore, maxScore: fullMaxScore, minTime: fullMinTime, maxTime: fullMaxTime };
-      }
+      trajectoryFullBounds = { minScore: fullMinScore, maxScore: fullMaxScore, minTime: fullMinTime, maxTime: fullMaxTime };
 
       // Determine view bounds: default to last 24h, toggle to full
       var now = Date.now();
@@ -141,18 +148,31 @@
       var viewMinTime, viewMaxTime, viewMinScore, viewMaxScore;
 
       if (trajectoryZoom) {
-        // User has zoomed — use their bounds
-        viewMinTime = trajectoryZoom.minTime;
-        viewMaxTime = trajectoryZoom.maxTime;
-        viewMinScore = fullMinScore;
-        viewMaxScore = fullMaxScore;
-      } else {
-        // Default: last 24h
-        viewMinTime = now - twentyFourHours;
-        viewMaxTime = now;
-        viewMinScore = fullMinScore;
-        viewMaxScore = fullMaxScore;
-      }
+              // User has zoomed — use their bounds
+              viewMinTime = trajectoryZoom.minTime;
+              viewMaxTime = trajectoryZoom.maxTime;
+              viewMinScore = fullMinScore;
+              viewMaxScore = fullMaxScore;
+            } else {
+              // Default: last 24h — but if no data in 24h, fall back to full range
+              var hasRecent = false;
+              agents.forEach(function(a) {
+                series[a].forEach(function(p) {
+                  var t = new Date(p.t).getTime();
+                  if (t >= (now - twentyFourHours) && t <= now) hasRecent = true;
+                });
+              });
+              if (hasRecent) {
+                viewMinTime = now - twentyFourHours;
+                viewMaxTime = now;
+              } else {
+                // No recent data — show full range
+                viewMinTime = fullMinTime;
+                viewMaxTime = fullMaxTime;
+              }
+              viewMinScore = fullMinScore;
+              viewMaxScore = fullMaxScore;
+            }
       var timeRange = viewMaxTime - viewMinTime || 1;
       var scoreRange = viewMaxScore - viewMinScore || 1;
 
@@ -286,9 +306,17 @@
           ctx.fillText(sl.score.toFixed(1), cx + 5, sy);
         });
         ctx.globalAlpha = 1.0;
-      }
+              }
 
-      // Legend at bottom
+              // Refresh timestamp (top-right corner) — confirms the chart is actually polling
+              ctx.globalAlpha = 0.6;
+              ctx.font = '8px monospace';
+              ctx.textAlign = 'right';
+              ctx.fillStyle = '#6b6b80';
+              ctx.fillText('↻ ' + new Date().toLocaleTimeString(), canvas.width - 4, 10);
+              ctx.globalAlpha = 1.0;
+
+              // Legend at bottom
       var lx = pad.left;
       var ly = canvas.height - 3;
       ctx.font = '9px monospace';
@@ -709,6 +737,8 @@
     .then(data => {
       functions = data.functions || [];
       document.getElementById('fnCount').textContent = '— ' + functions.length + ' total';
+      var daoFnEl = document.getElementById('dao-fn-count');
+      if (daoFnEl) daoFnEl.textContent = functions.length;
       renderFunctions();
     })
     .catch(e => {
@@ -866,11 +896,19 @@ loadAgentExperienceCard();
   function loadFleetChat() {
     var msgsEl = document.getElementById('fleet-chat-msgs');
     if (!msgsEl) return;
-    apiFetch('/api/fleet-chat/messages?limit=50&channel=all', { signal: AbortSignal.timeout(8000) })
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        var msgs = d.messages || [];
-                if (!msgs.length) { msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>'; return; }
+    // Keep previous content visible on failure — only show offline if we have nothing cached
+    var hasContent = msgsEl.querySelectorAll(':scope > div').length > 0;
+    apiFetch('/api/fleet-chat/messages?limit=50&channel=all', { signal: AbortSignal.timeout(15000) })
+          .then(function(r){
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(function(d){
+            var msgs = d.messages || [];
+            if (!msgs.length) {
+              if (!hasContent) msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>';
+              return;
+            }
                 // Save scroll position BEFORE DOM replacement (innerHTML resets scrollTop to 0)
                 var wasNearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 50;
                 // Sort chronologically: oldest first, newest last (closest to input)
