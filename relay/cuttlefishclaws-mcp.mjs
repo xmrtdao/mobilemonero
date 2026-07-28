@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * cuttlefishclaws-mcp.mjs — CuttlefishClaws Cloud Redundancy MCP Server
+ * cuttlefishclaws-mcp.mjs — CuttlefishClaws Local Redundancy MCP Server
  *
- * Connects to Supabase Postgres (project ref: llulpuhtlxzsxxbsfcuu)
- * and exposes the 23 cuttlefish tables as MCP tools for cloud backup
- * of the local Cuttlefish Protocol stack.
+ * Connects to local Postgres and exposes the 23 cuttlefish tables
+ * as MCP tools for local redundancy of the Cuttlefish Protocol stack.
  *
  * Usage:
  *   node cuttlefishclaws-mcp.mjs                    # stdio transport (default)
@@ -47,54 +46,25 @@ function loadEnv() {
 }
 loadEnv();
 
-// ── Supabase Configuration ──────────────────────────────────
-const SUPABASE_URL = 'https://llulpuhtlxzsxxbsfcuu.supabase.co';
-const SUPABASE_PROJECT_REF = 'llulpuhtlxzsxxbsfcuu';
-const SUPABASE_DB_PASS = process.env.SUPABASE_DB_PASS || '';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-
-// Direct Postgres connection string for Supabase
-const SUPABASE_DB_URL = process.env.SUPABASE_DB_URL ||
-  `postgresql://postgres.${SUPABASE_PROJECT_REF}:${encodeURIComponent(SUPABASE_DB_PASS)}@aws-0-us-east-1.pooler.supabase.com:6543/postgres`;
+// ── Local Postgres Configuration ─────────────────────────────
+// Rewired from cloud Supabase to local Postgres (July 20, 2026)
+// All cuttlefish tables exist locally in the app schema (with backward-compat views in public).
+const LOCAL_DB_URL = process.env.LOCAL_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/xmrt_suite';
 
 // ── DB Connection (pg) ───────────────────────────────────────
 import pg from 'pg';
 const { Pool } = pg;
 
 const pool = new Pool({
-  connectionString: SUPABASE_DB_URL,
-  max: 3,
+  connectionString: LOCAL_DB_URL,
+  max: 5,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
-  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 5_000,
 });
 
 async function query(sql, params = []) {
   const res = await pool.query(sql, params);
   return res.rows;
-}
-
-// ── Supabase REST helper (fallback for simple queries) ──────
-async function supabaseFetch(table, options = {}) {
-  const { method = 'GET', body, select = '*', filters = {}, limit } = options;
-  const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
-  url.searchParams.set('select', select);
-  if (limit) url.searchParams.set('limit', String(limit));
-  for (const [key, value] of Object.entries(filters)) {
-    url.searchParams.set(key, value);
-  }
-  const headers = {
-    'apikey': SUPABASE_SERVICE_KEY,
-    'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-    'Content-Type': 'application/json',
-  };
-  if (method !== 'GET') headers['Prefer'] = 'return=representation';
-  const res = await fetch(url.toString(), { method, headers, body: body ? JSON.stringify(body) : undefined });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Supabase REST error ${res.status}: ${text}`);
-  }
-  return await res.json();
 }
 
 // ── TrustGraph scoring (lightweight inline implementation) ─
@@ -126,6 +96,7 @@ const RUBRIC = {
   PEER_REVIEW_POSITIVE:  2,
   PEER_REVIEW_NEGATIVE: -2,
   MILESTONE_DELIVERED:   5,
+  SELF_CORRECTED:        2,  // Agent acknowledged and corrected an error — positive delta
 };
 
 function computeScore(events, tier = 'explorer') {
@@ -330,16 +301,16 @@ const TOOLS = {
                 a.stewardship_ladder, a.created_at, a.color, a.operator_did,
                 c.tier AS cac_tier_name, c.status AS cac_status,
                 c.usdc_prepaid, c.token_balance
-         FROM public.cuttlefish_agents a
-         LEFT JOIN public.cuttlefish_cac_credentials c
+         FROM app.cuttlefish_agents a
+         LEFT JOIN app.cuttlefish_cac_credentials c
            ON c.agent_did = a.did AND c.id = (
-             SELECT MAX(id) FROM public.cuttlefish_cac_credentials WHERE agent_did = a.did
+             SELECT MAX(id) FROM app.cuttlefish_cac_credentials WHERE agent_did = a.did
            )
          ORDER BY a.id`
       );
       const allEvents = await query(
         `SELECT agent_did, event_type, delta, score_after, created_at, note, reference, domain
-         FROM public.cuttlefish_trust_events ORDER BY created_at ASC`
+         FROM app.cuttlefish_trust_events ORDER BY created_at ASC`
       );
       const eventsByDid = {};
       for (const ev of allEvents || []) {
@@ -403,7 +374,7 @@ const TOOLS = {
       const { did, name, role, agent_type, agent_subtype, operator_did,
               description, greeting, color, metadata } = args;
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_agents
+        `INSERT INTO app.cuttlefish_agents
          (did, name, role, agent_type, agent_subtype, operator_did, description, greeting, color, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id, did, name, created_at`,
@@ -443,18 +414,63 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, event_type, delta, reference, note, domain, evidence_hash } = args;
       const agent = await query(
-        `SELECT cac_tier, lifecycle_status FROM public.cuttlefish_agents WHERE did = $1`, [agent_did]
+        `SELECT cac_tier, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1`, [agent_did]
       );
       if (!agent.length) return { error: 'Agent not found' };
       const tier = agent[0].cac_tier || 'explorer';
 
-      // Determine delta
-      const deltaVal = delta !== undefined ? Number(delta) : (RUBRIC[event_type] || 0);
+      // ── Graduated scoring for negative events ──
+      // Instead of applying the full rubric delta immediately, use an escalation
+      // ladder: warn first, then scale penalties, and reward self-correction.
+      let deltaVal = delta !== undefined ? Number(delta) : (RUBRIC[event_type] || 0);
+      let appliedNote = note || '';
+
+      if (deltaVal < 0 && event_type !== 'SLASH_APPLIED' && event_type !== 'CONSTITUTIONAL_VIOLATION_MAJOR' && event_type !== 'PROMPT_INJECTION_DETECTED') {
+        // Count prior negative events of this type for this agent
+        const priorNegatives = await query(
+          `SELECT count(*)::int AS c FROM app.cuttlefish_trust_events
+           WHERE agent_did = $1 AND event_type = $2 AND delta < 0`,
+          [agent_did, event_type]
+        );
+        const priorCount = priorNegatives[0]?.c || 0;
+
+        // Check if agent has recently self-corrected (acknowledged the issue in fleet chat)
+        const recentCorrection = await query(
+          `SELECT count(*)::int AS c FROM app.cuttlefish_trust_events
+           WHERE agent_did = $1 AND event_type = 'SELF_CORRECTED' AND created_at > NOW() - INTERVAL '1 hour'`,
+          [agent_did]
+        );
+        const hasSelfCorrected = (recentCorrection[0]?.c || 0) > 0;
+
+        // Escalation ladder
+        if (priorCount === 0) {
+          // First offense: warning only, no score hit
+          deltaVal = 0;
+          appliedNote = (note || '') + ' [WARNING: First offense — no score impact. Future violations will escalate.]';
+        } else if (priorCount === 1) {
+          // Second offense: 25% of full delta
+          deltaVal = Math.round(deltaVal * 0.25 * 100) / 100;
+          appliedNote = (note || '') + ` [ESCALATION: 2nd offense — ${deltaVal} applied (25% of full penalty).]`;
+        } else if (priorCount === 2) {
+          // Third offense: 50% of full delta
+          deltaVal = Math.round(deltaVal * 0.5 * 100) / 100;
+          appliedNote = (note || '') + ` [ESCALATION: 3rd offense — ${deltaVal} applied (50% of full penalty).]`;
+        } else {
+          // Fourth+ offense: full delta, but with note
+          appliedNote = (note || '') + ` [ESCALATION: ${priorCount + 1}th offense — full penalty applied.]`;
+        }
+
+        // Self-correction bonus: if agent acknowledged and corrected, halve the penalty
+        if (hasSelfCorrected && deltaVal < 0) {
+          deltaVal = Math.round(deltaVal * 0.5 * 100) / 100;
+          appliedNote += ' [SELF-CORRECTED: penalty halved for acknowledging the issue.]';
+        }
+      }
 
       // Get all events to compute score after
       const allEvents = await query(
         `SELECT event_type, delta, score_after, created_at
-         FROM public.cuttlefish_trust_events WHERE agent_did = $1
+         FROM app.cuttlefish_trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [agent_did]
       );
       const computed = computeScore(allEvents, tier);
@@ -465,17 +481,17 @@ const TOOLS = {
 
       // Insert event
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_trust_events
+        `INSERT INTO app.cuttlefish_trust_events
          (agent_did, event_type, delta, score_after, reference, note, domain, evidence_hash)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, event_id, created_at`,
         [agent_did, event_type, deltaVal, clampedScore,
-         reference || null, note || null, domain || null, evidence_hash || null]
+         reference || null, appliedNote || null, domain || null, evidence_hash || null]
       );
 
       // Update agent's trust score
       await query(
-        `UPDATE public.cuttlefish_agents
+        `UPDATE app.cuttlefish_agents
          SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW(),
              lifecycle_status = COALESCE($3, lifecycle_status),
              updated_at = NOW()
@@ -492,6 +508,11 @@ const TOOLS = {
         band,
         lifecycleTransition: transition,
         eventId: inserted.event_id,
+        escalation: deltaVal < 0 && delta !== undefined && deltaVal !== delta ? {
+          originalDelta: delta,
+          appliedDelta: deltaVal,
+          reason: 'Graduated scoring applied (escalation ladder + self-correction bonus)',
+        } : undefined,
       };
     },
   },
@@ -513,11 +534,11 @@ const TOOLS = {
       const { did } = args;
       const events = await query(
         `SELECT event_id, event_type, delta, score_after, reference, note, domain, created_at
-         FROM public.cuttlefish_trust_events WHERE agent_did = $1
+         FROM app.cuttlefish_trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [did]
       );
       const agent = await query(
-        `SELECT cac_tier FROM public.cuttlefish_agents WHERE did = $1`, [did]
+        `SELECT cac_tier FROM app.cuttlefish_agents WHERE did = $1`, [did]
       );
       const tier = agent[0]?.cac_tier || 'explorer';
       const result = computeScore(events || [], tier);
@@ -558,18 +579,18 @@ const TOOLS = {
       const agent = await query(
         `SELECT did, name, cac_tier, trust_score, trust_band, lifecycle_status,
                 agent_type, agent_subtype, created_at
-         FROM public.cuttlefish_agents WHERE did = $1`, [did]
+         FROM app.cuttlefish_agents WHERE did = $1`, [did]
       );
       if (!agent.length) return { error: 'Agent not found' };
       const events = await query(
         `SELECT event_type, delta, score_after, note, created_at
-         FROM public.cuttlefish_trust_events WHERE agent_did = $1
+         FROM app.cuttlefish_trust_events WHERE agent_did = $1
          ORDER BY created_at DESC LIMIT 10`, [did]
       );
       const tier = agent[0].cac_tier || 'explorer';
       const allEvents = await query(
         `SELECT event_type, delta, created_at
-         FROM public.cuttlefish_trust_events WHERE agent_did = $1
+         FROM app.cuttlefish_trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [did]
       );
       const result = computeScore(allEvents, tier);
@@ -620,7 +641,7 @@ const TOOLS = {
       // Get existing events for this agent/domain
       const existingEvents = await query(
         `SELECT quality_score, delta, standing_after, created_at
-         FROM public.cuttlefish_standing_events
+         FROM app.cuttlefish_standing_events
          WHERE agent_did = $1 AND domain = $2
          ORDER BY created_at ASC`, [did, domain]
       );
@@ -634,7 +655,7 @@ const TOOLS = {
 
       // Insert event
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_standing_events
+        `INSERT INTO app.cuttlefish_standing_events
          (agent_did, domain, event_type, quality_score, delta, standing_after, reference, note)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, event_id, created_at`,
@@ -643,7 +664,7 @@ const TOOLS = {
 
       // Upsert standing record
       await query(
-        `INSERT INTO public.cuttlefish_stewardship_standing
+        `INSERT INTO app.cuttlefish_stewardship_standing
          (agent_did, domain, standing_value, ladder_tier, last_event_at, updated_at)
          VALUES ($1, $2, $3, $4, NOW(), NOW())
          ON CONFLICT (id) DO UPDATE
@@ -688,13 +709,13 @@ const TOOLS = {
         // Specific domain
         const events = await query(
           `SELECT event_type, quality_score, delta, standing_after, note, created_at
-           FROM public.cuttlefish_standing_events
+           FROM app.cuttlefish_standing_events
            WHERE agent_did = $1 AND domain = $2
            ORDER BY created_at DESC LIMIT 10`, [did, domain]
         );
         const allEvents = await query(
           `SELECT quality_score, delta, created_at
-           FROM public.cuttlefish_standing_events
+           FROM app.cuttlefish_standing_events
            WHERE agent_did = $1 AND domain = $2
            ORDER BY created_at ASC`, [did, domain]
         );
@@ -721,7 +742,7 @@ const TOOLS = {
       // All domains
       const domains = await query(
         `SELECT domain, standing_value, ladder_tier, last_event_at, updated_at
-         FROM public.cuttlefish_stewardship_standing
+         FROM app.cuttlefish_stewardship_standing
          WHERE agent_did = $1
          ORDER BY domain`, [did]
       );
@@ -729,7 +750,7 @@ const TOOLS = {
       if (!domains.length) {
         const domainEvents = await query(
           `SELECT domain, quality_score, delta, created_at
-           FROM public.cuttlefish_standing_events
+           FROM app.cuttlefish_standing_events
            WHERE agent_did = $1
            ORDER BY created_at ASC`, [did]
         );
@@ -791,7 +812,7 @@ const TOOLS = {
 
       // Fetch agent data
       const agent = await query(
-        `SELECT cac_tier, ial, lifecycle_status, trust_band FROM public.cuttlefish_agents WHERE did = $1`,
+        `SELECT cac_tier, ial, lifecycle_status, trust_band FROM app.cuttlefish_agents WHERE did = $1`,
         [agent_did]
       );
       if (!agent.length) {
@@ -800,14 +821,14 @@ const TOOLS = {
 
       // Compute trust score
       const trustEvents = await query(
-        `SELECT event_type, delta, created_at FROM public.cuttlefish_trust_events
+        `SELECT event_type, delta, created_at FROM app.cuttlefish_trust_events
          WHERE agent_did = $1 ORDER BY created_at ASC`, [agent_did]
       );
       const tgScore = computeScore(trustEvents, agent[0].cac_tier || 'explorer');
 
       // Compute standing
       const standingEvents = await query(
-        `SELECT quality_score, delta, created_at FROM public.cuttlefish_standing_events
+        `SELECT quality_score, delta, created_at FROM app.cuttlefish_standing_events
          WHERE agent_did = $1 AND domain = $2 ORDER BY created_at ASC`, [agent_did, domain]
       );
       const standing = computeStanding(standingEvents);
@@ -859,7 +880,7 @@ const TOOLS = {
 
       // Audit log
       await query(
-        `INSERT INTO public.cuttlefish_gate_decisions
+        `INSERT INTO app.cuttlefish_gate_decisions
          (agent_did, activity_type, domain, cac_tier, ial, allowed,
           trustgraph_score, trustgraph_status, standing_value, standing_ladder,
           reasons, purpose)
@@ -929,7 +950,7 @@ const TOOLS = {
               work_unit, section_404_category, reward_eligibility, signature } = args;
 
       const lastEvent = await query(
-        `SELECT current_hash FROM public.cuttlefish_activity_registry
+        `SELECT current_hash FROM app.cuttlefish_activity_registry
          WHERE agent_did = $1 ORDER BY id DESC LIMIT 1`, [agent_did]
       );
       const previousHash = lastEvent[0]?.current_hash || null;
@@ -938,7 +959,7 @@ const TOOLS = {
       const currentHash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_activity_registry
+        `INSERT INTO app.cuttlefish_activity_registry
          (actor_kya_id, agent_did, activity_type, domain, work_unit, evidence_hash,
           section_404_category, reward_eligibility, signature, previous_hash, current_hash)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -954,18 +975,18 @@ const TOOLS = {
       let trustResult = null;
       if (tgDelta !== 0) {
         const agent = await query(
-          `SELECT cac_tier, lifecycle_status FROM public.cuttlefish_agents WHERE did = $1`, [agent_did]
+          `SELECT cac_tier, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1`, [agent_did]
         );
         if (agent.length) {
           const tier = agent[0].cac_tier || 'explorer';
           const allEvents = await query(
-            `SELECT event_type, delta, created_at FROM public.cuttlefish_trust_events
+            `SELECT event_type, delta, created_at FROM app.cuttlefish_trust_events
              WHERE agent_did = $1 ORDER BY created_at ASC`, [agent_did]
           );
           const computed = computeScore(allEvents, tier);
           const scoreAfter = Math.max(TG_PARAMS.FLOOR, Math.min(TG_PARAMS.CEIL, computed.score + tgDelta));
           await query(
-            `INSERT INTO public.cuttlefish_trust_events
+            `INSERT INTO app.cuttlefish_trust_events
              (agent_did, event_type, delta, score_after, reference, note, domain, evidence_hash, ar_event_ref)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
             [agent_did, activity_type, tgDelta, scoreAfter,
@@ -973,7 +994,7 @@ const TOOLS = {
              domain || null, evidence_hash, inserted.event_id]
           );
           await query(
-            `UPDATE public.cuttlefish_agents
+            `UPDATE app.cuttlefish_agents
              SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW(), updated_at = NOW()
              WHERE did = $3`,
             [scoreAfter, getBand(scoreAfter), agent_did]
@@ -1010,7 +1031,7 @@ const TOOLS = {
         `SELECT version, activity_type, base_rate, min_amount, per_event_cap,
                 quality_multiplier_default, section_404_category, effective_from,
                 effective_until, is_active
-         FROM public.cuttlefish_rate_card
+         FROM app.cuttlefish_rate_card
          WHERE is_active = true
          ORDER BY activity_type`
       );
@@ -1047,7 +1068,7 @@ const TOOLS = {
       let sql = `SELECT id, agent_did, tier, usdc_prepaid, token_balance, status,
                         issued_at, expires_at, created_at, chain_tx_hash,
                         cac_address, operator_address, rollover_expires_at, last_topup_at
-                 FROM public.cuttlefish_cac_credentials`;
+                 FROM app.cuttlefish_cac_credentials`;
       const params = [];
       if (agent_did) {
         sql += ` WHERE agent_did = $1 ORDER BY id DESC`;
@@ -1095,7 +1116,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, tier, usdc_prepaid, token_balance } = args;
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_cac_credentials
+        `INSERT INTO app.cuttlefish_cac_credentials
          (agent_did, tier, usdc_prepaid, token_balance, status)
          VALUES ($1, $2, $3, $4, 'active')
          RETURNING id, agent_did, tier, usdc_prepaid, token_balance, status, issued_at`,
@@ -1104,7 +1125,7 @@ const TOOLS = {
 
       // Update agent's cac_tier
       await query(
-        `UPDATE public.cuttlefish_agents SET cac_tier = $1, updated_at = NOW() WHERE did = $2`,
+        `UPDATE app.cuttlefish_agents SET cac_tier = $1, updated_at = NOW() WHERE did = $2`,
         [tier || 'explorer', agent_did]
       );
 
@@ -1139,7 +1160,7 @@ const TOOLS = {
       let sql = `SELECT id, title, description, category, submitter_did, version,
                         parent_id, status, ipfs_cid, chain_anchor_tx, combined_hash,
                         routed_to, metadata, created_at, trust_score_delta, arweave_tx, updated_at
-                 FROM public.cuttlefish_proposals`;
+                 FROM app.cuttlefish_proposals`;
       const conditions = [];
       const params = [];
       if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
@@ -1183,7 +1204,7 @@ const TOOLS = {
     handler: async (args) => {
       const { title, description, category, submitter_did } = args;
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_proposals
+        `INSERT INTO app.cuttlefish_proposals
          (title, description, category, submitter_did, status)
          VALUES ($1, $2, $3, $4, 'submitted')
          RETURNING id, title, status, created_at`,
@@ -1213,8 +1234,8 @@ const TOOLS = {
       const members = await query(
         `SELECT c.id, c.member_did, c.role, c.domain, c.seated_at, c.term_expires_at,
                 c.status, c.metadata, a.name, a.agent_type
-         FROM public.cuttlefish_council c
-         LEFT JOIN public.cuttlefish_agents a ON a.did = c.member_did
+         FROM app.cuttlefish_council c
+         LEFT JOIN app.cuttlefish_agents a ON a.did = c.member_did
          WHERE c.status = 'seated'
          ORDER BY c.seated_at DESC`
       );
@@ -1253,7 +1274,7 @@ const TOOLS = {
       let sql = `SELECT id, agent_did, platform, content_en, content_native, language,
                         hashtags, is_milestone, constitutional_score, flags,
                         operator_approved, trib_approved, status, posted_at, post_url, created_at
-                 FROM public.cuttlefish_social_posts`;
+                 FROM app.cuttlefish_social_posts`;
       const conditions = [];
       const params = [];
       if (agent_did) { params.push(agent_did); conditions.push(`agent_did = $${params.length}`); }
@@ -1304,7 +1325,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, platform, content_en, content_native, language, hashtags, is_milestone } = args;
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_social_posts
+        `INSERT INTO app.cuttlefish_social_posts
          (agent_did, platform, content_en, content_native, language, hashtags, is_milestone, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft')
          RETURNING id, status, created_at`,
@@ -1335,7 +1356,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_id } = args;
       let sql = `SELECT id, agent_id, conversation_id, user_message, agent_response, simulated, created_at
-                 FROM public.cuttlefish_chat_messages`;
+                 FROM app.cuttlefish_chat_messages`;
       const params = [];
       if (agent_id) {
         sql += ` WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 100`;
@@ -1379,7 +1400,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_id, conversation_id, user_message, agent_response, simulated } = args;
       const [inserted] = await query(
-        `INSERT INTO public.cuttlefish_chat_messages
+        `INSERT INTO app.cuttlefish_chat_messages
          (agent_id, conversation_id, user_message, agent_response, simulated)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, created_at`,
@@ -1409,7 +1430,7 @@ const TOOLS = {
         `SELECT layer_key, name, sub_label, amount_m, pct_of_total, color,
                 seniority, yield_score, coverage, description, details,
                 display_order, is_active, is_open
-         FROM public.cuttlefish_capital_stack
+         FROM app.cuttlefish_capital_stack
          WHERE is_active = 1
          ORDER BY display_order, seniority`
       );
@@ -1450,7 +1471,7 @@ const TOOLS = {
                 headline, amount_range, rate_or_credit, term_years,
                 eligibility, application_url, contact, notes,
                 display_order, is_active
-         FROM public.cuttlefish_financing_programs
+         FROM app.cuttlefish_financing_programs
          WHERE is_active = 1
          ORDER BY display_order`
       );
@@ -1492,7 +1513,7 @@ const TOOLS = {
       const { tier } = args;
       let sql = `SELECT id, tier, name, subtitle, multiple, multiple_color,
                         featured, metrics, display_order, created_at
-                 FROM public.cuttlefish_scenarios`;
+                 FROM app.cuttlefish_scenarios`;
       const params = [];
       if (tier) {
         sql += ` WHERE tier = $1`;
@@ -1546,7 +1567,7 @@ const TOOLS = {
       try {
         for (const table of tables) {
           try {
-            const rows = await query(`SELECT COUNT(*) AS cnt FROM public.${table}`);
+            const rows = await query(`SELECT COUNT(*) AS cnt FROM app.${table}`);
             counts[table] = Number(rows[0]?.cnt || 0);
           } catch (e) {
             counts[table] = `error: ${e.message}`;
@@ -1557,8 +1578,7 @@ const TOOLS = {
       }
       return {
         status: reachable ? 'ok' : 'degraded',
-        supabaseUrl: SUPABASE_URL,
-        supabaseProjectRef: SUPABASE_PROJECT_REF,
+        localDb: 'postgres@127.0.0.1:5432/xmrt_suite',
         engines: {
           trustgraph: { spec: 'TG-001 v1.0', version: '1.0.0', params: { CEIL: TG_PARAMS.CEIL, DECAY: TG_PARAMS.DECAY, CAP: TG_PARAMS.CAP } },
           standing: { spec: 'SS-001 v1.0', version: '1.0.0', params: { ALPHA: SS_PARAMS.ALPHA, CAP: SS_PARAMS.CAP_DEFAULT } },
@@ -1692,15 +1712,21 @@ const useHttp = process.argv.includes('--http');
 const portIdx = process.argv.indexOf('--port');
 const port = portIdx !== -1 ? parseInt(process.argv[portIdx + 1]) : 3120;
 
-console.error(`[CuttlefishClaws MCP] Starting CuttlefishClaws Cloud Redundancy MCP Server v1.0.0`);
-console.error(`[CuttlefishClaws MCP] Supabase: ${SUPABASE_URL}`);
+console.error(`[CuttlefishClaws MCP] Starting CuttlefishClaws Local Redundancy MCP Server v1.0.0`);
+console.error(`[CuttlefishClaws MCP] Local Postgres: postgres@127.0.0.1:5432/xmrt_suite`);
 console.error(`[CuttlefishClaws MCP] Engines: TG-001, SS-001, SGQ-001, AR-001`);
 console.error(`[CuttlefishClaws MCP] Transport: ${useHttp ? `HTTP on :${port}` : 'stdio'}`);
 console.error(`[CuttlefishClaws MCP] ${Object.keys(TOOLS).length} tools registered`);
+
+export { TOOLS };
 
 if (useHttp) {
   startHttp(port);
 } else {
   process.stdin.on('data', onStdioData);
-  process.stdin.on('end', () => process.exit(0));
+  // Only auto-exit on stdin end when running standalone (not imported in-process)
+  const isMain = process.argv[1] && fileURLToPath(import.meta.url).replace(/\\/g, '/').endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());
+  if (isMain) {
+    process.stdin.on('end', () => process.exit(0));
+  }
 }
