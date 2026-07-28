@@ -1484,18 +1484,6 @@ const toolHandlers = {
     } catch (err) { return { success: false, error: err.message }; }
   },
 
-  'ef:ecosystem-monitor': async () => {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/ecosystem-monitor`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(60000),
-      });
-      return { success: true, status: res.status, data: await res.json() };
-    } catch (err) { return { success: false, error: err.message }; }
-  },
-
   'ef:frontend-health': async () => {
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/check-frontend-health`, {
