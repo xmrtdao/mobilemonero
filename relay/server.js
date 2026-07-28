@@ -6537,6 +6537,7 @@ function getToolDescription(name) {
     'python-exec': 'Execute Python 3.11 code and return stdout/stderr. Pass code via "code" (string, required). Optional: pip (package name to install first, comma-separated for multiple), timeout (seconds, max 120). Use for data analysis, SQL queries, text processing, or any computation. Example: TOOL_CALL: {"tool":"python-exec","args":{"code":"print(numpy.__version__)","pip":"numpy"}}',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
+    'resend-get-email': 'Fetch the full content of a specific email by ID. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Returns full text, html, attachments, and raw data.',
     'sent-emails': 'Search sent email history from suite_email_activity table. Use search param to find by email address or subject. Columns: id, email_from, email_to, subject, status, sent_at.',
     'pfp-leads': 'Manage PFP leads. Actions: list (all leads), search (by name/email/notes), add (create new lead), update (modify existing). Columns: contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes.',
     'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor)',
