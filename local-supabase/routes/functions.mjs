@@ -93,6 +93,8 @@ function getFunctions(dir) {
   if (!_funcCache) _funcCache = discoverFunctions(dir);
   return _funcCache;
 }
+// Clear cache on file changes (called after each request to pick up new .ts files)
+function clearFunctionCache() { _funcCache = null; }
 
 // Extract the top-level serve() handler from function source.
 // Returns the handler text (the function expression inside serve(...))
@@ -270,6 +272,8 @@ Deno.serve({ port }, handler);
 
 async function handleFunctionCall(req, res, { functionsDir, denoPath }) {
   const name = req.params.name;
+  // Clear cache each time to pick up new .ts files (cache was stale when .js was replaced with .ts)
+  clearFunctionCache();
   const funcs = getFunctions(functionsDir);
   const funcFile = funcs[name];
 

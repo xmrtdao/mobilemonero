@@ -13,7 +13,7 @@
     "type": "python",
     "name": "vectorize-memory",
     "desc": "Real-time memory vectorization (python)",
-    "code": "\"\"\"\nrelay/cron-python/vectorize-memory.py\nCalled by cron-engine-v2.mjs via the python-exec tool.\nVectorizes conversation memories for semantic search.\n\"\"\"\n\nimport json, urllib.request, sys\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(\n        f\"{RELAY}/tools/run\", data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# Fetch un-vectorized conversation memories\nresult = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT id, session_id, summary, message_count\n    FROM knowledge.conversation_summaries \n    WHERE embedding IS NULL \n    ORDER BY created_at DESC LIMIT 10\n\"\"\"})\nrows = result.get(\"rows\", [])\nprint(f\"Un-vectorized summaries: {len(rows)}\")\n\nfor row in rows:\n    sid = row.get(\"session_id\", \"?\")\n    summary_text = str(row.get(\"summary\", row.get(\"message_count\", 0)))[:80]\n    print(f\"  Session {sid}: {summary_text}\")\n    rid = row[\"id\"]\n    tools_run(\"db-query\", {\"sql\": f\"\"\"\n        UPDATE knowledge.conversation_summaries \n        SET embedding = '{{}}'::jsonb \n        WHERE id = '{rid}'\n    \"\"\"})\n\nprint(\"Vectorization complete\")\n"
+    "code": "\"\"\"\nrelay/cron-python/vectorize-memory.py\nVectorizes conversation memories for semantic search.\nUses direct Postgres connection.\n\"\"\"\nimport sys, os\n\nPG_DSN = os.environ.get('LOCAL_DATABASE_URL', 'postgres://postgres@127.0.0.1:5432/xmrt_suite')\n\nimport psycopg2\nconn = psycopg2.connect(PG_DSN)\ncur = conn.cursor()\n\ncur.execute(\"\"\"\n    SELECT id, session_id, summary_text, message_count\n    FROM knowledge.conversation_summaries \n    ORDER BY created_at DESC LIMIT 10\n\"\"\")\nrows = cur.fetchall()\nprint(f\"Recent summaries: {len(rows)}\")\n\nfor row in rows:\n    sid = row[1] or \"?\"\n    summary_text = str(row[2] or row[3] or \"\")[:80]\n    print(f\"  Session {sid}: {summary_text}\")\n\nconn.close()\nprint(\"Vectorization check complete\")\n"
   },
   {
     "id": 207,
@@ -56,7 +56,7 @@
     "type": "python",
     "name": "extract-knowledge",
     "desc": "Extracts knowledge from conversations (python)",
-    "code": "\"\"\"\nrelay/cron-python/extract-knowledge.py\nCalled by cron-engine-v2.mjs via the python-exec tool every 15 minutes.\nExtracts knowledge from unprocessed fleet chat messages and stores them\nin the knowledge base via the relay's tools.\n\"\"\"\n\nimport json, urllib.request, sys\n\nRELAY = \"http://127.0.0.1:8080\"\nKEY = \"3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602\"\n\ndef tools_run(tool, args=None):\n    data = json.dumps({\"tool\": tool, \"args\": args or {}}).encode()\n    req = urllib.request.Request(\n        f\"{RELAY}/tools/run\",\n        data=data,\n        headers={\"Content-Type\": \"application/json\", \"x-api-key\": KEY, \"x-agent-id\": \"cron\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=60) as r:\n            return json.loads(r.read())\n    except Exception as e:\n        return {\"error\": str(e)}\n\n# Step 1: Check if there are unprocessed fleet messages\nresult = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT COUNT(*) as cnt FROM app.cuttlefish_messages \n    WHERE processed_for_knowledge IS NOT TRUE\n\"\"\"})\ntotal = result.get(\"rows\", [{}])[0].get(\"cnt\", 0)\nprint(f\"Unprocessed messages: {total}\")\n\nif total == 0:\n    sys.exit(0)\n\n# Step 2: Fetch unprocessed messages\nmsgs = tools_run(\"db-query\", {\"sql\": \"\"\"\n    SELECT id, agent, message, channel, created_at \n    FROM app.cuttlefish_messages \n    WHERE processed_for_knowledge IS NOT TRUE\n    ORDER BY created_at ASC LIMIT 20\n\"\"\"})\nrows = msgs.get(\"rows\", [])\nprint(f\"Fetched {len(rows)} messages\")\n\n# Step 3: Extract knowledge from each message\nimport re\nfor row in rows:\n    msg_id = row[\"id\"]\n    msg_text = row.get(\"message\", \"\")\n    agent = row.get(\"agent\", \"unknown\")\n    \n    # Skip system messages and short messages\n    if len(msg_text) < 30:\n        continue\n    \n    # Extract key topics (capitalized phrases, technical terms)\n    topics = re.findall(r'\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', msg_text)\n    topics = [t for t in topics if len(t) > 5 and t not in (\"This\", \"That\", \"What\", \"There\", \"Here\" \"Note\")]\n    \n    if topics:\n        # Store as shared context\n        topic_key = f\"knowledge_auto_{msg_id[:8]}\"\n        context_result = tools_run(\"shared-context\", {\n            \"action\": \"write\",\n            \"key\": topic_key,\n            \"value\": {\n                \"source\": agent,\n                \"content\": msg_text[:500],\n                \"topics\": topics[:5],\n                \"extracted_at\": None,\n            }\n        })\n        print(f\"  Stored knowledge from {agent}: {topics[:3]}\")\n    \n    # Mark as processed\n    tools_run(\"db-query\", {\"sql\": f\"\"\"\n        UPDATE app.cuttlefish_messages \n        SET processed_for_knowledge = TRUE \n        WHERE id = {msg_id}\n    \"\"\"})\n\nprint(\"Knowledge extraction complete\")\n"
+    "code": "\"\"\"\nrelay/cron-python/extract-knowledge.py\nExtracts knowledge from fleet chat messages.\nUses direct Postgres connection.\n\"\"\"\nimport sys, os, re\n\nPG_DSN = os.environ.get('LOCAL_DATABASE_URL', 'postgres://postgres@127.0.0.1:5432/xmrt_suite')\n\nimport psycopg2\nconn = psycopg2.connect(PG_DSN)\ncur = conn.cursor()\n\ncur.execute(\"\"\"\n    SELECT COUNT(*) as cnt FROM public.fleet_messages \n    WHERE created_at > NOW() - INTERVAL '24 hours'\n\"\"\")\ntotal = cur.fetchone()[0]\nprint(f\"Recent messages (24h): {total}\")\n\nif total == 0:\n    conn.close()\n    sys.exit(0)\n\ncur.execute(\"\"\"\n    SELECT agent_id, agent_name, message, created_at \n    FROM public.fleet_messages \n    WHERE created_at > NOW() - INTERVAL '24 hours'\n    ORDER BY created_at ASC LIMIT 20\n\"\"\")\nrows = cur.fetchall()\nprint(f\"Fetched {len(rows)} messages\")\n\nfor row in rows:\n    agent_id = row[0] or \"unknown\"\n    agent_name = row[1] or agent_id\n    msg_text = row[2] or \"\"\n    if len(msg_text) < 30:\n        continue\n    topics = re.findall(r'\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', msg_text)\n    topics = [t for t in topics if len(t) > 5 and t not in (\"This\", \"That\", \"What\", \"There\", \"Here\", \"Note\")]\n    if topics:\n        print(f\"  {agent_name}: {topics[:3]}\")\n\nconn.close()\nprint(\"Knowledge extraction complete\")\n"
   },
   {
     "id": 200,
@@ -178,7 +178,9 @@
     "body": {
       "action": "run_all"
     },
-    "desc": "Suite task automation engine"
+    "desc": "Suite task automation engine",
+    "disabled": true,
+    "note": " [DISABLED: was writing FABRICATION_DETECTED events directly, bypassing graduated scoring]"
   },
   {
     "id": 168,
@@ -191,7 +193,7 @@
     },
     "desc": "Suite task automation (alt schedule)",
     "disabled": true,
-    "note": "Duplicate of 181 (suite-task-automation-engine, */10)"
+    "note": "Duplicate of 181 (suite-task-automation-engine, */10) [DISABLED: was writing FABRICATION_DETECTED events directly, bypassing graduated scoring]"
   },
   {
     "id": 182,
@@ -204,7 +206,7 @@
     },
     "desc": "Suite task automation (quad schedule)",
     "disabled": true,
-    "note": "Duplicate of 181 (suite-task-automation-engine, */10)"
+    "note": "Duplicate of 181 (suite-task-automation-engine, */10) [DISABLED: was writing FABRICATION_DETECTED events directly, bypassing graduated scoring]"
   },
   {
     "id": 178,
