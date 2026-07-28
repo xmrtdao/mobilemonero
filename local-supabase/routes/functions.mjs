@@ -127,14 +127,15 @@ function extractServeHandler(src) {
   for (let k = 0; k < src.length; k++) cleaned += cleanChars[k] ? ' ' : src[k];
 
   // Find all top-level "serve(" or "Deno.serve("
-  // Skip import statements: "import { serve }" or "import ... serve"
+  // Skip matches that are inside import statements
   const re = /\b(?:Deno\.)?serve\s*\(/g;
   let m;
   while ((m = re.exec(cleaned)) !== null) {
-    // Skip if this serve() is inside an import statement
+    // Skip if this serve() is inside an import statement (check the match's own line)
     const lineStart = src.lastIndexOf('\n', m.index) + 1;
-    const lineBefore = src.slice(lineStart, m.index);
-    if (/\bimport\b/.test(lineBefore)) continue;
+    const lineEnd = src.indexOf('\n', m.index);
+    const thisLine = src.slice(lineStart, lineEnd === -1 ? src.length : lineEnd);
+    if (/\bimport\b/.test(thisLine)) continue;
     
     const openParenIdx = m.index + m[0].length - 1; // index of '(' in src
     // Paren-match on the CLEANED view (strings/comments replaced with spaces)
