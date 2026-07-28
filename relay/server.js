@@ -1234,6 +1234,7 @@ const toolHandlers = {
         case 'list_prs': url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/pulls?state=open&per_page=20`; break;
         case 'search_code': url = `https://api.github.com/search/code?q=${encodeURIComponent(data?.query || '')}+repo:${GITHUB_OWNER}/${repo}`; break;
         case 'list_repos': url = `https://api.github.com/orgs/${GITHUB_OWNER}/repos?per_page=20`; break;
+        case 'update_issue': url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/issues/${data?.issue_number || ''}`; method = 'PATCH'; ghBody = { title: data?.title, body: data?.body || '', state: data?.state || undefined }; break;
         default: return { success: false, error: `Unknown action: ${action}` };
       }
       const ghRes = await fetch(url, {
@@ -1243,6 +1244,68 @@ const toolHandlers = {
       });
       const ghData = await ghRes.json();
       return { success: ghRes.ok, data: ghData, status: ghRes.status };
+    } catch (err) { return { success: false, error: err.message }; }
+  },
+
+  'ef:ecosystem-monitor': async (args) => {
+    try {
+      const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GITHUB_TOKEN_PROOF_OF_LIFE;
+      const repos = [
+        { owner: 'xmrtdao', name: 'mobilemonero' },
+        { owner: 'xmrtdao', name: 'atlas-amd-hackathon' },
+        { owner: 'xmrtdao', name: 'xmrt-university' },
+        { owner: 'partyfavorphoto', name: 'XMRT-Ecosystem' },
+        { owner: 'partyfavorphoto', name: 'MESHNET' },
+        { owner: 'partyfavorphoto', name: 'optimus-booth-activation' },
+        { owner: 'partyfavorphoto', name: 'partyfavorphoto-tools' },
+      ];
+      const headers = GITHUB_TOKEN ? { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'XMRT-DAO-Relay' } : null;
+      const repoResults = [];
+      for (const repo of repos) {
+        try {
+          if (!headers) { repoResults.push({ repo: repo.name, error: 'no token', score: 0 }); continue; }
+          const [repoRes, commitsRes, issuesRes, prsRes] = await Promise.all([
+            fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}`, { headers, signal: AbortSignal.timeout(10000) }),
+            fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}/commits?per_page=5`, { headers, signal: AbortSignal.timeout(10000) }),
+            fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}/issues?state=open&per_page=5`, { headers, signal: AbortSignal.timeout(10000) }),
+            fetch(`https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?state=open&per_page=5`, { headers, signal: AbortSignal.timeout(10000) }),
+          ]);
+          const repoData = await repoRes.json();
+          const commits = await commitsRes.json();
+          const issues = await issuesRes.json();
+          const prs = await prsRes.json();
+          const metrics = {
+            recent_commits: Array.isArray(commits) ? commits.length : 0,
+            open_issues: Array.isArray(issues) ? issues.filter(i => !i.pull_request).length : 0,
+            open_prs: Array.isArray(prs) ? prs.length : 0,
+            last_updated: repoData.updated_at,
+            stars: repoData.stargazers_count || 0,
+            forks: repoData.forks_count || 0,
+          };
+          let score = 0;
+          score += Math.min(metrics.recent_commits * 2, 20);
+          score += Math.min(metrics.open_issues * 2.5, 25);
+          score += Math.min(metrics.open_prs * 3, 15);
+          const hoursSinceUpdate = (Date.now() - new Date(metrics.last_updated).getTime()) / 3600000;
+          score += Math.max(15 - hoursSinceUpdate / 10, 0);
+          repoResults.push({ repo: repo.name, score: Math.min(score, 100), metrics, url: repoData.html_url });
+        } catch (e) { repoResults.push({ repo: repo.name, error: e.message, score: 0 }); }
+      }
+      repoResults.sort((a, b) => b.score - a.score);
+      const [propCount, agentCount] = await Promise.all([
+        queryLocalPg(`SELECT count(*)::int AS c FROM app.cuttlefish_agent_tasks`).catch(() => ({ rows: [{ c: 0 }] })),
+        queryLocalPg(`SELECT count(*)::int AS c FROM app.cuttlefish_agents`).catch(() => ({ rows: [{ c: 0 }] })),
+      ]);
+      return {
+        success: true,
+        repos_evaluated: repos.length,
+        top_repos: repoResults.slice(0, 5),
+        governance: {
+          total_tasks: propCount.rows[0]?.c || 0,
+          total_agents: agentCount.rows[0]?.c || 0,
+        },
+        token_health: headers ? 'healthy' : 'degraded',
+      };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -6567,6 +6630,13 @@ app.post('/tools/run', async (req, res) => {
     const toolAliases = {
       'search_knowledge': { tool: 'ef:knowledge', args: { action: 'search', data: { search_term: '' } } },
       'store_knowledge': { tool: 'ef:knowledge', args: { action: 'store_knowledge' } },
+      // GitHub native tool aliases — route through relay-native ef:github (bypasses broken Deno edge function)
+      'listGitHubIssues': { tool: 'ef:github', args: { action: 'list_issues' } },
+      'listGitHubPullRequests': { tool: 'ef:github', args: { action: 'list_prs' } },
+      'searchGitHubCode': { tool: 'ef:github', args: { action: 'search_code' } },
+      'createGitHubIssue': { tool: 'ef:github', args: { action: 'create_issue' } },
+      'updateGitHubIssue': { tool: 'ef:github', args: { action: 'update_issue' } },
+      'getGitHubIssue': { tool: 'ef:github', args: { action: 'get_issue' } },
     };
     const alias = toolAliases[tool];
     if (alias) {
