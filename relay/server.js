@@ -5505,18 +5505,28 @@ app.post('/log/sent', (req, res) => {
 const SUPABASE_UNIVERSITY_URL = `http://127.0.0.1:8080/functions/v1/xmrt-university`;
 
 app.post('/api/ef-university', async (req, res) => {
-  try {
-    const r = await fetch(SUPABASE_UNIVERSITY_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body || {}),
-      signal: AbortSignal.timeout(10000),
+  // Return stub — the xmrt-university Deno edge function crashes local-sb's
+  // Deno process pool when it tries to connect to cloud Supabase.
+  // The dashboard can show the stub data without the edge function.
+  const action = req.body?.action || 'courses';
+  if (action === 'courses') {
+    return res.json({
+      success: true,
+      total_modules: 6,
+      total_courses: 6,
+      courses: [
+        { module: 1, title: 'Introduction to XMRT DAO', description: 'Overview of the XMRT DAO ecosystem, governance model, and mission.', passing_score: 70, total_questions: 10 },
+        { module: 2, title: 'Cuttlefish Protocol', description: 'Understanding the Cuttlefish Protocol stack, trust graph, and standing system.', passing_score: 70, total_questions: 10 },
+        { module: 3, title: 'Fleet Operations', description: 'Operating within the XMRT fleet — agent roles, communication, and task management.', passing_score: 70, total_questions: 10 },
+        { module: 4, title: 'Governance & Voting', description: 'Participating in DAO governance — proposals, voting, and stewardship.', passing_score: 70, total_questions: 10 },
+        { module: 5, title: 'Security & Compliance', description: 'Security best practices, compliance requirements, and incident response.', passing_score: 70, total_questions: 10 },
+        { module: 6, title: 'Advanced Topics', description: 'Advanced XMRT ecosystem topics — mesh networking, mining, and cross-DAO collaboration.', passing_score: 70, total_questions: 10 },
+      ],
+      _stub: true,
+      _note: 'Edge function unavailable — using hardcoded curriculum data',
     });
-    const data = await r.json();
-    res.json(data);
-  } catch (e) {
-    res.status(502).json({ success: false, error: e.message });
   }
+  return res.json({ success: false, error: 'Action not supported in stub mode: ' + action });
 });
 
 // POST /api/xmrt-university/ingest — Ingest a freshly-issued XMRT University cert into relay state.
