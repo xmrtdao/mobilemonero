@@ -189,6 +189,8 @@ async function ensureFunctionProcess(name, funcFile, functionsDir, denoPath) {
   const src = readFileSync(funcFile, 'utf8');
   const extracted = extractServeHandler(src);
   if (!extracted) {
+    // Debug: log the first 200 chars of the source to see what's being parsed
+    console.log(`[functions] ${name}: extractServeHandler failed. Source preview:`, src.slice(0, 200).replace(/\n/g, '\\n'));
     throw new Error(`Function ${name} has no top-level serve() call`);
   }
 
