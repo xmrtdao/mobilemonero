@@ -143,7 +143,11 @@ function extractServeHandler(src) {
     // Paren-match on the CLEANED view (strings/comments replaced with spaces)
     // so that parens appearing inside string/template-literal content
     // (e.g. `${expr.foo(bar)}`) don't throw off the depth count.
-    let depth = 1;
+    // Track BOTH paren depth and brace depth — we only count parens at
+    // the top brace level, so nested parens inside function bodies don't
+    // cause early termination.
+    let parenDepth = 1;
+    let braceDepth = 0;
     let j = openParenIdx + 1;
     let inS = null;
     while (j < cleaned.length) {
@@ -154,14 +158,16 @@ function extractServeHandler(src) {
         j++; continue;
       }
       if (c === '"' || c === "'" || c === '`') { inS = c; j++; continue; }
-      if (c === '(') depth++;
-      else if (c === ')') {
-        depth--;
-        if (depth === 0) break;
+      if (c === '{') braceDepth++;
+      else if (c === '}') braceDepth--;
+      else if (c === '(' && braceDepth === 0) parenDepth++;
+      else if (c === ')' && braceDepth === 0) {
+        parenDepth--;
+        if (parenDepth === 0) break;
       }
       j++;
     }
-    if (depth !== 0) continue; // unbalanced, skip
+    if (parenDepth !== 0) continue; // unbalanced, skip
     // Slice the handler from RAW src using the position we found in cleaned
     // (cleaned and src are 1:1 in length since cleanChars keeps whitespace).
     const handlerText = src.slice(openParenIdx + 1, j);
