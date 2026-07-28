@@ -7723,7 +7723,7 @@ async function gatherFleetContext() {
     },
     relay: {
       status: health?.status,
-      uptimeSec: health?.uptime ? Math.floor(health.uptime) : null,
+      // uptime intentionally omitted — always stale after restart, misleads agents
       tools: health?.tools,
       requests: health?.requests,
     },
