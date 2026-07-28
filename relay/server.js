@@ -1226,8 +1226,11 @@ const toolHandlers = {
       const GITHUB_OWNER = process.env.GITHUB_OWNER || 'epicadventurescr';
       if (!GITHUB_TOKEN) return { success: false, error: 'GitHub token not configured in relay .env' };
       const repo = (data?.repo || 'mobilemonero').replace(/^.*\//, '');
+      // Normalize action names: camelCase -> snake_case
+      const actionMap = { listIssues: 'list_issues', listPrs: 'list_prs', listPRs: 'list_prs', searchCode: 'search_code', createIssue: 'create_issue', updateIssue: 'update_issue', getIssue: 'get_issue', listRepos: 'list_repos' };
+      const normalizedAction = actionMap[action] || action;
       let url = '', method = 'GET', ghBody;
-      switch (action) {
+      switch (normalizedAction) {
         case 'list_issues': url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/issues?state=open&per_page=20`; break;
         case 'get_issue': url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/issues/${data?.issue_number || ''}`; break;
         case 'create_issue': url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/issues`; method = 'POST'; ghBody = { title: data?.title, body: data?.body || '' }; break;
