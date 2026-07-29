@@ -68,8 +68,20 @@ const CATEGORY_WEIGHT = {
 };
 
 // ── Stage order ──
+// Two stage systems coexist:
+//   System A (advance_task tool): DISCUSS → PLANNING → EXECUTION → REVIEW → COMPLETION
+//   System B (workflow engine):   PENDING → PLAN → EXECUTE → DISCUSS → INTEGRATE → VERIFY → COMPLETED
+// The engine maps System A stages to System B for auto-advancement.
 const STAGE_ORDER = ['PENDING', 'PLAN', 'EXECUTE', 'DISCUSS', 'INTEGRATE', 'VERIFY', 'COMPLETED'];
-const TERMINAL_STAGES = ['COMPLETED', 'CANCELLED', 'BLOCKED'];
+const TERMINAL_STAGES = ['COMPLETED', 'CANCELLED', 'BLOCKED', 'COMPLETION'];
+
+// Map advance_task stage names to workflow engine stage names
+const STAGE_ALIAS = {
+  'PLANNING': 'PLAN',
+  'EXECUTION': 'EXECUTE',
+  'REVIEW': 'VERIFY',
+  'COMPLETION': 'COMPLETED',
+};
 
 function toAgentName(did) {
   const rev = Object.entries(AGENT_DID_MAP).find(([, v]) => v === did);
@@ -106,12 +118,12 @@ export async function runWorkflowEngine() {
     const { default: pg } = await import('pg');
     const pool = new pg.Pool({ connectionString: 'postgres://postgres@127.0.0.1:5432/xmrt_suite', max: 3 });
     
-    // ── Phase 1: Advance tasks that have artifacts in VERIFY stage ──
+    // ── Phase 1: Advance tasks that have artifacts in VERIFY/REVIEW stage ──
     try {
       const tasksToComplete = await pool.query(
         `SELECT t.id, t.title, t.assignee_agent_id, t.priority, t.category
          FROM app.tasks t
-         WHERE t.stage = 'VERIFY'
+         WHERE (t.stage = 'VERIFY' OR t.stage = 'REVIEW')
            AND t.status = 'IN_PROGRESS'
            AND t.id IN (
              SELECT DISTINCT task_id FROM app.task_artifacts
@@ -120,6 +132,7 @@ export async function runWorkflowEngine() {
       );
       
       for (const task of tasksToComplete.rows) {
+        // Set to COMPLETED (engine's stage system) — advance_task's COMPLETION is also treated as terminal
         await pool.query(
           `UPDATE app.tasks SET stage = 'COMPLETED', status = 'COMPLETED', 
            stage_started_at = NOW(), updated_at = NOW(), progress_percentage = 100
@@ -171,14 +184,15 @@ export async function runWorkflowEngine() {
          FROM app.tasks t
          JOIN app.task_artifacts a ON a.task_id = t.id
          WHERE t.status = 'IN_PROGRESS'
-           AND t.stage != 'COMPLETED'
-           AND t.stage != 'VERIFY'
+           AND t.stage NOT IN ('COMPLETED', 'VERIFY', 'REVIEW', 'COMPLETION')
            AND a.created_at > NOW() - INTERVAL '15 minutes'
          ORDER BY t.id`
       );
       
       for (const task of tasksWithNewArtifacts.rows) {
-        const currentIdx = STAGE_ORDER.indexOf(task.stage);
+        // Map System A stage names to System B for index lookup
+        const normalizedStage = STAGE_ALIAS[task.stage] || task.stage;
+        const currentIdx = STAGE_ORDER.indexOf(normalizedStage);
         if (currentIdx === -1 || currentIdx >= STAGE_ORDER.length - 1) continue;
         const nextStage = STAGE_ORDER[currentIdx + 1];
         await pool.query(

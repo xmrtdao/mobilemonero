@@ -1709,12 +1709,16 @@ const toolHandlers = {
   'assign_task': async (args) => {
         const { title, description, category, assignee_agent_id, priority, task_id } = args || {};
         if (!title) return { error: 'Missing title' };
+        // Map string priority names to integers (DB column is integer)
+        const PRIORITY_MAP = { 'low': 1, 'medium': 3, 'normal': 3, 'high': 4, 'critical': 5, 'urgent': 5 };
+        const priorityVal = (typeof priority === 'string') ? (PRIORITY_MAP[priority.toLowerCase()] || 5)
+          : (typeof priority === 'number' ? priority : 5);
         try {
           const id = task_id || 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
           const result = await queryLocalPg(
             `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, created_at, updated_at)
              VALUES ($1, $2, $3, 'DISCUSS', 'PENDING', $4, $5, $6, NOW(), NOW()) RETURNING *`,
-            [id, title, description || '', priority || 5, category || 'other', assignee_agent_id || null]
+            [id, title, description || '', priorityVal, category || 'other', assignee_agent_id || null]
           );
           // Announce to fleet chat for discussion
           try {
@@ -2550,7 +2554,7 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
   try {
     logActivity('eliza', tag, 'SEND', message.slice(0, 80));
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const body = {
           userQuery: message,
           senderName: senderName,
@@ -8240,24 +8244,27 @@ async function routeFleetMessage(entry) {
       // Load conversation history
       let contextHistory = '';
       try {
-        const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + sessionId + '&limit=20', {
-          signal: AbortSignal.timeout(3000),
+        const convRes = await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': 'local-anon-key' },
+          body: JSON.stringify({ action: 'get_messages', agentId: agentName, channel: 'fleet', limit: 20 }),
+          signal: AbortSignal.timeout(5000),
         });
         const convData = await convRes.json();
-        if (convData.messages && convData.messages.length > 0) {
+        if (convData.success && convData.messages && convData.messages.length > 0) {
           contextHistory = '\n\nRecent conversation context:\n' + convData.messages.map(function(m) {
-            return '[' + m.agent + '] ' + m.content;
+            return '[' + (m.message_type || 'unknown') + '] ' + (m.content || '');
           }).join('\n');
         }
       } catch (e) { console.error('[routeToLocalOllamaAgent] load conv history failed:', e.message); }
 
       // Store this message in conversation memory
       try {
-        await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+        await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
-          signal: AbortSignal.timeout(3000),
+          headers: { 'Content-Type': 'application/json', 'apikey': 'local-anon-key' },
+          body: JSON.stringify({ action: 'add_message', agentId: agentName, channel: 'fleet', messageData: { message_type: 'user', content: entry.agentLabel + ': ' + entry.message } }),
+          signal: AbortSignal.timeout(5000),
         });
       } catch (e) { console.error('[routeToLocalOllamaAgent] store user msg failed:', e.message); }
 
@@ -8394,29 +8401,39 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
                 if (finalReply && finalReply.length > 0) {
                   // Store reply in conversation memory
                   try {
-                    await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+                    await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: agentLabel, content: finalReply }),
-                      signal: AbortSignal.timeout(3000),
+                      headers: { 'Content-Type': 'application/json', 'apikey': 'local-anon-key' },
+                      body: JSON.stringify({ action: 'add_message', agentId: agentName, channel: 'fleet', messageData: { message_type: 'assistant', content: finalReply } }),
+                      signal: AbortSignal.timeout(5000),
                     });
                   } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (synth) failed:', e.message); }
                   return await postAndReRoute(agentName, finalReply, 'fleet');
                 }
               } else {
                 console.log(`[${agentName}-tool-synth] synth failed:`, synthResult.error || 'empty response');
+                // Fallback: post the stripped reply if synthesis returned empty
+                if (reply && reply.length > 0) {
+                  console.log(`[${agentName}] Synthesis returned empty, posting stripped reply`);
+                  return await postAndReRoute(agentName, reply, 'fleet');
+                }
               }
             } catch (e) {
               console.log('[' + agentName + '-tool-synth] error:', e.message);
             }
+            // Fallback: if synthesis failed but we have a stripped reply, post it
+            if (reply && reply.length > 0) {
+              console.log(`[${agentName}] Synthesis failed, posting stripped reply as fallback`);
+              return await postAndReRoute(agentName, reply, 'fleet');
+            }
           } else {
             // Store reply in conversation memory
             try {
-              await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+              await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: agentLabel, content: reply }),
-                signal: AbortSignal.timeout(3000),
+                headers: { 'Content-Type': 'application/json', 'apikey': 'local-anon-key' },
+                body: JSON.stringify({ action: 'add_message', agentId: agentName, channel: 'fleet', messageData: { message_type: 'assistant', content: reply } }),
+                signal: AbortSignal.timeout(5000),
               });
             } catch (e) { console.error('[routeToLocalOllamaAgent] store assistant reply (direct) failed:', e.message); }
             // Set agent back to idle
@@ -9331,10 +9348,18 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   }
   
   // Also publish to gossipsub fleet-broadcast topic
-  publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
+  // Use setImmediate so this doesn't block the POST response — mesh may be disconnected
+  setImmediate(() => {
+    publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
+  });
   
   // Route to other agents asynchronously — fire and forget, don't block the POST
-  routeFleetMessage(entry).catch(e => console.log('[fleet-route] Error:', e.message));
+  // Use setImmediate to ensure res.json() executes before any ai-chat fetch
+  // blocks the event loop. Without this, a slow ai-chat response (30s+) from a
+  // previous message can queue new POST requests and cause timeouts.
+  setImmediate(() => {
+    routeFleetMessage(entry).catch(e => console.log('[fleet-route] Error:', e.message));
+  });
   
   res.json({
     success: true,
