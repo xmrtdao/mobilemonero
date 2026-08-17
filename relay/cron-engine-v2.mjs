@@ -112,13 +112,36 @@ async function loadJobsFromPg() {
     // we fall back to reading from a JSON file the relay maintains.
     let rows;
     try {
-      const r = await c.query("SELECT jobid as id, schedule, command FROM cron.job ORDER BY jobid");
+      const r = await c.query("SELECT id, name, schedule, command, enabled FROM cron.job ORDER BY id");
       rows = r.rows;
-      // Detect type: SQL or edge function (SELECT extensions.http)
-      rows = rows.map((j) => ({
-        ...j,
-        type: /^SELECT\s+extensions\.http/i.test(j.command || '') ? 'edge' : 'sql',
-      }));
+      // Detect type: SQL, edge function, or shell command
+      rows = rows.map((j) => {
+        const cmd = (j.command || '').trim();
+        let type = 'sql';
+        if (/^SELECT\s+extensions\.http/i.test(cmd)) {
+          type = 'edge';
+        } else if (/^(python3?|node|cd\s|bash|sh\s)/i.test(cmd)) {
+          type = 'shell';
+        }
+        return { ...j, type, name: j.name || ('job-' + j.id), disabled: j.enabled === false };
+      });
+      // If cron.job is empty, fall back to JSON file
+      if (rows.length === 0) {
+        const f = join(DATA_DIR, 'cron-jobs.json');
+        if (existsSync(f)) {
+          rows = JSON.parse(readFileSync(f, 'utf8'));
+          rows = rows.map((j) => {
+            if (j.type === 'sql' && j.sql) {
+              return { id: j.id, schedule: j.schedule, type: 'sql', command: j.sql, name: j.name, disabled: j.disabled };
+            }
+            if (j.type === 'ef' && j.fn) {
+              return { id: j.id, schedule: j.schedule, type: 'edge', fn: j.fn, body: j.body || {}, name: j.name, disabled: j.disabled };
+            }
+            return j;
+          });
+          log(`loaded ${rows.length} jobs from cron-jobs.json (cron.job was empty)`);
+        }
+      }
     } catch (e) {
       // pg_cron not available; read from relay-data/cron-jobs.json
       const f = join(DATA_DIR, 'cron-jobs.json');
@@ -230,6 +253,18 @@ async function runFleetChatFollowUp() {
     const mentionMatch = lastSystemPrompt.message.match(/^@(\w+)/);
     if (!mentionMatch) return { ok: true, result: 'No @mention in system prompt' };
     const promptedAgent = mentionMatch[1].toLowerCase();
+    // Skip prompts older than 10 minutes to avoid re-prompting stale threads
+    const promptAge = Date.now() - new Date(lastSystemPrompt.ts || lastSystemPrompt.time || 0).getTime();
+    if (promptAge > 600000) return { ok: true, result: `System prompt to @${promptedAgent} is stale (${Math.round(promptAge/60000)}m old), skipping` };
+    // Hard cooldown: skip if we already followed up on this prompt in the last 10 minutes
+    const promptId = lastSystemPrompt.id || lastSystemPrompt.ts || lastSystemPrompt.time;
+    if (promptId) {
+      const cooldowns = state.followUpCooldowns || {};
+      const lastFollowUp = cooldowns[promptId];
+      if (lastFollowUp && (Date.now() - lastFollowUp) < 600000) {
+        return { ok: true, result: `Follow-up for prompt ${promptId.slice(0,12)} already sent <10min ago, skipping` };
+      }
+    }
     const promptedAgentResponses = msgs.slice(lastSystemPromptIdx + 1).filter(
       m => m.agent.toLowerCase().includes(promptedAgent) && m.agent !== 'system'
     );
@@ -255,6 +290,13 @@ async function runFleetChatFollowUp() {
       body: JSON.stringify({ agent: 'system', message: prompt, channel: 'fleet' }),
       signal: AbortSignal.timeout(5000),
     });
+    // Record cooldown
+    if (promptId) {
+      const s = loadState();
+      if (!s.followUpCooldowns) s.followUpCooldowns = {};
+      s.followUpCooldowns[promptId] = Date.now();
+      saveState(s);
+    }
     return { ok: sendRes.ok, result: `Follow-up sent to @${followUpAgent} about ${promptedAgent}'s response` };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -399,6 +441,21 @@ async function tick() {
       res = await runFleetChatTaskCreator();
     } else if (job.type === 'python' && job.code) {
       res = await runPythonJob(job.code);
+    } else if (job.type === 'shell') {
+      // Execute shell commands via child_process. Use async exec (NOT execSync)
+      // so the relay's event loop is not blocked. execSync would block the
+      // relay from serving the very HTTP requests these shell jobs make back
+      // to localhost:8080, causing them to time out (e.g. trustgraph-scanner,
+      // health-check, fleet-chat-heartbeat all fetch the relay).
+      try {
+        const { exec } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execAsync = promisify(exec);
+        const { stdout } = await execAsync(job.command, { timeout: 120_000, cwd: join(__dirname, '..'), maxBuffer: 1024 * 1024 });
+        res = { ok: true, rows: (stdout || '').toString().length };
+      } catch (e) {
+        res = { ok: false, error: e.stderr?.toString()?.slice(0, 200) || e.message };
+      }
     } else {
       res = { ok: false, error: `unknown type: ${job.type}` };
     }
@@ -445,7 +502,7 @@ export function runDaemon() {
 }
 
 // CLI mode
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`) {
+if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
   if (process.argv.includes('--once')) {
     runOnce().then(() => process.exit(0));
   } else if (process.argv.includes('--list')) {

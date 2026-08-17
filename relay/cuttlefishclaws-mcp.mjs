@@ -62,6 +62,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000,
 });
 
+// Prevent crash on pool-level errors (ECONNRESET, PG restart, etc.)
+pool.on('error', (err) => {
+  console.error('[CuttlefishClaws MCP] Pool error (non-fatal):', err.message);
+});
+
 async function query(sql, params = []) {
   const res = await pool.query(sql, params);
   return res.rows;
@@ -1588,6 +1593,350 @@ const TOOLS = {
         tableCounts: counts,
         totalTables: tables.length,
         timestamp: new Date().toISOString(),
+      };
+    },
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // 10. trust_network — full TrustGraph network (visualization)
+  // ════════════════════════════════════════════════════════════
+  trust_network: {
+    name: 'cuttlefishclaws_trust_network',
+    description: 'Get the full TrustGraph network — all agents with computed scores and all trust events. For visualization and analysis.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const [agents, allEvents] = await Promise.all([
+        query(`SELECT did, name, role, agent_type, status, cac_tier, trust_band,
+                      lifecycle_status, created_at
+               FROM app.cuttlefish_agents ORDER BY id`),
+        query(`SELECT agent_did, event_type, delta, score_after, reference, note, domain, created_at
+               FROM app.cuttlefish_trust_events ORDER BY created_at ASC`),
+      ]);
+
+      const eventsByDid = {};
+      for (const ev of allEvents || []) {
+        if (!eventsByDid[ev.agent_did]) eventsByDid[ev.agent_did] = [];
+        eventsByDid[ev.agent_did].push(ev);
+      }
+
+      const nodes = (agents || []).map(a => {
+        const tier = a.cac_tier || 'explorer';
+        const agentEvents = eventsByDid[a.did] || [];
+        const score = computeScore(agentEvents, tier);
+        return {
+          id: a.did,
+          name: a.name,
+          role: a.role,
+          agentType: a.agent_type,
+          status: a.status,
+          cacTier: a.cac_tier,
+          trustScore: score.score,
+          trustBand: score.band,
+          tierFloor: score.tier_floor,
+          lifecycleStatus: a.lifecycle_status,
+          memberSince: a.created_at,
+          eventCount: agentEvents.length,
+        };
+      });
+
+      return {
+        nodes,
+        totalAgents: nodes.length,
+        totalEvents: (allEvents || []).length,
+      };
+    },
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // 11. trust_recompute — replay events to recompute a score
+  // ════════════════════════════════════════════════════════════
+  trust_recompute: {
+    name: 'cuttlefishclaws_trust_recompute',
+    description: "Recompute an agent's TrustGraph score by replaying all events from the registry. Idempotent.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        did: { type: 'string', description: 'Agent DID' },
+      },
+      required: ['did'],
+    },
+    handler: async (args) => {
+      const { did } = args;
+      const agent = await query(
+        `SELECT cac_tier FROM app.cuttlefish_agents WHERE did = $1`, [did]
+      );
+      if (!agent.length) return { error: 'Agent not found' };
+      const tier = agent[0].cac_tier || 'explorer';
+      const events = await query(
+        `SELECT event_type, delta, score_after, created_at, note, reference, domain
+         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         ORDER BY created_at ASC`, [did]
+      );
+      const result = computeScore(events || [], tier);
+      await query(
+        `UPDATE app.cuttlefish_agents
+         SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW()
+         WHERE did = $3`,
+        [result.score, result.band, did]
+      );
+      return {
+        success: true,
+        did,
+        score: result.score,
+        band: result.band,
+        eventsProcessed: result.record_version,
+      };
+    },
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // 12. standing_get_domain — standing for a specific domain
+  // ════════════════════════════════════════════════════════════
+  standing_get_domain: {
+    name: 'cuttlefishclaws_standing_get_domain',
+    description: 'Get Stewardship Standing for an agent in a specific domain. Includes event history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        did: { type: 'string', description: 'Agent DID' },
+        domain: { type: 'string', description: 'Domain (e.g., engineering_review, governance_review)' },
+      },
+      required: ['did', 'domain'],
+    },
+    handler: async (args) => {
+      const { did, domain } = args;
+      const allEvents = await query(
+        `SELECT quality_score, delta, created_at
+         FROM app.cuttlefish_standing_events
+         WHERE agent_did = $1 AND domain = $2
+         ORDER BY created_at ASC`, [did, domain]
+      );
+      const computed = computeStanding(allEvents || []);
+      const events = await query(
+        `SELECT event_type, quality_score, delta, standing_after, note, created_at
+         FROM app.cuttlefish_standing_events
+         WHERE agent_did = $1 AND domain = $2
+         ORDER BY created_at DESC LIMIT 10`, [did, domain]
+      );
+      return {
+        did,
+        domain,
+        standing: computed.standing,
+        ladderTier: computed.ladder_tier,
+        provisional: computed.provisional,
+        capActive: computed.cap_active,
+        eventCount: computed.event_count,
+        recentEvents: (events || []).map(e => ({
+          type: e.event_type,
+          qualityScore: Number(e.quality_score),
+          delta: Number(e.delta),
+          standingAfter: Number(e.standing_after),
+          note: e.note,
+          at: e.created_at,
+        })),
+      };
+    },
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // 13. vocab_guardrail — canonical glossary validation
+  // ════════════════════════════════════════════════════════════
+  vocab_guardrail: {
+    name: 'cuttlefishclaws_vocab_guardrail',
+    description: 'Validate text against the Cuttlefish canonical glossary. Returns violations for banned/retired terms (validator, staker, APY, TRIB, etc.) with canonical replacements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Text to validate' },
+        context: { type: 'string', description: 'Optional context identifier' },
+      },
+      required: ['text'],
+    },
+    handler: async (args) => {
+      const { text, context } = args;
+      const DICTIONARY = [
+        ['validator', 'Builder Steward', 'error'],
+        ['staker', 'Builder Steward', 'error'],
+        ['node operator', 'Builder Steward', 'warn'],
+        ['constitutional agent license', 'Compute Access Certificate (CAC)', 'error'],
+        ['constitutional audit card', 'Compute Access Certificate (CAC)', 'error'],
+        ['trib token', '$E2R', 'error'],
+        ['builder tier', 'Developer/Studio/Enterprise/Anchor', 'error'],
+        ['apy', '§404 activity rewards', 'warn'],
+        ['savings account', '§404 activity rewards', 'warn'],
+        ['staking rewards', '§404 activity rewards', 'error'],
+        ['soulbound', 'non-transferable / identity-bound', 'warn'],
+        ['whitelist', 'allowlist', 'warn'],
+        ['blacklist', 'denylist', 'warn'],
+        ['master', 'primary / main / operator', 'warn'],
+        ['slave', 'replica / secondary', 'error'],
+      ];
+      const tribRegex = /\btrib\b(?!utary)/gi;
+      const lowerText = text.toLowerCase();
+      const violations = [];
+
+      for (const [term, canonical, severity] of DICTIONARY) {
+        let idx = lowerText.indexOf(term);
+        if (idx !== -1) {
+          violations.push({
+            term: text.slice(idx, idx + term.length),
+            canonical, severity,
+            position: [idx, idx + term.length],
+            reference: 'CFL-GLOSSARY-001',
+          });
+        }
+      }
+      let match;
+      while ((match = tribRegex.exec(text)) !== null) {
+        violations.push({
+          term: match[0], canonical: '$E2R', severity: 'error',
+          position: [match.index, match.index + match[0].length],
+          reference: 'CFL-DECISION-001',
+        });
+      }
+
+      if (violations.length > 0) {
+        return {
+          valid: false,
+          checks: violations.length,
+          violations,
+          handoff: 'Fix the flagged terms above, then re-submit. See CFL-GLOSSARY-001 for the canonical term set.',
+        };
+      }
+      return { valid: true, checks: 0, violations: [], context: context || null };
+    },
+  },
+
+  // ════════════════════════════════════════════════════════════
+  // 14. links_* — branded short links
+  // ════════════════════════════════════════════════════════════
+  links_create: {
+    name: 'cuttlefishclaws_links_create',
+    description: 'Create a branded short link for any project. Supports custom slugs, QR codes, tags, and expiration. Projects: party (pfp.foto), harbor (31harbor.com), xmrt (xmrtsolutions.com), cuttlefish (cuttlefishlabs.io), mobilemonero (mobilemonero.com).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', enum: ['party', 'harbor', 'xmrt', 'cuttlefish', 'mobilemonero'], description: 'Project name' },
+        url: { type: 'string', description: 'Destination URL' },
+        key: { type: 'string', description: 'Custom slug (auto-generated if omitted)' },
+        title: { type: 'string', description: 'Link title for previews' },
+        qrCode: { type: 'boolean', default: true },
+        expiresAt: { type: 'string', description: 'ISO-8601 expiration date' },
+      },
+      required: ['project', 'url'],
+    },
+    handler: async (args) => {
+      const { project, url, key, title, qrCode, expiresAt } = args;
+      const domain = project === 'party' ? 'pfp.foto' : project === 'harbor' ? '31harbor.com' : project === 'xmrt' ? 'xmrtsolutions.com' : project === 'cuttlefish' ? 'cuttlefishlabs.io' : 'mobilemonero.com';
+      const result = await query(
+        `INSERT INTO links.links (project_id, domain, key, url, title, qr_code, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, domain, key, url, title, created_at`,
+        [project, domain, key || crypto.randomBytes(6).toString('base64url'), url, title || null, qrCode !== false, expiresAt || null]
+      );
+      if (!result.length) throw new Error('Failed to create link');
+      const link = result[0];
+      return {
+        id: link.id,
+        shortLink: `https://${link.domain}/${link.key}`,
+        domain: link.domain,
+        key: link.key,
+        url: link.url,
+        title: link.title,
+        qrCodeUrl: qrCode !== false ? `/api/links/qr/${link.domain}/${link.key}` : null,
+        createdAt: link.created_at,
+      };
+    },
+  },
+
+  links_list: {
+    name: 'cuttlefishclaws_links_list',
+    description: 'List all short links for a project with search and pagination.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', enum: ['party', 'harbor', 'xmrt', 'cuttlefish', 'mobilemonero'], description: 'Project name' },
+        search: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Max results (default 50)' },
+      },
+      required: ['project'],
+    },
+    handler: async (args) => {
+      const { project, search, limit } = args;
+      const pageSize = Math.min(limit || 50, 100);
+      let sql = 'SELECT l.*, COALESCE(c.click_count, 0) AS clicks FROM links.links l LEFT JOIN (SELECT link_id, COUNT(*) AS click_count FROM links.clicks GROUP BY link_id) c ON c.link_id = l.id WHERE l.project_id = $1';
+      const params = [project];
+      if (search) {
+        sql += ' AND (l.url ILIKE $2 OR l.key ILIKE $2 OR l.title ILIKE $2)';
+        params.push(`%${search}%`);
+      }
+      sql += ' ORDER BY l.created_at DESC LIMIT $' + (params.length + 1);
+      params.push(pageSize);
+      const links = await query(sql, params);
+      return {
+        links: (links || []).map(l => ({
+          id: l.id,
+          shortLink: `https://${l.domain}/${l.key}`,
+          domain: l.domain,
+          key: l.key,
+          url: l.url,
+          title: l.title,
+          clicks: Number(l.clicks || 0),
+          createdAt: l.created_at,
+        })),
+        total: (links || []).length,
+      };
+    },
+  },
+
+  links_analytics: {
+    name: 'cuttlefishclaws_links_analytics',
+    description: 'Get click analytics for a short link.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string', description: 'Domain (e.g. cuttlefishlabs.io)' },
+        key: { type: 'string', description: 'Short link slug' },
+        interval: { type: 'string', enum: ['24h', '7d', '30d', '90d', 'all'], default: '30d' },
+      },
+      required: ['domain', 'key'],
+    },
+    handler: async (args) => {
+      const { domain, key, interval } = args;
+      const link = await query(
+        'SELECT id FROM links.links WHERE domain = $1 AND key = $2',
+        [domain, key]
+      );
+      if (!link.length) throw new Error('Link not found');
+      const linkId = link[0].id;
+      const days = interval === '24h' ? 1 : interval === '7d' ? 7 : interval === '30d' ? 30 : interval === '90d' ? 90 : null;
+      let clickSql = 'SELECT COUNT(*) AS total FROM links.clicks WHERE link_id = $1';
+      const clickParams = [linkId];
+      if (days) clickSql += ` AND clicked_at > NOW() - INTERVAL '${days} days'`;
+      const totalClicks = await query(clickSql, clickParams);
+      const clicksOverTime = await query(
+        `SELECT DATE(clicked_at) AS date, COUNT(*) AS count FROM links.clicks WHERE link_id = $1 GROUP BY DATE(clicked_at) ORDER BY date DESC LIMIT 30`,
+        [linkId]
+      );
+      return {
+        link: `https://${domain}/${key}`,
+        totalClicks: Number(totalClicks[0]?.total || 0),
+        clicksOverTime: (clicksOverTime || []).map(c => ({ date: c.date, count: Number(c.count) })),
+      };
+    },
+  },
+
+  links_projects: {
+    name: 'cuttlefishclaws_links_projects',
+    description: 'List all configured brands with their short domains.',
+    inputSchema: { type: 'object', properties: {} },
+    handler: async () => {
+      const projects = await query('SELECT id, name, domain, tag_color FROM links.projects ORDER BY id', []);
+      return {
+        projects: (projects || []).map(p => ({ id: p.id, name: p.name, domain: p.domain, color: p.tag_color })),
       };
     },
   },

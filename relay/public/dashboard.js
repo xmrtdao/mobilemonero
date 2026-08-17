@@ -33,6 +33,34 @@
         if (taskEl) taskEl.style.color = taskIssues.length > 0 ? '#fbbf24' : '#4ade80';
         const checkEl = el('qds-last-check');
         if (checkEl) checkEl.textContent = new Date(d.checkedAt).toLocaleTimeString();
+
+        // ── Consolidated stack health score (from /api/supervisor/status health block) ──
+        const healthEl = el('qds-health-score');
+        if (healthEl && d.health) {
+          const sc = d.health.score;
+          const st = d.health.status;
+          const color = sc >= 80 ? '#4ade80' : sc >= 50 ? '#fbbf24' : '#f87171';
+          healthEl.textContent = sc + '/100 (' + st + ')';
+          healthEl.style.color = color;
+        } else if (healthEl) {
+          healthEl.textContent = 'n/a';
+          healthEl.style.color = '#6b6b80';
+        }
+
+        // ── Consolidated services tracker (per-service up/down chips) ──
+        const svcTrackerEl = el('qds-services-tracker');
+        if (svcTrackerEl) {
+          if (!d.services || d.services.length === 0) {
+            svcTrackerEl.innerHTML = '<span style="color:#6b6b80;">no services</span>';
+          } else {
+            svcTrackerEl.innerHTML = d.services.map(function(s){
+              const ok = s.healthy;
+              const c = ok ? '#4ade80' : '#f87171';
+              const dot = ok ? '●' : '○';
+              return '<span style="color:' + c + ';margin-right:6px;white-space:nowrap;" title="' + s.name + (s.pid ? ' (pid ' + s.pid + ')' : '') + '">' + dot + ' ' + s.name + '</span>';
+            }).join('');
+          }
+        }
       }).catch(() => {
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');

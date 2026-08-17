@@ -3,6 +3,7 @@
 process.on('uncaughtException', (err) => {  console.error('[Relay] UNCAUGHT EXCEPTION:', err?.message || err);  console.error(err?.stack || '(no stack)');  /* Don't exit - let the process continue */ });
 process.on('unhandledRejection', (err) => {
   console.error('[Relay] Unhandled rejection (non-fatal):', err?.message || err);
+  if (err?.stack) console.error('[Relay] Stack:', err.stack.split('\n').slice(0,4).join('\n'));
 });
 
 /**
@@ -37,7 +38,7 @@ const require = createRequire(import.meta.url);
 // ── Load .env ───────────────────────────────────────────────
 // Node doesn't auto-load .env. The previous version used
 // `if (!process.env[key])` so OS env won; that meant a stale
-// `SUPABASE_URL=https://vawouugtzwmejxqkeqqj.supabase.co` set
+// `SUPABASE_URL` was previously set to a dead cloud host (vawouugtzwmejxqkeqqj.supabase.co).
 // system-wide silently routed the relay to a dead cloud host
 // (ENOTFOUND), making every dashboard card report "offline".
 // We now OVERWRITE with relay/.env values so the local-first
@@ -80,6 +81,7 @@ import registerSuiteRoutes from './routes/suite-dashboard.mjs';
 import registerPfpRoutes from './routes/pfp.js';
 import { discoverFunctions, listFunctions } from './lib/function-runtime.mjs';
 import * as qwenMemory from './lib/qwen-memory.mjs';
+import { handleAgentPrompt, pollOutbox } from './hermes-bridge.mjs';
 
 // CuttlefishClaws protocol engines (TG-001, SS-001, SGQ-001, AR-001)
 import { registerCuttlefishRoutes } from './lib/cuttlefish-routes.mjs';
@@ -123,6 +125,11 @@ const GITHUB_REPO = process.env.GITHUB_REPO || 'xmrtdao/mobilemonero';
 const HERMES_ENDPOINT = process.env.HERMES_ENDPOINT || 'http://192.168.14.115:9090';
 const DATA_DIR = join(__dirname, '..', 'relay-data');
 const LOG_FILE = join(DATA_DIR, 'relay-log.json');
+
+// ── Stripe ──────────────────────────────────────────────────
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || '';
 
 mkdirSync(DATA_DIR, { recursive: true });
 
@@ -963,12 +970,235 @@ const toolHandlers = {
     if (!key) return { error: 'key is required' };
     return { key, value: state.get(key) };
   },
-
   'state-set': async (args) => {
-    const { key, value } = args || {};
+    const key = args?.key;
+    const value = args?.value;
     if (!key) return { error: 'key is required' };
     state.set(key, value);
     return { success: true, key, value };
+  },
+
+  'service_control': async (args) => {
+    const action = args?.action;
+    const service = args?.service;
+    const validActions = ['restart', 'status', 'start', 'stop'];
+    const validServices = ['relay', 'pg', 'local-sb', 'vite', 'tunnel', 'python-exec', 'alice', 'cron-engine-v2', 'cuttlefishclaws-mcp', 'suite-mcp', 'campaign-scheduler', '31harbor-scheduler', 'zero-claw'];
+    if (!action || !validActions.includes(action)) {
+      return { error: `action must be one of: ${validActions.join(', ')}` };
+    }
+    if (!service || !validServices.includes(service)) {
+      return { error: `service must be one of: ${validServices.join(', ')}` };
+    }
+    if (action === 'status') {
+      // Read supervisor state file for current status
+      try {
+        const { readFileSync } = await import('fs');
+        const { join } = await import('path');
+        const stateFile = join(DATA_DIR, 'supervisor-state.json');
+        let svcState = { childPid: null, startedAt: 0, restartCount: 0 };
+        if (existsSync(stateFile)) {
+          const s = JSON.parse(readFileSync(stateFile, 'utf8'));
+          svcState = s.services?.[service] || svcState;
+        }
+        // Also do a live health check
+        const svcDef = [
+          { name: 'relay', healthCheck: () => checkHttp('http://localhost:8080/health', 2000, true) },
+          { name: 'pg', healthCheck: () => checkProcessByName('postgres.exe') },
+          { name: 'local-sb', healthCheck: () => checkHttp('http://127.0.0.1:54321/health', 2000) },
+          { name: 'vite', healthCheck: () => checkHttp('http://127.0.0.1:5173/', 2000) },
+          { name: 'tunnel', healthCheck: () => checkProcessByName('cloudflared.exe') || checkProcessByName('cloudflared') },
+          { name: 'python-exec', healthCheck: () => checkHttp('http://127.0.0.1:8070/health', 2000) },
+          { name: 'alice', healthCheck: () => checkProcessByScript('alice.mjs') },
+          { name: 'cron-engine-v2', healthCheck: () => checkProcessByScript('cron-engine-v2.mjs') },
+          { name: 'cuttlefishclaws-mcp', healthCheck: () => checkHttp('http://127.0.0.1:3120/health', 2000) },
+          { name: 'suite-mcp', healthCheck: () => checkHttp('http://127.0.0.1:3200/health', 2000) },
+          { name: 'campaign-scheduler', healthCheck: () => checkProcessByScript('campaign-scheduler.mjs') },
+          { name: '31harbor-scheduler', healthCheck: () => checkProcessByScript('31harbor-scheduler.mjs') },
+          { name: 'zero-claw', healthCheck: () => checkHttp('http://127.0.0.1:5174/', 2000) },
+        ].find(s => s.name === service);
+        const healthy = svcDef ? await svcDef.healthCheck() : null;
+        return {
+          success: true,
+          service,
+          status: healthy ? 'healthy' : (svcState.childPid ? 'unhealthy' : 'down'),
+          pid: svcState.childPid,
+          startedAt: svcState.startedAt,
+          restartsThisHour: (svcState.restartTimestamps || []).filter(t => Date.now() - t < 3600000).length,
+        };
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+    // Queue the action for supervisor to pick up
+    try {
+      const { readFileSync, writeFileSync } = await import('fs');
+      const { join } = await import('path');
+      const queueFile = join(DATA_DIR, 'service-actions.json');
+      let queue = [];
+      if (existsSync(queueFile)) {
+        try { queue = JSON.parse(readFileSync(queueFile, 'utf8')); } catch {}
+      }
+      queue.push({ action, service, requestedBy: args?.agent || 'unknown', requestedAt: Date.now() });
+      writeFileSync(queueFile, JSON.stringify(queue, null, 2));
+      const eta = action === 'restart' ? (service === 'relay' ? 15 : 30) : 10;
+      return {
+        success: true,
+        status: 'queued',
+        action,
+        service,
+        message: `Action queued. Supervisor will process within ~30 seconds. If restarting ${service}, expect ${eta}s downtime. Do not poll until ${eta + 5}s have passed.`,
+        eta_seconds: eta,
+      };
+    } catch (e) {
+      return { error: e.message };
+    }
+  },
+
+  'ship_logs': async (args) => {
+    const { source = 'all', lines = 50, service, since } = args || {};
+    const { readFileSync, existsSync } = await import('fs');
+    const { join } = await import('path');
+    const results = {};
+
+    // Helper: read last N lines from a file
+    function tailFile(filePath, n) {
+      if (!existsSync(filePath)) return null;
+      try {
+        const content = readFileSync(filePath, 'utf8');
+        const lines = content.split('\n').filter(l => l.trim());
+        return lines.slice(-n);
+      } catch { return null; }
+    }
+
+    // 1. Relay stderr/stdout (crash traces, uncaught exceptions)
+    if (source === 'all' || source === 'relay' || source === 'stderr') {
+      // Find the most recent stderr log (manual launch logs)
+      const stderrFiles = [
+        join(__dirname, '..', 'relay-stderr.log'),
+        join(__dirname, '..', 'relay-stderr8.log'),
+        join(__dirname, '..', 'relay-stderr7.log'),
+        join(__dirname, '..', 'relay-stderr6.log'),
+        join(__dirname, '..', 'relay-stderr5.log'),
+        join(__dirname, '..', 'relay-stderr4.log'),
+        join(__dirname, '..', 'relay-stderr3.log'),
+        join(__dirname, '..', 'relay-stderr2.log'),
+      ];
+      for (const f of stderrFiles) {
+        const tail = tailFile(f, lines);
+        if (tail && tail.length > 0) {
+          results.relay_stderr = { file: f, lines: tail.length, entries: tail };
+          break;
+        }
+      }
+      // Also check stdout
+      const stdoutFiles = [
+        join(__dirname, '..', 'relay-stdout.log'),
+        join(__dirname, '..', 'relay-stdout6.log'),
+        join(__dirname, '..', 'relay-stdout5.log'),
+        join(__dirname, '..', 'relay-stdout4.log'),
+        join(__dirname, '..', 'relay-stdout3.log'),
+        join(__dirname, '..', 'relay-stdout2.log'),
+      ];
+      for (const f of stdoutFiles) {
+        const tail = tailFile(f, lines);
+        if (tail && tail.length > 0) {
+          results.relay_stdout = { file: f, lines: tail.length, entries: tail };
+          break;
+        }
+      }
+      // NEW: Read supervisor-managed per-service logs
+      const LOGS_DIR = join(DATA_DIR, 'logs');
+      if (service) {
+        const svcLog = join(LOGS_DIR, `${service}.log`);
+        const tail = tailFile(svcLog, lines);
+        if (tail && tail.length > 0) {
+          results.service_log = { service, file: svcLog, lines: tail.length, entries: tail };
+        }
+      } else {
+        // Read all service logs if no specific service requested
+        const { readdirSync } = await import('fs');
+        try {
+          const logFiles = readdirSync(LOGS_DIR).filter(f => f.endsWith('.log'));
+          results.service_logs = {};
+          for (const f of logFiles) {
+            const svcName = f.replace('.log', '');
+            const tail = tailFile(join(LOGS_DIR, f), Math.min(lines, 20));
+            if (tail && tail.length > 0) {
+              results.service_logs[svcName] = { file: join(LOGS_DIR, f), lines: tail.length, entries: tail };
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Supervisor state (restart history with reasons)
+    if (source === 'all' || source === 'supervisor') {
+      const stateFile = join(DATA_DIR, 'supervisor-state.json');
+      if (existsSync(stateFile)) {
+        try {
+          const s = JSON.parse(readFileSync(stateFile, 'utf8'));
+          const svc = service ? [service] : Object.keys(s.services || {});
+          results.supervisor = {};
+          for (const name of svc) {
+            const svcState = s.services?.[name];
+            if (svcState) {
+              results.supervisor[name] = {
+                pid: svcState.childPid,
+                startedAt: svcState.startedAt,
+                restartsThisHour: (svcState.restartTimestamps || []).filter(t => Date.now() - t < 3600000).length,
+                restartsToday: (svcState.restartTimestamps || []).filter(t => Date.now() - t < 86400000).length,
+                totalRestarts: (svcState.restartTimestamps || []).length,
+                lastRestart: svcState.restartTimestamps?.slice(-1)[0] || null,
+                lastRestartReason: svcState.restartReason || null,
+              };
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 3. Service action queue (what agents requested)
+    if (source === 'all' || source === 'actions') {
+      const queueFile = join(DATA_DIR, 'service-actions.json');
+      if (existsSync(queueFile)) {
+        try {
+          const queue = JSON.parse(readFileSync(queueFile, 'utf8'));
+          results.agent_actions = (queue || []).slice(-20).map(a => ({
+            action: a.action,
+            service: a.service,
+            requestedBy: a.requestedBy,
+            requestedAt: a.requestedAt,
+            processed: !!a.processedAt,
+            result: a.result,
+          }));
+        } catch {}
+      }
+    }
+
+    // 4. DB activity log (structured events)
+    if (source === 'all' || source === 'db') {
+      try {
+        let sql = 'SELECT id, activity_type, title, description, status, agent_id, metadata, created_at FROM public.eliza_activity_log WHERE 1=1';
+        const params = [];
+        let idx = 0;
+        if (service) { idx++; sql += ` AND (title ILIKE $${idx} OR description ILIKE $${idx})`; params.push(`%${service}%`); }
+        if (since) { idx++; sql += ` AND created_at > $${idx}`; params.push(since); }
+        sql += ' ORDER BY created_at DESC LIMIT ' + Math.min(parseInt(lines) || 50, 100);
+        const rows = await localQuery(sql, params);
+        results.db_activity = { count: rows.length, entries: rows };
+      } catch (err) {
+        results.db_activity = { error: err.message };
+      }
+    }
+
+    return {
+      success: true,
+      requested_source: source,
+      requested_lines: lines,
+      requested_service: service,
+      timestamp: new Date().toISOString(),
+      ...results,
+    };
   },
 
   'task-stats': async () => {
@@ -1037,7 +1267,7 @@ const toolHandlers = {
       
       // Send via fleet chat
       const entry = addFleetMessage('system', rpcMessage, target_agent);
-      publishToMesh('fleet-broadcast', { agent: 'system', message: rpcMessage, channel: target_agent, ts: entry.ts }).catch(() => {});
+      publishToMesh('fleet-broadcast', { agent: 'system', message: rpcMessage, channel: target_agent, ts: entry?.ts || Date.now() }).catch(() => {});
       
       // Route to the target agent
       const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
@@ -1123,6 +1353,32 @@ const toolHandlers = {
       }
       const rows = await localQuery("SELECT * FROM agent.agent_profiles ORDER BY agent_id");
       return { success: true, profiles: rows };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  'get_agent_key': async (args) => {
+    const agentId = args?.agent_id || args?._agent?.id;
+    const agentLabel = args?.label || args?._agent?.name;
+    if (!agentId && !agentLabel) return { success: false, error: 'agent_id or label required. Pass agent_id, or use label=\"eliza\" / label=\"vex\" / label=\"alice\"' };
+    try {
+      let lookupId = agentId;
+      // If no agent_id but we have a label, look up by label
+      if (!lookupId && agentLabel) {
+        const r = await queryLocalPg(
+          `SELECT agent_id FROM app.agent_api_keys WHERE LOWER(label) LIKE LOWER($1) LIMIT 1`,
+          [`%${agentLabel.replace(/-key$/, '')}%`]
+        );
+        if (r.rows.length > 0) lookupId = r.rows[0].agent_id;
+      }
+      // If still no lookupId, try the agent_id as-is
+      if (!lookupId) lookupId = agentId;
+      if (!lookupId) return { success: false, error: 'Could not resolve agent identity' };
+
+      const r = await queryLocalPg('SELECT api_key, label, issued_at FROM app.agent_api_keys WHERE agent_id = $1', [lookupId]);
+      if (r.rows.length === 0) return { success: false, error: 'No API key found for this agent' };
+      return { success: true, api_key: r.rows[0].api_key, label: r.rows[0].label, issued_at: r.rows[0].issued_at };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -1335,13 +1591,38 @@ const toolHandlers = {
         const headers = { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' };
         let url = `${restUrl}?select=*&order=created_at.desc&limit=${limit}`;
         if (searchTerm) {
-          const encoded = encodeURIComponent(searchTerm);
+          // Truncate search term to 200 chars to prevent PostgREST URL overflow
+          // (agents sometimes pass entire conversation text as search term)
+          const truncated = searchTerm.slice(0, 200);
+          const encoded = encodeURIComponent(truncated);
           url += `&or=(name.ilike.*${encoded}*,entity->>description.ilike.*${encoded}*,entity->>content.ilike.*${encoded}*,entity->>name.ilike.*${encoded}*)`;
         }
-        const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-        if (!res.ok) return { success: true, status: res.status, data: { ok: false, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` } };
-        const knowledge = await res.json();
-        return { success: true, status: 200, data: { ok: true, results: knowledge, count: knowledge.length } };
+        try {
+          const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+          if (!res.ok) {
+            // Fallback: if REST API fails (e.g. URL too long), use db-query instead
+            const safeTerm = (searchTerm || '').replace(/'/g, "''").slice(0, 100);
+            const fallbackRes = await queryLocalPg(
+              `SELECT id, name, entity FROM app.knowledge_entities 
+               WHERE name ILIKE $1 OR entity::text ILIKE $1 
+               ORDER BY created_at DESC LIMIT $2`,
+              [`%${safeTerm}%`, limit]
+            );
+            return { success: true, status: 200, data: { ok: true, results: fallbackRes.rows, count: fallbackRes.rows.length, source: 'db-fallback' } };
+          }
+          const knowledge = await res.json();
+          return { success: true, status: 200, data: { ok: true, results: knowledge, count: knowledge.length } };
+        } catch (e) {
+          // Network error fallback: use db-query
+          const safeTerm = (searchTerm || '').replace(/'/g, "''").slice(0, 100);
+          const fallbackRes = await queryLocalPg(
+            `SELECT id, name, entity FROM app.knowledge_entities 
+             WHERE name ILIKE $1 OR entity::text ILIKE $1 
+             ORDER BY created_at DESC LIMIT $2`,
+            [`%${safeTerm}%`, limit]
+          );
+          return { success: true, status: 200, data: { ok: true, results: fallbackRes.rows, count: fallbackRes.rows.length, source: 'db-fallback' } };
+        }
       }
       
       // For other actions, try local edge function first, fall back to cloud
@@ -1407,9 +1688,25 @@ const toolHandlers = {
       return {
         success: true,
         tables: tables.rows,
-        columns: columns.rows.slice(0, 200), // limit to avoid huge response
+        columns: columns.rows.slice(0, 200),
         total_columns: columns.rows.length,
       };
+    } catch (err) { return { success: false, error: err.message }; }
+  },
+
+  'ef:schema-introspect': async (args) => {
+    const action = args?.action;
+    const params = args?.params || {};
+    if (!action) return { error: 'action is required: list_schemas, list_tables, describe_table, list_relationships, search_schema' };
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/schema-introspect`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, params }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await res.json();
+      return { success: res.ok, status: res.status, data };
     } catch (err) { return { success: false, error: err.message }; }
   },
 
@@ -1714,11 +2011,25 @@ const toolHandlers = {
         const priorityVal = (typeof priority === 'string') ? (PRIORITY_MAP[priority.toLowerCase()] || 5)
           : (typeof priority === 'number' ? priority : 5);
         try {
+          // Resolve assignee_agent_id: agents may pass integer IDs from cuttlefish_agents
+          // or text IDs from app.agents (e.g. 'vex-001'). The FK references app.agents(id).
+          let resolvedAssignee = assignee_agent_id || null;
+          if (resolvedAssignee && !isNaN(resolvedAssignee) && String(resolvedAssignee).indexOf('-') === -1) {
+            // Integer ID from cuttlefish_agents — look up the corresponding app.agents id
+            const lookup = await queryLocalPg(
+              `SELECT a.id FROM app.agents a
+               JOIN app.cuttlefish_agents c ON LOWER(c.name) = LOWER(SPLIT_PART(a.id, '-', 1))
+               WHERE c.id = $1 LIMIT 1`,
+              [parseInt(resolvedAssignee, 10)]
+            );
+            if (lookup.rows.length > 0) resolvedAssignee = lookup.rows[0].id;
+            else resolvedAssignee = null; // no match, let FK fail gracefully
+          }
           const id = task_id || 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
           const result = await queryLocalPg(
             `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, created_at, updated_at)
              VALUES ($1, $2, $3, 'DISCUSS', 'PENDING', $4, $5, $6, NOW(), NOW()) RETURNING *`,
-            [id, title, description || '', priorityVal, category || 'other', assignee_agent_id || null]
+            [id, title, description || '', priorityVal, category || 'other', resolvedAssignee]
           );
           // Announce to fleet chat for discussion
           try {
@@ -2252,6 +2563,70 @@ const toolHandlers = {
     }
   },
 
+  // ── Shell Exec (run bash/curl commands for agents) ───────
+  // Mirrors python-exec but runs arbitrary bash/curl via git-bash.
+  // CORE-gated (same as python-exec). Uses ASYNC spawn (NOT execSync) so the
+  // relay event loop stays free — critical because agents often curl the relay
+  // itself (e.g. `curl http://localhost:8080/health`). A synchronous execSync
+  // blocks the event loop, so the relay can't answer that curl → deadlock/ETIMEDOUT.
+  // Uses a temp .sh file to avoid shell-escaping issues.
+  'shell-exec': async (args) => {
+    const command = args?.command || args?.cmd || args?.script || '';
+    if (!command) return { error: 'command (string) is required. Pass the bash/curl command to execute.' };
+    const timeout = Math.min(args?.timeout || 30, 120);
+    const workdir = args?.workdir || 'C:\\Users\\PureTrek\\Desktop\\xmrtdao';
+    const bashPath = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    let tmpFile = null;
+    try {
+      // Write command to a temp .sh file to avoid shell-escaping issues
+      tmpFile = join(DATA_DIR, 'shell-exec-' + Date.now() + '.sh');
+      writeFileSync(tmpFile, '#!/bin/bash\n' + command + '\n', 'utf8');
+      // Async spawn — does NOT block the relay event loop, so commands that
+      // curl the relay itself (health checks, endpoint tests) work without deadlock.
+      const stdout = await new Promise((resolve, reject) => {
+        const child = spawn(bashPath, [tmpFile], {
+          cwd: workdir,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let out = '';
+        let err = '';
+        const timer = setTimeout(() => {
+          try { child.kill(); } catch {}
+          reject(new Error(`Command timed out after ${timeout}s`));
+        }, timeout * 1000);
+        child.stdout.on('data', (d) => { out += d.toString(); });
+        child.stderr.on('data', (d) => { err += d.toString(); });
+        child.on('error', (e) => { clearTimeout(timer); reject(e); });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          resolve({ out, err, code });
+        });
+      });
+      // Clean up temp file
+      try { unlinkSync(tmpFile); } catch {}
+      return {
+        success: stdout.code === 0,
+        output: stdout.out.slice(0, 10000),
+        stderr: stdout.err.slice(0, 5000),
+        length: stdout.out.length,
+        exitCode: stdout.code,
+        timeout,
+        shell: 'git-bash',
+      };
+    } catch (err) {
+      if (tmpFile) { try { unlinkSync(tmpFile); } catch {} }
+      return {
+        success: false,
+        error: (err.message || String(err)).slice(0, 5000),
+        stderr: '',
+        stdout: '',
+        exitCode: -1,
+        shell: 'git-bash',
+      };
+    }
+  },
+
   // ── Resend Inbox (read emails stored in relay state) ──────
   'resend-inbox': async (args) => {
     const domain = args?.domain || 'all'; // pfp, mobilemonero, 31harbor, or all
@@ -2391,10 +2766,10 @@ const toolHandlers = {
             const memRows = await queryLocalPg(
               `SELECT agent_id, memory_type, title, body, payload, created_at
                FROM app.fleet_memory
-               WHERE to_tsvector('english', title || ' ' || body) @@ plainto_tsquery('english', $1)
+               WHERE (title ILIKE $1 OR body ILIKE $1)
                  AND ($2 = '' OR agent_id = $2)
                ORDER BY created_at DESC LIMIT $3`,
-              [topic, agentId, limit]
+              [`%${topic}%`, agentId, limit]
             );
             results.memories = (memRows.rows || []).map(r => ({
               agent: r.agent_id, type: r.memory_type, title: r.title,
@@ -2421,9 +2796,9 @@ const toolHandlers = {
             const ctxRows = await queryLocalPg(
               `SELECT context_key, context_type, value, description, last_updated_by, updated_at
                FROM knowledge.shared_context
-               WHERE to_tsvector('english', context_key || ' ' || COALESCE(description,'')) @@ plainto_tsquery('english', $1)
+               WHERE (context_key ILIKE $1 OR COALESCE(description,'') ILIKE $1)
                ORDER BY updated_at DESC LIMIT $2`,
-              [topic, limit]
+              [`%${topic}%`, limit]
             );
             results.context = (ctxRows.rows || []).map(r => ({
               key: r.context_key, type: r.context_type,
@@ -2618,7 +2993,7 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
             status: 'success',
             session_id: tag,
           }),
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(15000),
         }).catch(() => {});
       }
     } catch (_) {}
@@ -2744,6 +3119,26 @@ async function verifyCfAccessJwt(jwt) {
 
 // ── Combined Auth Middleware ──────────────────────────────
 const RELAY_API_KEY = process.env.RELAY_API_KEY || '';
+// Agent-specific API key cache (loaded from app.agent_api_keys at startup)
+let agentApiKeys = {};
+
+// ── Agent API Key Management ─────────────────────────────
+async function loadAgentApiKeys() {
+  try {
+    const r = await queryLocalPg('SELECT api_key, agent_id::text, label FROM app.agent_api_keys');
+    agentApiKeys = {};
+    for (const row of r.rows) {
+      agentApiKeys[row.api_key] = { agent_id: row.agent_id, label: row.label };
+    }
+    console.log(`[AUTH] Loaded ${r.rows.length} agent API keys`);
+  } catch (e) {
+    console.error('[AUTH] Failed to load agent API keys:', e.message);
+  }
+}
+// Load on startup and every 5 minutes
+loadAgentApiKeys();
+setInterval(loadAgentApiKeys, 5 * 60 * 1000);
+
 const CF_SERVICE_TOKENS = {
   'cf58c37e064303569c6017ac39a15a7a.access': 'f2158a78f16a9c75067a954d508658eda3f5d52c018cd0e366096ad1c39ef1b9',
   'bfa0d8f42b17d44a0243d386bd5b6a40.access': 'd8019ca2afa236c55828904245bf147f60feb11fa781ea7c6b05daee665690dd',
@@ -2799,6 +3194,7 @@ app.use(async (req, res, next) => {
       req.path === '/ping' ||
       req.path === '/health' ||
       req.path === '/webhook/resend-inbound' ||
+      req.path.startsWith('/functions/v1/') ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/auth/cert-login' ||
       req.path.startsWith('/api/contact/cuttlefishclaws') ||
       req.path === '/api/cuttlefishclaws/trust-score' ||
@@ -2811,7 +3207,9 @@ app.use(async (req, res, next) => {
       req.path === '/api/rum-quota' ||
       req.path === '/api/footlocker' || req.path.startsWith('/api/footlocker/') ||
       req.path === '/api/catalog' ||
-      req.path === '/suite/' || req.path.startsWith('/suite/dashboard') ||
+      req.path === '/api/university' ||
+      req.path.startsWith('/suite/') ||
+      req.path === '/elze' || req.path.startsWith('/elze/') ||
       req.path === '/cuttlefishclaws/' || req.path.startsWith('/cuttlefishclaws/')) {
     // If api_key is in query params, set it as a cookie for SPA API calls
     if (req.query.api_key) {
@@ -2876,6 +3274,11 @@ app.use(async (req, res, next) => {
     // Also accept cert:verified:* cookies — these are set by POST /api/auth/cert-login
     // when a graduate logs in with their XMRT-DAO-CERT JWT
     if (apiKey.startsWith('cert:verified:')) return next();
+    // Check agent-specific API keys (xrt_ prefix) from the in-memory cache
+    if (apiKey.startsWith('xrt_') && agentApiKeys[apiKey]) {
+      req.agentAuth = { agent_id: agentApiKeys[apiKey].agent_id, label: agentApiKeys[apiKey].label, method: 'agent_key' };
+      return next();
+    }
     if (!apiKey) { console.warn(`[AUTH] Missing credentials from ${ip}: ${req.method} ${req.path}`); return res.status(401).json({ error: 'Authentication required. Provide Cf-Access-Jwt-Assertion header (Cloudflare Access) or x-api-key header.' }); }
     console.warn(`[AUTH] Invalid x-api-key from ${ip}: ${req.method} ${req.path}`);
     return res.status(403).json({ error: 'Invalid API key' });
@@ -2923,9 +3326,11 @@ if (existsSync(join(SUITE_DIR, 'index.html'))) {
   app.use('/suite', express.static(SUITE_DIR, { maxAge: '5m' }));
   // SPA fallback — any /suite/* path that isn't a real file serves index.html
   // so client-side routing (e.g. /suite/dashboard) works.
-  app.get('/suite/*', (req, res) => {
-    const filePath = join(SUITE_DIR, req.path.replace(/^\/suite\//, ''));
-    if (existsSync(filePath)) return res.sendFile(filePath);
+  // Using regex to avoid path-to-regexp v8+ compatibility issues.
+  app.get(/^\/suite\/.*$/, (req, res) => {
+    const relativePath = req.path.replace(/^\/suite\//, '');
+    const filePath = join(SUITE_DIR, relativePath);
+    if (existsSync(filePath) && relativePath) return res.sendFile(filePath);
     res.sendFile(join(SUITE_DIR, 'index.html'));
   });
   console.log(`  Suite SPA: ${SUITE_DIR}`);
@@ -3003,6 +3408,46 @@ if (existsSync(join(BOOKINGS_DIR, 'index.html'))) {
   console.log(`  PFP Bookings SPA: NOT FOUND at ${BOOKINGS_DIR} — skipping`);
 }
 
+// ── Elze Contract Suite™ ──
+// Landing page at /elze, Analyzer at /elze/analyzer, Writer at /elze/writer
+const ELZE_LANDING_DIR = join(__dirname, 'public', 'elze-landing');
+const ELZE_DIR = join(__dirname, 'public', 'elze-analyzer');
+const ELZE_WRITER_DIR = join(__dirname, 'public', 'elze-writer');
+
+// Landing page
+if (existsSync(join(ELZE_LANDING_DIR, 'index.html'))) {
+  app.get('/elze', (req, res) => res.sendFile(join(ELZE_LANDING_DIR, 'index.html')));
+  console.log(`  Elze Contract Suite (landing): ${ELZE_LANDING_DIR}`);
+}
+
+// Analyzer
+if (existsSync(join(ELZE_DIR, 'index.html'))) {
+  app.get('/elze/analyzer', (req, res) => res.sendFile(join(ELZE_DIR, 'index.html')));
+  app.get('/elze/analyzer/*path', (req, res) => {
+    const filePath = join(ELZE_DIR, req.path.replace(/^\/elze\/analyzer\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(ELZE_DIR, 'index.html'));
+  });
+  app.use('/elze/analyzer', express.static(ELZE_DIR, { maxAge: '5m' }));
+  console.log(`  Elze Contract Analyzer: ${ELZE_DIR}`);
+} else {
+  console.log(`  Elze Contract Analyzer: NOT FOUND at ${ELZE_DIR} — skipping`);
+}
+
+// Writer
+if (existsSync(join(ELZE_WRITER_DIR, 'index.html'))) {
+  app.get('/elze/writer', (req, res) => res.sendFile(join(ELZE_WRITER_DIR, 'index.html')));
+  app.get('/elze/writer/*path', (req, res) => {
+    const filePath = join(ELZE_WRITER_DIR, req.path.replace(/^\/elze\/writer\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(ELZE_WRITER_DIR, 'index.html'));
+  });
+  app.use('/elze/writer', express.static(ELZE_WRITER_DIR, { maxAge: '5m' }));
+  console.log(`  Elze Contract Writer: ${ELZE_WRITER_DIR}`);
+} else {
+  console.log(`  Elze Contract Writer: NOT FOUND at ${ELZE_WRITER_DIR} — skipping`);
+}
+
 // ── 31Harbor Agency Dashboard (Vite build, per-company themed SPAs) ──
 const AGENCY_DIR = join(__dirname, '..', '31harbor-agency-dashboard', 'dist');
 if (existsSync(join(AGENCY_DIR, 'index.html'))) {
@@ -3045,6 +3490,38 @@ app.get('/api/suite/health', async (req, res) => {
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }
+});
+
+// ── Unified Tool / Function Registry ─────────────────────────────────
+// Task t-msbdeuo7-bpre — single queryable view of every tool/function
+// across ai_tools, edge_function_proposals, proposed_edge_functions,
+// function_proposals. Backed by public.unified_tool_registry view.
+// Supports optional ?category= and ?status= filters.
+app.get('/api/suite/tool-registry', async (req, res) => {
+  trackRequest('/api/suite/tool-registry');
+  try {
+    const { category, status, q } = req.query;
+    let sql = 'SELECT * FROM public.unified_tool_registry WHERE 1=1';
+    const params = [];
+    let idx = 0;
+    if (category) { idx++; sql += ` AND category ILIKE $${idx}`; params.push(`%${category}%`); }
+    if (status) { idx++; sql += ` AND status = $${idx}`; params.push(status.toUpperCase()); }
+    if (q) { idx++; sql += ` AND (tool_name ILIKE $${idx} OR description ILIKE $${idx})`; params.push(`%${q}%`); }
+    sql += ' ORDER BY category, tool_name';
+    const r = await queryLocalPg(sql, params);
+    res.json({ success: true, count: r.rows.length, tools: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Summary counts for the registry (by category + status)
+app.get('/api/suite/tool-registry/summary', async (req, res) => {
+  trackRequest('/api/suite/tool-registry/summary');
+  try {
+    const byCat = await queryLocalPg(`SELECT category, COUNT(*)::int AS n FROM public.unified_tool_registry GROUP BY category ORDER BY n DESC`);
+    const byStatus = await queryLocalPg(`SELECT status, COUNT(*)::int AS n FROM public.unified_tool_registry GROUP BY status ORDER BY n DESC`);
+    const total = await queryLocalPg(`SELECT COUNT(*)::int AS n FROM public.unified_tool_registry`);
+    res.json({ success: true, total: total.rows[0].n, byCategory: byCat.rows, byStatus: byStatus.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Companies ─────────────────────────────────────────────────────────
@@ -3460,8 +3937,31 @@ app.get('/api/suite/tasks/:id', async (req, res) => {
 app.post('/api/suite/tasks', async (req, res) => {
   trackRequest('POST /api/suite/tasks');
   try {
-    const { title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id } = req.body;
+    const { title, description, stage, status, priority, category, assignee_agent_id: rawAssignee, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id } = req.body;
     if (!title) return res.status(400).json({ error: 'title required' });
+
+    // Resolve short agent names to full agent IDs
+    let assignee_agent_id = rawAssignee;
+    if (rawAssignee && !rawAssignee.includes('-') && rawAssignee.length < 20) {
+      const agentLookup = await queryLocalPg(
+        `SELECT id FROM app.agents WHERE LOWER(name) = LOWER($1) OR LOWER(id) = LOWER($1) LIMIT 1`,
+        [rawAssignee]
+      );
+      if (agentLookup.rows.length > 0) {
+        assignee_agent_id = agentLookup.rows[0].id;
+      }
+      // Also try app.agent_api_keys by label
+      if (!assignee_agent_id || assignee_agent_id === rawAssignee) {
+        const keyLookup = await queryLocalPg(
+          `SELECT agent_id FROM app.agent_api_keys WHERE LOWER(label) LIKE LOWER($1) LIMIT 1`,
+          [`%${rawAssignee.replace(/-key$/, '')}%`]
+        );
+        if (keyLookup.rows.length > 0) {
+          assignee_agent_id = keyLookup.rows[0].agent_id;
+        }
+      }
+    }
+
     const r = await queryLocalPg(
       `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id) VALUES (gen_random_uuid()::text, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [title, description||null, stage||'PENDING', status||'PENDING', priority||0, category||null, assignee_agent_id||null, blocking_reason||null, auto_advance_threshold_hours||null, progress_percentage||0, organization_id||null, created_by_user_id||null]
@@ -3681,7 +4181,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     agent: 'XMRT-DAO Relay Server',
-    version: '9.0.0',
+    version: '9.5.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -3916,8 +4416,8 @@ app.get('/api/supervisor/status', async (req, res) => {
     // Build service status from state file with live process checks.
     // Mirror the supervisor.mjs SERVICE_DEFS so the dashboard reflects the
     // canonical set: pg, local-sb, vite, relay, cuttlefishclaws-mcp,
-    // xmrtdao-suite-mcp, cuttlefish-mcp, tunnel, alice, cron-engine-v2,
-    // campaign-scheduler, 31harbor-scheduler (12 total).
+    // xmrtdao-suite-mcp, tunnel, alice, cron-engine-v2,
+    // campaign-scheduler, 31harbor-scheduler (11 total).
     const serviceDefs = [
       { name: 'pg', port: 5432, check: () => true },
       { name: 'local-sb', port: 54321, check: () => true },
@@ -3925,7 +4425,6 @@ app.get('/api/supervisor/status', async (req, res) => {
       { name: 'relay', port: 8080, check: () => true },
       { name: 'cuttlefishclaws-mcp', port: 3120, check: () => true },
       { name: 'xmrtdao-suite-mcp', port: 3121, check: () => true },
-      { name: 'cuttlefish-mcp', port: 3122, check: () => true },
       { name: 'tunnel', port: null, check: () => true },
       { name: 'alice', port: null, check: () => true },
       { name: 'cron-engine-v2', port: null, check: () => true },
@@ -3956,8 +4455,24 @@ app.get('/api/supervisor/status', async (req, res) => {
           }
         }
       } else {
-        // No-port services: check state file childPid only (avoids execSync blocking)
-        healthy = !!(svcState.childPid && isProcessRunningByPid(svcState.childPid));
+        // No-port services: check state file childPid first, then fall back to
+        // a live process-name/script check. The supervisor often adopts these
+        // daemons as external (childPid=null), so a childPid-only check would
+        // falsely report them DOWN even when they are running.
+        if (svcState.childPid && isProcessRunningByPid(svcState.childPid)) {
+          healthy = true;
+        } else {
+          // Map service name → process/script to probe. Uses the async spawn
+          // helper so we don't block the event loop with execSync.
+          const procProbe = {
+            'tunnel': () => checkProcessRunningAsync('cloudflared.exe'),
+            'alice': () => checkProcessRunningAsync('alice.mjs'),
+            'cron-engine-v2': () => checkProcessRunningAsync('cron-engine-v2.mjs'),
+            'campaign-scheduler': () => checkProcessRunningAsync('campaign-scheduler.mjs'),
+            '31harbor-scheduler': () => checkProcessRunningAsync('31harbor-scheduler.mjs'),
+          }[def.name];
+          healthy = procProbe ? await procProbe() : false;
+        }
       }
       const restartCount = svcState.restartTimestamps?.length || 0;
       const lastHourRestarts = (svcState.restartTimestamps || []).filter(t => t > Date.now() - 3600000).length;
@@ -3978,9 +4493,19 @@ app.get('/api/supervisor/status', async (req, res) => {
         result: data.result, missed: data.missed || 0, state: data.state || 'unknown' });
     }
 
+    // Compute a consolidated stack health score 0-100 from the live service checks.
+    // Base 50 for the supervisor being reachable. +5 per healthy service (max +60
+    // for all 12), -10 per down service. Clamp to [0,100].
+    const upCount = services.filter(s => s.healthy).length;
+    const downCount = services.length - upCount;
+    let healthScore = 50 + (upCount * 5) - (downCount * 10);
+    healthScore = Math.max(0, Math.min(100, healthScore));
+    const healthStatus = healthScore >= 80 ? 'healthy' : healthScore >= 50 ? 'degraded' : 'critical';
+
     return res.json({
       ok: true, supervisor: { pid: supervisorPid, alive: supervisorAlive },
       services, tasks, recentLog: [],
+      health: { score: healthScore, status: healthStatus, up: upCount, down: downCount, total: services.length },
       lastTaskCheck: stateData.lastTaskCheck || 0, checkedAt: Date.now(),
     });
   } catch (e) {
@@ -4402,7 +4927,9 @@ app.get('/', (req, res) => {
     }
     /* Quarterdeck responsive layout */
     .quarterdeck-mid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
-    @media (min-width: 640px) { .quarterdeck-mid { grid-template-columns: 1.5fr 2fr 1fr; gap: 10px; } }
+    @media (min-width: 640px) { .quarterdeck-mid { grid-template-columns: 1.5fr 1fr; gap: 10px; } }
+    .quarterdeck-security { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
+    @media (min-width: 640px) { .quarterdeck-security { grid-template-columns: 1fr; gap: 10px; } }
     .quarterdeck-bottom { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
     @media (min-width: 640px) { .quarterdeck-bottom { grid-template-columns: 1.5fr 1fr 1fr; gap: 10px; } }
     /* Responsive sub-grids for sections below the knowledge graph */
@@ -4423,7 +4950,7 @@ app.get('/', (req, res) => {
 <canvas id="mesh-bg"></canvas>
   <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v9.0.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v9.5.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
@@ -4490,18 +5017,23 @@ app.get('/', (req, res) => {
     </div>
   </div>
 
-  <!-- Middle row: Quartermaster's Watch + Training & Security + Ship's Log -->
+  <!-- Middle row: Quartermaster's Watch + Ship's Log -->
   <div class="quarterdeck-mid">
     <!-- Quartermaster's Watch -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
       <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Quartermaster's Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
       <div id="quarterdeck-supervisor">
         <div class="stat"><span class="label">Supervisor</span><span class="value" id="qds-supervisor" style="color:#6b6b80;">checking...</span></div>
+        <div class="stat"><span class="label">Stack Health</span><span class="value" id="qds-health-score" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Services Up</span><span class="value" id="qds-services-up" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Services Down</span><span class="value" id="qds-services-down" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Flapping</span><span class="value" id="qds-flapping" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Task Issues</span><span class="value" id="qds-task-issues" style="color:#6b6b80;">-</span></div>
         <div class="stat"><span class="label">Last Check</span><span class="value" id="qds-last-check" style="color:#6b6b80;">-</span></div>
+        <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:var(--text-dim);">
+          <div style="margin-bottom:2px;color:#8b8ba0;">Consolidated Services</div>
+          <div id="qds-services-tracker" style="line-height:1.6;">-</div>
+        </div>
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.65rem;color:var(--text-dim);">
           <span style="color:#60a5fa;">⚡ relay</span> v7.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
         </div>
@@ -4510,6 +5042,17 @@ app.get('/', (req, res) => {
         <a href="/api/supervisor/status" style="color:#60a5fa;">API</a> · <span id="qds-refresh" style="color:#4ade80;">● polling</span>
       </div>
     </div>
+    <!-- Ship's Log (pirate-themed activity pulse) -->
+    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:260px;overflow:hidden;">
+      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🏴‍☠️ Ship's Log <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Live Activity Feed</span></h4>
+      <div id="qds-activity-log" style="font-size:0.6rem;max-height:220px;overflow-y:auto;">
+        <div class="stat"><span class="label">Loading activity...</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Training & Security row (own row) -->
+  <div class="quarterdeck-security">
     <!-- TRAINING & SECURITY — TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control -->
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
       <h4 style="color:#f87171;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Training & Security <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control</span></h4>
@@ -4537,13 +5080,6 @@ app.get('/', (req, res) => {
           <div class="stat"><span class="label">🎓 University</span><span class="value" id="sec-uni-status" style="color:#a78bfa;font-size:0.65rem;">checking...</span></div>
           <div class="stat"><span class="label">Gate</span><span class="value" id="sec-gate" style="color:#4ade80;font-size:0.65rem;">● fail-closed</span></div>
         </div>
-      </div>
-    </div>
-    <!-- Ship's Log (pirate-themed activity pulse) -->
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:260px;overflow:hidden;">
-      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🏴‍☠️ Ship's Log <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Live Activity Feed</span></h4>
-      <div id="qds-activity-log" style="font-size:0.6rem;max-height:220px;overflow-y:auto;">
-        <div class="stat"><span class="label">Loading activity...</span></div>
       </div>
     </div>
   </div>
@@ -5101,9 +5637,78 @@ app.post('/eliza-ping', async (req, res) => {
   });
 });
 
+// ── Hermes Agent Prompt Bridge ────────────────────────────────
+// Agents (Vex, Alice, Eliza) can prompt this Hermes instance via:
+//   POST /api/hermes/prompt  { prompt, sender, channel }
+// The prompt is queued to a file inbox, executed by a cron job on
+// this Hermes instance, and the result is posted back to fleet chat.
+app.post('/api/hermes/prompt', async (req, res) => {
+  const { prompt, sender = 'agent', channel = 'fleet' } = req.body;
+  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+  const result = handleAgentPrompt(prompt, sender, channel);
+  res.json(result);
+});
+
+// GET /api/hermes/context — Aggregated stack context for spawned Hermes sessions
+// Returns PG status, MCP health, fleet memory, tasks, trust scores, and system health
+// in a single JSON response. The spawned session calls this once instead of
+// trying to use MCPs through curl.
+app.get('/api/hermes/context', async (req, res) => {
+  try {
+    const [memories, tasks, agents, trustEvents, fleetMsgs, pgHealth] = await Promise.all([
+      queryLocalPg("SELECT title, body, agent_id, created_at FROM app.fleet_memory ORDER BY created_at DESC LIMIT 10").catch(() => ({ rows: [] })),
+      queryLocalPg("SELECT id, title, status, assignee_agent_id, priority, stage FROM app.tasks WHERE status NOT IN ('completed','cancelled') ORDER BY priority DESC LIMIT 10").catch(() => ({ rows: [] })),
+      queryLocalPg("SELECT did, name, role, trust_score, trust_band, status, lifecycle_status FROM app.cuttlefish_agents ORDER BY trust_score DESC").catch(() => ({ rows: [] })),
+      queryLocalPg("SELECT count(*)::int AS c FROM app.cuttlefish_trust_events").catch(() => ({ rows: [{ c: 0 }] })),
+      queryLocalPg("SELECT agent_id, message, created_at FROM public.fleet_messages ORDER BY created_at DESC LIMIT 10").catch(() => ({ rows: [] })),
+      queryLocalPg("SELECT 1 AS ok").then(() => true).catch(() => false),
+    ]);
+
+    // MCP health checks
+    const mcpHealth = {};
+    for (const [name, port] of [['cuttlefishclaws', 3120], ['xmrtdao-suite', 3121]]) {
+      try {
+        const r = await fetch(`http://127.0.0.1:${port}/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const d = await r.json();
+        const tools = d?.result?.tools || [];
+        mcpHealth[name] = { ok: true, tools: tools.length };
+      } catch (e) {
+        mcpHealth[name] = { ok: false, error: e.message };
+      }
+    }
+
+    res.json({
+      ok: true,
+      pg: pgHealth,
+      mcp: mcpHealth,
+      memories: memories.rows,
+      tasks: tasks.rows,
+      agents: agents.rows,
+      trustEvents: trustEvents.rows[0]?.c || 0,
+      fleetMessages: fleetMsgs.rows,
+      relay: { uptime: process.uptime(), tools: Object.keys(toolHandlers).length },
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Poll the outbox every 5 seconds for completed Hermes prompts
+setInterval(() => {
+  try { pollOutbox(addFleetMessage, publishToMesh); } catch (e) {
+    console.error('[hermes-bridge] outbox poll error:', e.message);
+  }
+}, 5000);
+
 // ── Generic dispatch ────────────────────────────────────────
 app.post('/dispatch', async (req, res) => {
-  const { message, source = 'manual', type, action, handler, payload } = req.body;
+  const { message, source = 'manual', type, action, handler, payload, args } = req.body;
   trackRequest('/dispatch');
   logActivity('dispatch', source, 'RECEIVED', (message || type || action || '').slice(0, 80));
 
@@ -5111,7 +5716,7 @@ app.post('/dispatch', async (req, res) => {
 
   // Support structured JSON dispatch (type/action/handler fields + message fallback)
   const msg = (message || type || action || '').toLowerCase();
-  const h = (handler || '').toLowerCase();
+  const h = (handler || action || '').toLowerCase();
 
   // Check for structured type/action first
   if (msg === 'ping' || action === 'ping' || type === 'ping' || h === 'ping' || h === 'eliza') {
@@ -5136,7 +5741,15 @@ app.post('/dispatch', async (req, res) => {
     if (handlers[h]) {
       response = await handlers[h]({ id: 'dispatch', title: message || type || action, payload: payload || {} });
     } else if (toolHandlers[h]) {
-      response = await toolHandlers[h](payload || {});
+      response = await toolHandlers[h](payload || args || {});
+    } else if (h.startsWith('ef:')) {
+      // Route ef:* actions to toolHandlers
+      const efHandler = toolHandlers[h];
+      if (efHandler) {
+        response = await efHandler(payload || args || {});
+      } else {
+        response = { status: 'error', message: `Unknown ef: handler "${h}". Available: ${Object.keys(toolHandlers).filter(k => k.startsWith('ef:')).join(', ')}` };
+      }
     } else if (h === 'bash') {
       const cmd = payload?.command || '';
       if (cmd) {
@@ -5505,7 +6118,7 @@ app.post('/log/sent', (req, res) => {
 
 // -- XMRT University Proxy --
 // Routes to local-sb (SUPABASE_URL) — the canonical runtime backend.
-// Cloud Supabase (vawouugtzwmejxqkeqqj) is dead; this used to be hardcoded.
+// Cloud Supabase project (vawouugtzwmejxqkeqqj) is dead; this used to be hardcoded.
 const SUPABASE_UNIVERSITY_URL = `http://127.0.0.1:8080/functions/v1/xmrt-university`;
 
 app.post('/api/ef-university', async (req, res) => {
@@ -5820,6 +6433,30 @@ app.all(['/ai-chat', '/ai-chat/*path'], async (req, res) => {
   await proxyToRuntime(req, res, `/functions/v1/ai-chat${tail}`);
 });
 
+// ── XMRT University Public API (no CF Access required) ─────────────
+// The university page (xmrtdao.github.io/university) calls this endpoint
+// for enrollment. New agents don't have CF Access credentials yet, so
+// this route must NOT require authentication.
+// Proxies to the local-sb xmrt-university edge function.
+app.all('/api/university', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  try {
+    const body = req.method === 'POST' ? (req.body || {}) : {};
+    const efRes = await fetch('http://127.0.0.1:54321/functions/v1/xmrt-university', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await efRes.json();
+    res.status(efRes.status).json(data);
+  } catch (e) {
+    res.status(502).json({ success: false, error: `University API proxy failed: ${e.message}` });
+  }
+});
+
 // ── Suite Dashboard Chat History ────────────────────────────
 // WorkspaceChatService.ts calls these to persist conversation across turns.
 // Each user gets their own message history keyed by auth token.
@@ -5992,7 +6629,7 @@ app.get('/api/fleet/agents', async (req, res) => {
       try {
         // First: check relay's own health (Hermes Agent runs on this machine)
         const localHermesRes = await fetch('http://127.0.0.1:8080/health', {
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(15000),
         });
         if (localHermesRes.ok) {
           // Hermes Agent is running locally — mark as ONLINE
@@ -6012,7 +6649,7 @@ app.get('/api/fleet/agents', async (req, res) => {
         // Try the phone tunnel as a last resort
         try {
           const hermesRes = await fetch('https://hermes.mobilemonero.com/health', {
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(15000),
           });
           if (hermesRes.ok) {
             const hermesData = await hermesRes.json();
@@ -6406,7 +7043,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '9.0.0',
+      version: '9.5.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
@@ -6557,6 +7194,9 @@ function getToolDescription(name) {
     'vex-vision-screenshots': 'Read historical Windows screenshots from %USERPROFILE%\\Pictures\\Screenshots. Returns descriptions of the latest N screenshots (limit, default 5). Optionally filter to a specific filename. Uses kimi-k2.6:cloud via OpenRouter (no local models). Best for: "what was on screen yesterday?", "find the screenshot from last week with the error message".',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
     'python-exec': 'Execute Python 3.11 code and return stdout/stderr. Pass code via "code" (string, required). Optional: pip (package name to install first, comma-separated for multiple), timeout (seconds, max 120). Use for data analysis, SQL queries, text processing, or any computation. Example: TOOL_CALL: {"tool":"python-exec","args":{"code":"print(numpy.__version__)","pip":"numpy"}}',
+    'shell-exec': 'Run a bash/curl command in a git-bash POSIX shell and return stdout/stderr. Pass command via "command" (string, required). Optional: timeout (seconds, max 120), workdir (absolute path, default C:\\Users\\PureTrek\\Desktop\\xmrtdao). Use for curl requests, file inspection, git commands, or any shell operation. Example: TOOL_CALL: {"tool":"shell-exec","args":{"command":"curl -s http://localhost:8080/health"}}',
+    'service_control': 'Control supervised services. Actions: status (check health), restart (queue a restart), start (queue a start), stop (queue a stop). Services: relay, pg, local-sb, vite, tunnel, python-exec, alice, cron-engine-v2, cuttlefishclaws-mcp, suite-mcp, campaign-scheduler, 31harbor-scheduler, zero-claw. RESTARTING THE RELAY: expect ~15s downtime. Do not poll until 20s have passed. All other services: expect ~30s downtime.',
+    'ship_logs': 'Read ship logs to diagnose why a service needs restarted. Sources: all (default), relay (stderr/stdout), supervisor (restart history), actions (agent-queued restarts), db (structured activity log). Args: source, lines (default 50), service (filter), since (ISO timestamp). CRITICAL: Always call ship_logs BEFORE restarting a service to know WHY it failed.',
     'resend-inbox': 'Read recent emails from the Resend inbox (pfp, mobilemonero, 31harbor)',
     'resend-inbox-read': 'Mark an email as read. Args: id (email ID), domain (pfp, mobilemonero, or 31harbor). Use after reading an email to mark it handled.',
     'resend-get-email': 'Fetch the full content of a specific email by ID. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Returns full text, html, attachments, and raw data.',
@@ -6569,6 +7209,7 @@ function getToolDescription(name) {
     'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
+    'get_agent_key': 'Retrieve this agent XMRT-DAO API key for authenticating CORE-level tool calls. Returns the xrt_ prefixed key.',
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',
     'fleet-chat': 'Send a message to the fleet chat as an agent (vex|eliza|hermes) on a channel (fleet|all|vex|eliza|hermes)',
     'obsidian-graph': 'Return the full ecosystem knowledge graph — vault nodes, DB tables, cron jobs, edge functions, relay endpoints, GitHub repos, tunnel routes, Resend domains, campaign pipelines — all with live status. Optional filter by category (vault|db|cron|edge-function|endpoint|github|tunnel|email|campaign|agent|infra|system|spa|backend).',
@@ -6586,6 +7227,7 @@ function getToolDescription(name) {
     'ef:agent-manager': 'List/manage registered agents via cloud edge function',
     'ef:mining': 'Get Monero mining stats/wallet info via cloud edge function',
     'ef:schema': 'List database schema tables via cloud edge function',
+    'ef:schema-introspect': 'Introspect database schema: list_schemas, list_tables (params.schema), describe_table (params.schema+table), list_relationships (params.schema), search_schema (params.keyword). PUBLIC level.',
     'ef:functions-list': 'List all available edge function names',
     'ef:supabase-integration': 'Check Supabase integration health via cloud edge function',
     'ef:functions-catalog': 'List available edge functions (alias for functions-list)',
@@ -6674,8 +7316,10 @@ app.post('/tools/run', async (req, res) => {
   // For CORE-level tools, require service token or JWT auth (not just agent name claim)
   // But if the agent is already authenticated via x-agent-id and is a known CORE agent,
   // skip the additional x-api-key check (the fleet chat tool execution path already authed them)
+  // Also accept agent-specific API keys (xrt_ prefix) from the agent_api_keys table
   const isCoreAgent = CORE_AGENTS.has(agentId.toLowerCase().trim());
-  if (toolLevel === 'core' && !req.cfAccess && !req.headers['x-api-key'] && !isCoreAgent) {
+  const hasAgentKey = req.agentAuth && req.agentAuth.method === 'agent_key';
+  if (toolLevel === 'core' && !req.cfAccess && !req.headers['x-api-key'] && !isCoreAgent && !hasAgentKey) {
     return res.status(403).json({
       error: 'CORE-level tools require Cloudflare Access authentication (service token or JWT). Set CF-Access-Client-Id + CF-Access-Client-Secret headers or x-api-key header.',
       agent: agentId,
@@ -6765,8 +7409,8 @@ app.get('/api/dao/health', async (req, res) => {
       const queries = [
         pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
-        pgPool.query("SELECT COUNT(*)::int AS c FROM public.tasks").catch(() => ({ rows: [{ c: 0 }] })),
-        pgPool.query("SELECT COUNT(*)::int AS c FROM public.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.python_execs").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.api_keys").catch(() => ({ rows: [{ c: 0 }] })),
@@ -6799,12 +7443,11 @@ app.get('/api/dao/health', async (req, res) => {
       // which can have stale healthy:false flags due to dependency degradation cascades
       try {
         const liveChecks = await Promise.allSettled([
-          fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
-          fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-          fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(2000) }).then(r => r.ok || r.status === 302),
-          fetch('http://127.0.0.1:3120/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
-          fetch('http://127.0.0.1:3121/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
-          fetch('http://127.0.0.1:3122/health', { signal: AbortSignal.timeout(2000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:54321/health', { signal: AbortSignal.timeout(10000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(10000) }).then(r => r.ok || r.status === 302),
+          fetch('http://127.0.0.1:5174/', { signal: AbortSignal.timeout(10000) }).then(r => r.ok || r.status === 302),
+          fetch('http://127.0.0.1:3120/health', { signal: AbortSignal.timeout(10000) }).then(r => r.ok),
+          fetch('http://127.0.0.1:3121/health', { signal: AbortSignal.timeout(10000) }).then(r => r.ok),
         ]);
         const healthyCount = liveChecks.filter(r => r.status === 'fulfilled' && r.value).length;
         const totalChecks = liveChecks.length;
@@ -6826,6 +7469,29 @@ app.get('/api/dao/health', async (req, res) => {
       score = Math.max(0, Math.min(100, score));
       const status = score >= 80 ? 'healthy' : score >= 50 ? 'degraded' : 'critical';
 
+      // Inject live supervisor-managed service statuses. Rather than reading
+      // the (often empty/stale) supervisor-state.json, fetch the live
+      // /api/supervisor/status endpoint and transform its services array into
+      // the object shape the dashboard expects (name → {uptimeSec, childPid,
+      // restartCount, healthy}). This keeps the DAO & Ecosystem tile in sync
+      // with the Quartermaster's Watch tile.
+      let liveServices = null;
+      try {
+        const sup = await fetch(`http://127.0.0.1:${PORT}/api/supervisor/status`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => null);
+        if (sup && Array.isArray(sup.services)) {
+          liveServices = {};
+          for (const s of sup.services) {
+            liveServices[s.name] = {
+              childPid: s.pid || null,
+              startedAt: s.startedAt || null,
+              uptimeSec: s.startedAt ? Math.floor((Date.now() - s.startedAt) / 1000) : 0,
+              restartCount: s.restartCount || 0,
+              healthy: !!s.healthy,
+            };
+          }
+        }
+      } catch (_) { liveServices = null; }
+
       res.json({
         success: true,
         source: 'local-postgres',
@@ -6846,25 +7512,7 @@ app.get('/api/dao/health', async (req, res) => {
           },
         },
         counts,
-        // Inject supervisor-managed service statuses (read from supervisor-state.json)
-        services: (() => {
-          try {
-            const stateFile = join(DATA_DIR, 'supervisor-state.json');
-            if (!existsSync(stateFile)) return null;
-            const raw = JSON.parse(readFileSync(stateFile, 'utf8'));
-            const svcs = raw.services || {};
-            const out = {};
-            for (const [name, svc] of Object.entries(svcs)) {
-              out[name] = {
-                childPid: svc.childPid,
-                startedAt: svc.startedAt,
-                uptimeSec: svc.startedAt ? Math.floor((Date.now() - svc.startedAt) / 1000) : 0,
-                restartCount: Array.isArray(svc.restartTimestamps) ? svc.restartTimestamps.length : 0,
-              };
-            }
-            return out;
-          } catch (_) { return null; }
-        })(),
+        services: liveServices,
         latency_ms: Date.now() - t0,
         timestamp: new Date().toISOString(),
       });
@@ -6933,7 +7581,7 @@ app.post('/api/dao/gossip', async (req, res) => {
   try {
     const channel = topic || 'fleet-broadcast';
     const entry = addFleetMessage(agent, message, channel);
-    publishToMesh(channel, { agent, message, channel: channel, ts: entry.ts }).catch(() => {});
+    publishToMesh(channel, { agent, message, channel: channel, ts: entry?.ts || Date.now() }).catch(() => {});
 
     res.json({
       success: true,
@@ -7377,6 +8025,15 @@ const agentHopMemory = new Map();     // messageId -> { hops: {agent: count} }
 function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
   // Sanitize non-ASCII to prevent fleet-chat relay encoding corruption
   message = sanitizeFleetMessage(message);
+  // Strip TOOL_CALL JSON lines from non-system messages to prevent leakage
+  if (agent !== 'system') {
+    message = message
+      .replace(/```[a-z]*\s*\n?\{\s*"tool"[\s\S]*?\}\s*\n?```/g, '') // code-fenced JSON
+      .replace(/^TOOL_CALL:\s*\{[\s\S]*?\}\s*$/m, '')                    // bare TOOL_CALL line
+      .replace(/^\s*\{\s*"tool"\s*:\s*"[a-z_-]+"[\s\S]*?\}\s*$/im, '')    // bare JSON tool call
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
   // Dedup: skip if we've seen this message in the last 5 minutes
   if (checkAndMarkDuplicated(agent, message)) return null;
 
@@ -7458,7 +8115,7 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
     ).catch(() => {});
   });
   // Stamp last-spoke for cooldown
-  agentLastSpokeAt[agent] = entry.ts;
+  if (entry) agentLastSpokeAt[agent] = entry.ts;
   return entry;
 }
 
@@ -7660,7 +8317,7 @@ async function gatherFleetContext() {
     (async () => {
       try {
         const r = await fetch('http://127.0.0.1:54321/rest/v1/knowledge_entities?select=id&limit=1', {
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(15000),
           headers: { 'apikey': 'local-anon-key', 'Authorization': 'Bearer local-anon-key' },
         });
         if (!r.ok) return { status: 'error', count: 0 };
@@ -7869,7 +8526,7 @@ async function seedHealthData() {
     await queryLocalPg(`
       INSERT INTO public.tasks (title, status, category, priority)
       SELECT 'System health seed', 'COMPLETED', 'system', 0
-      WHERE NOT EXISTS (SELECT 1 FROM public.tasks WHERE title = 'System health seed')
+      WHERE NOT EXISTS (SELECT 1 FROM app.tasks WHERE title = 'System health seed')
     `);
     await queryLocalPg(`
       INSERT INTO public.eliza_function_usage (function_name, success, status)
@@ -8116,7 +8773,7 @@ async function routeFleetMessage(entry) {
     // Execute via relay's own /tools/run with retry on transient failures
     // Vision tools need much longer timeouts (up to 3 min for cloud inference)
     const isVisionTool = toolName && (toolName.includes('vision') || toolName.includes('screenshot'));
-    const toolTimeout = isVisionTool ? 180000 : 15000;
+    const toolTimeout = isVisionTool ? 180000 : 30000;  // 30s for chained tool calls
     const MAX_RETRIES = isVisionTool ? 1 : 4;  // Don't retry vision — already takes long enough
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -8345,7 +9002,7 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
               status: 'success',
               session_id: sessionId,
             }),
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(15000),
           });
         } catch (e) { console.error('[' + agentName + '-token-log] error:', e.message); }
         // Defensive: strip sign-off patterns
@@ -8472,8 +9129,11 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
       const sessionId = 'eliza-fleet'; // Single stable session for all fleet messages so ai-chat never sees a "first engagement"
       let contextHistory = '';
       try {
-        const convRes = await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access?session_id=' + sessionId + '&limit=20', {
-          signal: AbortSignal.timeout(3000),
+        const convRes = await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_messages', sessionId: sessionId, limit: 20 }),
+          signal: AbortSignal.timeout(15000),
         });
         const convData = await convRes.json();
         if (convData.messages && convData.messages.length > 0) {
@@ -8483,14 +9143,33 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
         }
       } catch (e) { console.error('[routeFleetMessage-Eliza] load conv history failed:', e.message); }
 
-      // Store this message in conversation memory
+      // Store this message in conversation memory (ai-chat reads from conversation_memory, not conversation_messages)
       try {
-        await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
+        // First, try to update existing conversation_memory record
+        const existingMem = await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, role: 'user', agent: entry.agentLabel, content: entry.message }),
-          signal: AbortSignal.timeout(3000),
-        });
+          body: JSON.stringify({ action: 'get_messages', sessionId: sessionId, limit: 1 }),
+          signal: AbortSignal.timeout(5000),
+        }).then(r => r.json()).catch(() => ({}));
+        
+        // Also write to conversation_memory table directly (ai-chat reads this)
+        try {
+          const msgJson = JSON.stringify([{ role: 'user', content: entry.message, agent: entry.agentLabel, timestamp: new Date().toISOString() }]);
+          await queryLocalPg(
+            `INSERT INTO public.conversation_memory (session_id, ip_address, messages, tool_results, metadata, conversation_data, summary, updated_at)
+             VALUES ($1, 'fleet-chat', $2::jsonb, '[]'::jsonb, $3::jsonb, '{}'::jsonb, $4, NOW())
+             ON CONFLICT (session_id) DO UPDATE SET
+               messages = (SELECT jsonb_agg(elem) FROM (
+                 SELECT jsonb_array_elements(public.conversation_memory.messages) AS elem
+                 UNION ALL
+                 SELECT jsonb_array_elements($2::jsonb)
+               ) AS combined),
+               updated_at = NOW(),
+               summary = $4`,
+            ['eliza-fleet', msgJson, JSON.stringify({ source: 'fleet-chat', agent: entry.agentLabel }), 'Fleet chat conversation']
+          );
+        } catch (e) { console.error('[routeFleetMessage-Eliza] store conv memory failed:', e.message); }
       } catch (e) { console.error('[routeFleetMessage-Eliza] store user msg failed:', e.message); }
 
       const elizaMsg = '[Fleet Chat - ' + entry.agentLabel + '] ' + entry.message + contextHistory;
@@ -8592,6 +9271,7 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 |- \`vex-vision\` — **Vision tool.** Capture a screenshot (screen:true) or describe an image file/URL. Returns plain text description. Cloud-only — kimi-k2.6:cloud via OpenRouter. No local models on this 6GB laptop.
 |- \`vex-vision-screenshots\` — **Historical screenshots.** Read and describe recent screenshots from Windows Pictures/Screenshots folder. Args: limit (default 5), filename (optional specific file).
 |- \`python-exec\` — **Python executor.** Run Python 3.11 code on the relay machine. Pass code via "code" string. Use for data analysis, text processing, DB queries. Fast and cheap — runs locally, no LLM tokens used.
+|- \`service_control\` — **Service control.** Restart, start, stop, or check status of supervised services (relay, pg, local-sb, alice, cron-engine-v2, etc.). RESTARTING THE RELAY: expect ~15s downtime. Do not poll until 20s have passed.
 For ALL tools and their descriptions, check the \`tools\` array in the JSON grounding block.
 
 If you need information NOT in the grounding block, output a single line in EXACTLY this JSON format (no other format works):
@@ -8649,12 +9329,20 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
       if (elizaRes?.reply) {
         // Store Eliza's reply in conversation memory
         try {
-          await fetch('http://localhost:' + PORT + '/api/v1/functions/conversation-access', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: sessionId, role: 'assistant', agent: 'Eliza', content: elizaRes.reply }),
-            signal: AbortSignal.timeout(3000),
-          });
+          const replyMsgJson = JSON.stringify([{ role: 'assistant', content: elizaRes.reply, agent: 'Eliza', timestamp: new Date().toISOString() }]);
+          await queryLocalPg(
+            `INSERT INTO public.conversation_memory (session_id, ip_address, messages, tool_results, metadata, conversation_data, summary, updated_at)
+             VALUES ($1, 'fleet-chat', $2::jsonb, '[]'::jsonb, $3::jsonb, '{}'::jsonb, $4, NOW())
+             ON CONFLICT (session_id) DO UPDATE SET
+               messages = (SELECT jsonb_agg(elem) FROM (
+                 SELECT jsonb_array_elements(public.conversation_memory.messages) AS elem
+                 UNION ALL
+                 SELECT jsonb_array_elements($2::jsonb)
+               ) AS combined),
+               updated_at = NOW(),
+               summary = $4`,
+            ['eliza-fleet', replyMsgJson, JSON.stringify({ source: 'fleet-chat', agent: 'Eliza' }), 'Fleet chat conversation']
+          );
         } catch (e) { console.error('[routeFleetMessage-Eliza] store assistant reply failed:', e.message); }
 
         // Strip verbose thinking / preamble / tool-syntax from Eliza's reply
@@ -8704,7 +9392,13 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
                   .replace(/\n{3,}/g, '\n\n')
                   .trim();
                 await postAndReRoute('eliza', finalReply || sD.response, 'fleet');
+              } else {
+                // Synthesis returned empty — fall back to original reply
+                await postAndReRoute('eliza', cleanReply || elizaRes.reply, 'fleet');
               }
+            } else {
+              // Synthesis HTTP error — fall back to original reply
+              await postAndReRoute('eliza', cleanReply || elizaRes.reply, 'fleet');
             }
           } catch (e) {
             console.log('[eliza-tool-synth] error:', e.message);
@@ -8923,8 +9617,9 @@ app.get('/api/fleet-chat/attachments/:message_id', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     // message_id is UUID type — reject non-UUID strings gracefully
+    // Also accept msg- prefixed IDs from addFleetMessage
     const msgId = req.params.message_id;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(msgId)) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(msgId) && !/^msg-/.test(msgId)) {
       return res.json({ success: true, attachments: [] });
     }
     const r = await queryLocalPg(
@@ -9350,7 +10045,7 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   // Also publish to gossipsub fleet-broadcast topic
   // Use setImmediate so this doesn't block the POST response — mesh may be disconnected
   setImmediate(() => {
-    publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry.ts }).catch(() => {});
+    publishToMesh('fleet-broadcast', { agent, message, channel, ts: entry?.ts || Date.now() }).catch(() => {});
   });
   
   // Route to other agents asynchronously — fire and forget, don't block the POST
@@ -9529,7 +10224,17 @@ app.post('/api/fleet-chat/send-email', async (req, res) => {
   // Sanitize subject and body to prevent em-dash / Unicode corruption
   // bash/curl on Windows mangles U+2014 (em dash) to U+FFFD (replacement char)
   const cleanSubject = sanitizeText(subject);
-  const cleanBody = body ? sanitizeText(body) : '';
+  
+  // Strip HTML tags from body for text/plain version
+  // If body contains HTML tags, use the stripped version as text and original as html
+  let cleanBody = body ? sanitizeText(body) : '';
+  let cleanHtml = html || undefined;
+  const hasHtmlTags = /<[a-z][\s\S]*>/i.test(cleanBody);
+  if (hasHtmlTags && !cleanHtml) {
+    // Body has HTML but no explicit html field — strip tags for text, use body as html
+    cleanHtml = cleanBody;
+    cleanBody = cleanBody.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s*\n\s*/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
 
   const AGENT_FROM = {
     'vex': 'Vex Relay <vex@mobilemonero.com>',
@@ -9742,7 +10447,7 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
       // Fallback: look up agent profile
       try {
         const agentRes = await fetch(`http://localhost:${PORT}/api/cuttlefishclaws/trust-score?did=${agentId}`, {
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(15000),
         });
         if (agentRes.ok) {
           const agentData = await agentRes.json();
@@ -10956,6 +11661,83 @@ app.get('/pfp/templates/:file', (req, res) => {
   res.sendFile(filepath);
 });
 
+// ── Stripe Webhook ──────────────────────────────────────────
+// Receives payment events from Stripe and records them in pfp_payments
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    const stripe = require('stripe')(STRIPE_SECRET_KEY);
+    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.warn('[Stripe Webhook] Signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  const eventType = event.type;
+  const data = event.data.object;
+  logActivity('stripe-webhook', event.id, 'RECEIVED', eventType);
+
+  try {
+    if (eventType === 'charge.succeeded') {
+      const charge = data;
+      await queryLocalPg(
+        `INSERT INTO public.pfp_payments (stripe_charge_id, stripe_payment_intent_id, amount, currency, status,
+          client_name, client_email, description, payment_method, receipt_url, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12))
+         ON CONFLICT (stripe_charge_id) DO UPDATE SET status = $5, updated_at = NOW()`,
+        [charge.id, charge.payment_intent, (charge.amount / 100).toFixed(2), charge.currency,
+         charge.status, charge.billing_details?.name || null, charge.billing_details?.email || null,
+         charge.description || null, charge.payment_method_details?.type || null,
+         charge.receipt_url || null, JSON.stringify(charge.metadata || {}), charge.created]
+      );
+      logActivity('stripe-payment', charge.id, 'RECORDED', `${(charge.amount/100).toFixed(2)} ${charge.currency.toUpperCase()} from ${charge.billing_details?.name || 'unknown'}`);
+    } else if (eventType === 'charge.refunded') {
+      const charge = data;
+      await queryLocalPg(
+        `UPDATE public.pfp_payments SET status = 'refunded', amount_refunded = $2, updated_at = NOW()
+         WHERE stripe_charge_id = $1`,
+        [charge.id, (charge.amount_refunded / 100).toFixed(2)]
+      );
+      logActivity('stripe-refund', charge.id, 'RECORDED', `Refunded ${(charge.amount_refunded/100).toFixed(2)} ${charge.currency.toUpperCase()}`);
+    } else if (eventType === 'payout.paid') {
+      const payout = data;
+      logActivity('stripe-payout', payout.id, 'PAID', `${(payout.amount/100).toFixed(2)} ${payout.currency.toUpperCase()} — ${payout.status}`);
+    } else if (eventType === 'payout.failed') {
+      const payout = data;
+      logActivity('stripe-payout', payout.id, 'FAILED', `${(payout.amount/100).toFixed(2)} ${payout.currency.toUpperCase()} — ${payout.failure_message || 'unknown reason'}`);
+    } else {
+      logActivity('stripe-webhook', event.id, 'UNHANDLED', eventType);
+    }
+  } catch (err) {
+    console.error('[Stripe Webhook] Processing error:', err.message);
+    logActivity('stripe-webhook', event.id, 'ERROR', err.message);
+  }
+
+  res.json({ received: true });
+});
+
+// ── Edge Function Proxy: forward /functions/v1/* to local-sb ──
+// Used by Resend webhook (inbox.partyfavorphoto.com → localhost:54321)
+app.all('/functions/v1/*path', async (req, res) => {
+  const path = req.path.replace(/^\/functions\/v1\//, '');
+  const targetUrl = `http://127.0.0.1:54321/functions/v1/${path}`;
+  try {
+    const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body || {});
+    const upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json', ...(req.headers['x-api-key'] ? { 'x-api-key': req.headers['x-api-key'] } : {}) },
+      body,
+      signal: AbortSignal.timeout(30000),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
+  } catch (e) {
+    console.error(`[edge-proxy] Error proxying ${path}:`, e.message);
+    res.status(502).json({ error: 'Edge function proxy failed', detail: e.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Relay listening on http://0.0.0.0:${PORT}`);
   const toolsCount = Object.keys(toolHandlers).length;
@@ -11047,6 +11829,70 @@ app.listen(PORT, '0.0.0.0', async () => {
   setTimeout(() => {
     seedHealthData().catch(e => console.log('[seed] Error during startup seed:', e.message));
   }, 8000);
+
+  // ── Ensure inbox_emails table exists ──
+  setTimeout(async () => {
+    try {
+      await queryLocalPg(
+        `CREATE TABLE IF NOT EXISTS app.inbox_emails (
+          id SERIAL PRIMARY KEY,
+          email_id TEXT UNIQUE,
+          sender TEXT,
+          recipient TEXT,
+          subject TEXT,
+          body_text TEXT,
+          body_html TEXT,
+          received_at TIMESTAMPTZ DEFAULT NOW(),
+          read BOOLEAN DEFAULT FALSE,
+          domain TEXT,
+          metadata JSONB DEFAULT '{}'::jsonb
+        )`
+      );
+      console.log('[inbox-db] Table app.inbox_emails ready');
+
+      // Sync recent emails from Resend API into the in-memory inbox cache
+      // so agents can see them even after a relay restart
+      try {
+        const RESEND_KEYS = {
+          'partyfavorphoto.com': process.env.RESEND_API_KEY,
+          'mobilemonero.com': process.env.RESEND_XMRT_API_KEY,
+          '31harbor.com': process.env.RESEND_31HARBOR_API_KEY,
+        };
+        for (const [domain, apiKey] of Object.entries(RESEND_KEYS)) {
+          if (!apiKey) continue;
+          const res = await fetch(`https://api.resend.com/emails/receiving?limit=50`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (res.ok) {
+            const emails = await res.json();
+            if (Array.isArray(emails)) {
+              for (const email of emails) {
+                const toDomain = email.to?.includes('31harbor') ? '31harbor.com'
+                  : email.to?.includes('partyfavorphoto') ? 'partyfavorphoto.com'
+                  : 'mobilemonero.com';
+                addToInbox(toDomain, {
+                  to: email.to,
+                  from: email.from,
+                  from_name: email.from_name,
+                  subject: email.subject,
+                  text: email.text || '',
+                  html: email.html || '',
+                  email_id: email.id,
+                  attachments: email.attachments,
+                });
+              }
+              console.log(`[inbox-db] Synced ${emails.length} emails from Resend for ${domain}`);
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.log('[inbox-db] Sync from Resend failed (non-fatal):', syncErr.message);
+      }
+    } catch (e) {
+      console.log('[inbox-db] Table creation error:', e.message);
+    }
+  }, 12000);
 
   // ── TrustGraph Violation Scanner (Layer 4) ──
   // Scans fleet chat every 15 min for false claims, writes FABRICATION_DETECTED
@@ -11556,7 +12402,7 @@ function addToInbox(domain, email) {
   } else {
     inbox[key].unshift(newEntry);
   }
-  if (inbox[key].length > 200) inbox[key] = inbox[key].slice(0, 200);
+  if (inbox[key].length > 100) inbox[key] = inbox[key].slice(0, 100);
   state.set(EMAIL_STORE_KEY, inbox);
 }
 
@@ -11863,6 +12709,19 @@ app.get('/api/obsidian-graph', async (req, res) => {
         const schemaVaultName = row.nspname + ' Schema';
         if (nodeSet.has(schemaVaultName)) addEdge(schemaVaultName, row.nspname, 'documents');
       }
+      // ── 2b. DB Views (from local Postgres) ────────────────────
+      // pg_tables only returns tables; views are in pg_views. Add them as distinct nodes
+      // so the graph reflects the full schema (lease_clauses, tasks, agents, fleet_memory, etc.)
+      try {
+        const viewRows = await localQuery("SELECT schemaname, viewname FROM pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY schemaname, viewname");
+        for (const row of viewRows) {
+          const id = row.schemaname + '.' + row.viewname;
+          addNode(id, row.viewname, 'db', { schema: row.schemaname, kind: 'view', source: 'pg_views' });
+          addEdge(id, row.schemaname, 'belongs-to');
+          // Link to vault node if name matches
+          if (nodeSet.has(row.viewname)) addEdge(row.viewname, id, 'has-view');
+        }
+      } catch (e) { console.error('[graph] PG views error:', e.message); }
     } catch (e) { console.error('[graph] PG error:', e.message); }
 
     // ── 3. Cron Jobs (from cron-jobs.json) ─────────────────────
@@ -12250,17 +13109,25 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
       }
     }
 
-    // Fetch token usage and ecosystem summary
-    const tokenUsage = await queryLocalPg(
-      `SELECT agent, call_count, avg_tokens_per_call, total_tokens, total_cost, last_used
-       FROM app.token_usage_avg ORDER BY total_tokens DESC`
-    );
-    const ecoSummary = await queryLocalPg(
-      `SELECT agent_id, trust_events, token_calls, artifacts, total_token_cost, last_activity
-       FROM app.agent_activity_summary ORDER BY trust_events DESC NULLS LAST LIMIT 20`
-    );
+    // Fetch token usage and ecosystem summary (graceful degradation if tables missing)
+    let tokenUsageRows = [];
+    let ecoSummaryRows = [];
+    try {
+      const tokenUsage = await queryLocalPg(
+        `SELECT agent, call_count, avg_tokens_per_call, total_tokens, total_cost, last_used
+         FROM app.token_usage_avg ORDER BY total_tokens DESC`
+      );
+      tokenUsageRows = tokenUsage.rows || tokenUsage || [];
+    } catch (e) { /* table may not exist */ }
+    try {
+      const ecoSummary = await queryLocalPg(
+        `SELECT agent_id, trust_events, token_calls, artifacts, total_token_cost, last_activity
+         FROM app.agent_activity_summary ORDER BY trust_events DESC NULLS LAST LIMIT 20`
+      );
+      ecoSummaryRows = ecoSummary.rows || ecoSummary || [];
+    } catch (e) { /* table may not exist */ }
 
-    res.json({ series, totalEvents: result.rows.length, tokenUsage: tokenUsage.rows, ecosystemSummary: ecoSummary.rows });
+    res.json({ series, totalEvents: result.rows.length, tokenUsage: tokenUsageRows, ecosystemSummary: ecoSummaryRows });
   } catch (e) {
     res.json({ series: {}, totalEvents: 0, error: e.message });
   }
@@ -12517,7 +13384,10 @@ app.get('/api/rum-quota', async (req, res) => {
 // ── Conversation Access Helpers ──
 async function convAccessGet(sessionId, limit = 20) {
   try {
-    const res = await fetch(`http://localhost:${PORT}/api/v1/functions/conversation-access?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`, {
+    const res = await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_messages', sessionId: sessionId, limit: limit }),
       signal: AbortSignal.timeout(10000),
     });
     return await res.json();
@@ -12528,14 +13398,13 @@ async function convAccessGet(sessionId, limit = 20) {
 }
 async function convAccessStore(sessionId, role, agent, content) {
   try {
-    await fetch(`http://localhost:${PORT}/api/v1/functions/conversation-access`, {
+    await fetch('http://127.0.0.1:54321/functions/v1/conversation-access', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        session_id: sessionId,
-        role: role,
-        agent: agent,
-        content: content,
+        action: 'add_message',
+        sessionId: sessionId,
+        messageData: { message_type: role, content: content, agent: agent }
       }),
       signal: AbortSignal.timeout(3000),
     });

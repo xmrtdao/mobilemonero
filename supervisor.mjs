@@ -106,16 +106,6 @@ const SERVICE_DEFS = [
     dependsOn: ['pg'],
   },
   {
-    name: 'cuttlefish-mcp',
-    cmd: 'node',
-    args: ['relay/cuttlefish-mcp.mjs', '--http', '--port', '3122'],
-    cwd: ROOT,
-    healthUrl: 'http://127.0.0.1:3122/health',
-    healthCheck: () => true,
-    startupGraceMs: 10000,
-    dependsOn: ['pg'],
-  },
-  {
     name: 'page-agent-mcp',
     // Alibaba Page Agent — JavaScript in-page GUI agent for natural language web control.
     // Provides MCP stdio server on port 38401 (hub) for browser automation.
@@ -197,7 +187,7 @@ const SERVICE_DEFS = [
   },
 ];
 
-const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'cuttlefish-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', '31harbor-scheduler'];
+const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', '31harbor-scheduler'];
 
 // ── State ────────────────────────────────────────────────────────────
 const state = {};
@@ -369,7 +359,7 @@ async function findExistingProcess(name) {
   }
 
   // For services known by TCP port, try a socket connect
-  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'cuttlefish-mcp': 3122 };
+  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121 };
   const port = def.tcpPort || tcpPorts[name];
   if (port) {
     try {
@@ -599,7 +589,7 @@ async function performHealthCheck(name, def) {
       // Kill and re-spawn
       if (s.child) killProcess(s.child.pid);
       // Wait for port to be released before spawning new instance
-      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'cuttlefish-mcp': 3122 };
+      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121 };
       const port = def.tcpPort || tcpPorts[name];
       if (port) {
         let waited = 0;
@@ -662,6 +652,17 @@ async function daemonLoop() {
 
 // ── Daemonize (Windows-friendly self-detach) ─────────────────────────
 function daemonize() {
+  // Guard against piling up duplicate --serve supervisors. Every --daemon
+  // invocation used to spawn a fresh --serve child unconditionally, so the
+  // three boot scripts (start-everything.bat, start-supervisor.bat, and the
+  // Vex-Supervisor logon task) each left a long-lived daemon behind →
+  // 5+ supervisors fighting over the same state file. Check the lock first:
+  if (!acquireLock()) {
+    log(`daemonize: another supervisor is already running (PID lock held) — refusing to spawn duplicate`);
+    console.log('Supervisor already running — no duplicate spawned');
+    process.exit(0);
+  }
+  releaseLock(); // hand the lock to the child we're about to spawn
   log('daemonizing...');
   const child = spawn(process.execPath, [process.argv[1], '--serve'], {
     cwd: ROOT,
