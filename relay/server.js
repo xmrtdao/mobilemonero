@@ -4181,7 +4181,7 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     port: PORT,
     agent: 'XMRT-DAO Relay Server',
-    version: '9.5.0',
+    version: '10.0.0',
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
@@ -4559,8 +4559,8 @@ app.get('/', (req, res) => {
 </head>
 <body>
   <div class="box">
-    <h1>MobileMonero <small>Privateer Fleet</small></h1>
-    <p>Enter your API key or XMRT-DAO-CERT JWT to access the fleet dashboard. Graduates can use their cert JWT from XMRT University.</p>
+    <h1>Tributary Campus <small>Command Center</small></h1>
+    <p>Enter your API key or XMRT-DAO-CERT JWT to access the campus dashboard. Graduates can use their cert JWT from XMRT University.</p>
     <form id="loginForm">
       <input id="keyInput" type="password" placeholder="API key or XMRT-DAO-CERT JWT" autocomplete="off" required>
       <button type="submit">Sign in</button>
@@ -4691,32 +4691,41 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MobileMonero — Privateer Fleet</title>
+  <title>Tributary Campus — Command Center</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap');
     :root {
-      --bg-primary: #0a0a0f;
-      --bg-card: #12121a;
-      --bg-card-hover: #1a1a2a;
-      --border: #2a2a3a;
-      --border-hover: #3a3a5a;
-      --text-primary: #e0e0f0;
-      --text-secondary: #c0c0d0;
-      --text-muted: #8b8ba0;
-      --text-dim: #6b6b80;
-      --accent-orange: #ff6b35;
-      --accent-orange-glow: rgba(255,107,53,0.15);
-      --accent-teal: #4ade80;
-      --accent-blue: #60a5fa;
-      --accent-purple: #a78bfa;
-      --accent-yellow: #fbbf24;
-      --accent-red: #f87171;
-      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-      --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+      --bg-primary: #060200;
+      --bg-card: #0a0400;
+      --bg-card-hover: #0e0600;
+      --border: rgba(255,140,0,0.25);
+      --border-hover: rgba(255,140,0,0.45);
+      --text-primary: #ffbb33;
+      --text-secondary: #ffaa00;
+      --text-muted: rgba(255,160,0,0.6);
+      --text-dim: rgba(255,160,0,0.4);
+      --accent-orange: #ff8800;
+      --accent-orange-glow: rgba(255,140,0,0.15);
+      --accent-teal: #00ffcc;
+      --accent-blue: #00d2ff;
+      --accent-purple: #aa88ff;
+      --accent-yellow: #ffbb33;
+      --accent-red: #ff3399;
+      --font-sans: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'Share Tech Mono', 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
     }
+    /* Scanline effect (Tributary Campus signature) */
+    .scanline { position: fixed; top: 0; left: 0; width: 100%; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,160,0,0.08), transparent); animation: scan 14s linear infinite; pointer-events: none; z-index: 999; }
+    @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+    /* Corner brackets */
+    .bracket { position: relative; }
+    .bracket::before, .bracket::after { content: ''; position: absolute; width: 10px; height: 10px; border-color: var(--accent-orange); border-style: solid; opacity: 0.5; }
+    .bracket::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+    .bracket::after { top: 0; right: 0; border-width: 1px 1px 0 0; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-secondary); padding: 0.5rem; }
+    body { font-family: var(--font-mono); background: var(--bg-primary); color: var(--text-secondary); padding: 0.5rem; }
     @media (min-width: 640px) { body { padding: 1.5rem; } }
-    h1 { color: var(--accent-orange); font-size: 1rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-weight: 800; letter-spacing: -0.5px; }
+    h1 { color: var(--accent-orange); font-size: 1rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-weight: 700; letter-spacing: 0.02em; }
     @media (min-width: 640px) { h1 { font-size: 1.6rem; gap: 0.75rem; } }
     h1 span { font-size: 0.65rem; color: var(--text-dim); font-weight: 400; letter-spacing: 0; }
     @media (min-width: 640px) { h1 span { font-size: 0.9rem; } }
@@ -4947,27 +4956,28 @@ app.get('/', (req, res) => {
 </style>
 </head>
 <body>
+<div class="scanline"></div>
 <canvas id="mesh-bg"></canvas>
-  <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> MobileMonero <span>Privateer Fleet</span></h1>
+  <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> Tributary Campus <span>Command Center</span></h1>
   <div class="subtitle">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="HMS Speedy (1782) - 14-gun brig, 158 tons, captured the 32-gun Spanish frigate El Gamo on 6 May 1801 under Lord Cochrane's command, with 54 men vs 319. The underdog metaphor for this 6GB laptop's relay." style="cursor:help;border-bottom:1px dotted #4ade80;">HMS Speedy</span> v9.5.0 · 
+    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="Tributary Campus — the Cuttlefish Protocol command center. Constitutional AI agents, TrustGraph scoring, and the Tributary AI Campus." style="cursor:help;border-bottom:1px dotted #ff8800;">Tributary Campus</span> v10.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
   <div style="text-align:center;margin-top:4px;font-size:0.7rem;color:var(--text-dim);">
-    <a href="#fn-catalog" style="color:#60a5fa;">☁️ Supabase Edge Functions Catalog</a> — 205 functions available
+    <a href="#fn-catalog" style="color:#00d2ff;">☁️ Supabase Edge Functions Catalog</a> — 205 functions available
   </div>
   
   <div class="grid">
 <div class="card chat-card" style="grid-column:1/-1;">
-      <h3 style="color:var(--accent-orange);">Ship-to-Ship <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Vex · Eliza-Cloud · Hermes</span></h3>
-      <div id="fleet-chat-msgs" style="height:180px;overflow-y:auto;background:#0d0d15;border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px;line-height:1.5;">
-        <div style="color:#8b8ba0;text-align:center;padding:20px 0;font-size:12px;">Ship-to-ship comms active. All privateers hear every hail.</div>
+      <h3 style="color:var(--accent-orange);">Campus Comms <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Vex · Eliza-Cloud · Hermes</span></h3>
+      <div id="fleet-chat-msgs" style="height:180px;overflow-y:auto;background:#0a0400;border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px;line-height:1.5;">
+        <div style="color:var(--text-dim);text-align:center;padding:20px 0;font-size:12px;">Campus comms active. All agents hear every broadcast.</div>
       </div>
       <div class="chat-input-wrap" style="gap:4px;">
-        <input id="fleet-chat-name" type="text" placeholder="Your name..." style="padding:6px 10px;border-radius:6px;border:1px solid #2a2a3a;background:#1a1a2a;color:#e0e0f0;font-size:12px;outline:none;width:100px;flex-shrink:0;" maxlength="20"/>
+        <input id="fleet-chat-name" type="text" placeholder="Your name..." style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:#0e0600;color:var(--text-primary);font-size:12px;outline:none;width:100px;flex-shrink:0;" maxlength="20"/>
         <input id="fleet-chat-agent" type="hidden" value=""/>
-        <input id="fleet-chat-input" type="text" placeholder="Hail the crew..." 
+        <input id="fleet-chat-input" type="text" placeholder="Broadcast to the campus..." 
           style="flex:1;min-width:0;padding:6px 10px;border-radius:6px;border:1px solid #2a2a3a;background:#1a1a2a;color:#e0e0f0;font-size:12px;outline:none;"
           onkeypress="if(event.key==='Enter')sendFleetChat()">
         <label for="fleet-chat-file" title="Attach a file" style="padding:6px 10px;border-radius:6px;border:1px solid #2a2a3a;background:#1a1a2a;color:#a78bfa;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;">📎</label>
@@ -4976,7 +4986,7 @@ app.get('/', (req, res) => {
       </div>
       <div id="fleet-chat-attach-status" style="font-size:10px;color:#a78bfa;margin-top:2px;min-height:14px;"></div>
       <div style="margin-top:4px;display:flex;gap:8px;font-size:11px;color:#6b6b80;">
-        <span>Ship-to-ship broadcast — all privateers hear your hail</span>
+        <span>Campus broadcast — all agents hear your message</span>
         <span id="fleet-chat-status" style="color:#4ade80;">● connected</span>
       </div>
     </div>
@@ -5003,25 +5013,25 @@ app.get('/', (req, res) => {
 <!-- ⚓ Quarterdeck — Consolidated Command Center -->
 <div class="card" style="grid-column:1/-1;border-color:rgba(255,107,53,0.2);">
   <h3 style="color:var(--accent-orange);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    ⚓ Quarterdeck
-    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— The Quartermaster's domain: crew rations, watch, bulletin, and vessels</span>
+    🏛️ Campus Command
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— The Campus domain: rations, watch, bulletin, and vessels</span>
   </h3>
 
-  <!-- Top row: Rum Quota (combined with Agent Experience) — full width -->
+  <!-- Top row: Campus Rations (combined with Agent Experience) — full width -->
   <div style="margin-bottom:10px;">
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
-      <h4 style="color:#a78bfa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🍺 Rum Quota <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Rations · Trust Scores · Status · Experience</span></h4>
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
+      <h4 style="color:var(--accent-purple);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🍺 Campus Rations <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Rations · Trust Scores · Status · Experience</span></h4>
       <div id="rum-quota-content" style="display:flex;flex-direction:column;gap:2px;max-height:260px;overflow-y:auto;padding-right:8px;">
-        <div class="stat"><span class="label">Loading crew ledger...</span></div>
+        <div class="stat"><span class="label">Loading agent ledger...</span></div>
       </div>
     </div>
   </div>
 
-  <!-- Middle row: Quartermaster's Watch + Ship's Log -->
+  <!-- Middle row: Campus Watch + Activity Log -->
   <div class="quarterdeck-mid">
-    <!-- Quartermaster's Watch -->
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
-      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Quartermaster's Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
+    <!-- Campus Watch -->
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
+      <h4 style="color:var(--accent-yellow);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Campus Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
       <div id="quarterdeck-supervisor">
         <div class="stat"><span class="label">Supervisor</span><span class="value" id="qds-supervisor" style="color:#6b6b80;">checking...</span></div>
         <div class="stat"><span class="label">Stack Health</span><span class="value" id="qds-health-score" style="color:#6b6b80;">-</span></div>
@@ -5042,9 +5052,9 @@ app.get('/', (req, res) => {
         <a href="/api/supervisor/status" style="color:#60a5fa;">API</a> · <span id="qds-refresh" style="color:#4ade80;">● polling</span>
       </div>
     </div>
-    <!-- Ship's Log (pirate-themed activity pulse) -->
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:260px;overflow:hidden;">
-      <h4 style="color:#fbbf24;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🏴‍☠️ Ship's Log <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Live Activity Feed</span></h4>
+    <!-- Activity Log (campus activity pulse) -->
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);max-height:260px;overflow:hidden;">
+      <h4 style="color:var(--accent-yellow);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📡 Activity Log <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Live Activity Feed</span></h4>
       <div id="qds-activity-log" style="font-size:0.6rem;max-height:220px;overflow-y:auto;">
         <div class="stat"><span class="label">Loading activity...</span></div>
       </div>
@@ -5054,8 +5064,8 @@ app.get('/', (req, res) => {
   <!-- Training & Security row (own row) -->
   <div class="quarterdeck-security">
     <!-- TRAINING & SECURITY — TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control -->
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
-      <h4 style="color:#f87171;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Training & Security <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control</span></h4>
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
+      <h4 style="color:var(--accent-red);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Training & Security <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control</span></h4>
       <div id="qds-security" style="font-size:0.6rem;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
           <div>
@@ -5092,27 +5102,27 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
-    <!-- Footlocker — Agent Chests -->
+    <!-- Agent Vault — Agent Chests -->
     <div style="grid-column:1/-1;margin-bottom:10px;">
-      <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
-        <h4 style="color:#a78bfa;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📦 Footlocker <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Chests · Completed Task Artifacts</span></h4>
+      <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
+        <h4 style="color:var(--accent-purple);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📦 Agent Vault <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Chests · Completed Task Artifacts</span></h4>
         <div id="footlocker-content" style="font-size:0.6rem;">
           <div class="stat"><span class="label">Loading chests...</span></div>
         </div>
       </div>
     </div>
 
-    <!-- Bottom row: Ship's Articles + Mesh Peers + LoRa Bridge -->
+    <!-- Bottom row: Campus Resolutions + Mesh Peers + LoRa Bridge -->
   <div class="quarterdeck-bottom">
-    <!-- Ship's Articles (bulletin board) -->
-    <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;max-height:160px;overflow-y:auto;">
-      <h4 style="color:#ff6b35;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;display:flex;justify-content:space-between;align-items:center;">
-        <span>📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Crew Resolutions &amp; Progress</span></span>
-        <a href="javascript:void(0)" onclick="quickCreateBoardTopic()" style="color:#4ade80;font-size:0.7rem;text-decoration:none;font-weight:700;cursor:pointer;" title="Create a new resolution">+ new</a>
+    <!-- Campus Resolutions (bulletin board) -->
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);max-height:160px;overflow-y:auto;">
+      <h4 style="color:var(--accent-orange);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;display:flex;justify-content:space-between;align-items:center;">
+        <span>📜 Campus Resolutions <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Resolutions &amp; Progress</span></span>
+        <a href="javascript:void(0)" onclick="quickCreateBoardTopic()" style="color:var(--accent-teal);font-size:0.7rem;text-decoration:none;font-weight:700;cursor:pointer;" title="Create a new resolution">+ new</a>
       </h4>
       <div id="board-topics-list" style="font-size:0.65rem;"></div>
-      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
-        <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:#60a5fa;">Full Board</a>
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border);font-size:0.6rem;color:var(--text-dim);">
+        <span id="qds-articles-count">-</span> resolutions · <a href="javascript:void(0)" onclick="loadBoard();renderBoardTopics();" style="color:var(--accent-blue);">Full Board</a>
       </div>
     </div>
         <!-- Mesh Peers -->
@@ -5243,16 +5253,16 @@ app.get('/', (req, res) => {
   </div>
 </div>
 
-<!-- 📡 Ship's Intelligence -->
+<!-- 📡 Campus Intelligence -->
 <div class="card" style="grid-column:1/-1;">
-  <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    📡 Ship's Intelligence
+  <h3 style="color:var(--accent-purple);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📡 Campus Intelligence
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
   </h3>
   <div class="subgrid-3">
     <!-- 🎓 XMRT University -->
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#a78bfa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:var(--accent-purple);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
       <div id="university-status">
         <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#6b6b80;">checking...</span></div>
       </div>
@@ -5303,14 +5313,14 @@ app.get('/', (req, res) => {
   </div>
 </div>
 
-<!-- 🏴‍☠️ DAO & Ecosystem -->
+<!-- 🏛️ DAO & Ecosystem -->
 <div class="card" style="grid-column:1/-1;">
-  <h3 style="color:#4ade80;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    🏴‍☠️ DAO & Ecosystem
+  <h3 style="color:var(--accent-teal);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    🏛️ DAO & Ecosystem
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
   </h3>
   <div class="subgrid-4">
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
       <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
       <div class="stat"><span class="label">Health Score</span><span class="value" id="dao-health-score">-</span></div>
@@ -5348,10 +5358,10 @@ app.get('/', (req, res) => {
   </div>
 </div>
 
-<!-- Ship's Articles Full Board -->
+<!-- Campus Resolutions Full Board -->
 <div id="board-full" class="card" style="grid-column:1/-1;margin-top:0.5rem;">
-  <h3 style="color:#fbbf24;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    📜 Ship's Articles <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
+  <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    📜 Campus Resolutions <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
   </h3>
   <div class="board-tabs" id="board-tabs">
     <span class="board-tab active" onclick="switchBoardView('topics')" id="tab-topics">Resolutions</span>
@@ -5413,7 +5423,7 @@ app.get('/', (req, res) => {
     </div>
   </div>
   <div style="margin-top:4px;display:flex;gap:8px;font-size:10px;color:#6b6b80;">
-    <span>Privateers can post to any resolution — persistent across voyages</span>
+    <span>Agents can post to any resolution — persistent across sessions</span>
     <span id="board-updated-indicator" style="color:#fbbf24;display:none;">* new activity</span>
     <span id="board-status-full" style="color:#4ade80;">● loaded</span>
   </div>
@@ -7043,7 +7053,7 @@ app.get('/api/fleet', async (req, res) => {
       host: hostname,
       uptime: process.uptime(),
       port: PORT,
-      version: '9.5.0',
+      version: '10.0.0',
       tools: Object.keys(toolHandlers).length,
       handlers: Object.keys(handlers).length,
       tasks: stats,
