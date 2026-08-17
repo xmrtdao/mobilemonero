@@ -6548,6 +6548,83 @@ app.get('/api/catalog', async (req, res) => {
   }
 });
 
+// ── Unified Tool + Edge Function Registry ────────────────────────────
+// Merges the relay's local tool handlers (toolHandlers) with the Supabase
+// edge function catalog (list-available-functions) into a single queryable
+// view. Also syncs the merged view into public.unified_tool_registry so it
+// persists in PG and can be queried alongside the edge-function metadata.
+app.get('/api/registry', async (req, res) => {
+  trackRequest('/api/registry');
+  try {
+    // 1) Relay tools (local toolHandlers)
+    const relayTools = Object.entries(toolHandlers).map(([name, fn]) => ({
+      name,
+      description: getToolDescription(name),
+      category: 'relay',
+      source_type: 'relay_tool',
+      source_schema_table: 'relay/toolHandlers',
+      status: 'active',
+      ai_compatible: true,
+      handler: fn.name || 'anonymous',
+    }));
+
+    // 2) Edge functions (from list-available-functions)
+    let edgeFns = [];
+    try {
+      const efRes = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (efRes.ok) {
+        const d = await efRes.json();
+        edgeFns = (d.functions || []).map(f => ({
+          name: f.name,
+          description: f.description || '',
+          category: f.category || 'edge_function',
+          source_type: 'edge_function',
+          source_schema_table: 'suite/supabase/functions',
+          status: 'active',
+          ai_compatible: true,
+        }));
+      }
+    } catch (e) { /* edge catalog unavailable — return relay tools only */ }
+
+    const all = [...relayTools, ...edgeFns];
+
+    // 3) Sync relay tools into public.relay_tools (real table, not the view),
+    //    which feeds the combined public.vw_tool_function_registry view.
+    try {
+      for (const t of relayTools) {
+        await pgPool.query(
+          `INSERT INTO public.relay_tools
+             (tool_name, description, category, status, source_schema_table, source_type, ai_compatible, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+           ON CONFLICT (tool_name) DO UPDATE SET
+             description=EXCLUDED.description, category=EXCLUDED.category,
+             status=EXCLUDED.status, source_schema_table=EXCLUDED.source_schema_table,
+             source_type=EXCLUDED.source_type, ai_compatible=EXCLUDED.ai_compatible, updated_at=NOW()`,
+          [t.name, t.description, t.category, t.status, t.source_schema_table, t.source_type, t.ai_compatible]
+        );
+      }
+    } catch (e) {
+      // Registry sync is best-effort
+    }
+
+    res.json({
+      total: all.length,
+      relay_tools: relayTools.length,
+      edge_functions: edgeFns.length,
+      source_types: { relay_tool: relayTools.length, edge_function: edgeFns.length },
+      tools: all,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Registry unavailable', message: e.message });
+  }
+});
+
 // API: Fleet heartbeat — agents self-report their status
 app.post('/api/fleet/heartbeat', (req, res) => {
   trackRequest('/api/fleet/heartbeat');
