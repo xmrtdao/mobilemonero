@@ -4856,11 +4856,11 @@ app.get('/', (req, res) => {
     @media (min-width: 640px) { .board-new-topic input { padding: 6px 10px; font-size: 12px; } }
     .board-new-topic input:focus { border-color: var(--accent-orange); }
 
-    /* Pirate Flag Logo */
-    .pirate-flag { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; overflow: hidden; flex-shrink: 0; }
-    @media (min-width: 640px) { .pirate-flag { width: 52px; height: 52px; border-radius: 8px; } }
-    .pirate-flag img { width: 100%; height: 100%; object-fit: cover; }
-    .pirate-flag svg { width: 100%; height: 100%; display: block; }
+    /* Campus Logo */
+    .campus-logo { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+    @media (min-width: 640px) { .campus-logo { width: 52px; height: 52px; border-radius: 8px; } }
+    .campus-logo img { width: 100%; height: 100%; object-fit: cover; }
+    .campus-logo svg { width: 100%; height: 100%; display: block; }
 
     /* Chat card */
     .chat-card { grid-column: 1 / -1; }
@@ -4958,7 +4958,7 @@ app.get('/', (req, res) => {
 <body>
 <div class="scanline"></div>
 <canvas id="mesh-bg"></canvas>
-  <h1><span class="pirate-flag"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> Tributary Campus <span>Command Center</span></h1>
+  <h1><span class="campus-logo"><img src="/images/xmrtdao.png" alt="XMRT DAO"></span> Tributary Campus <span>Command Center</span></h1>
   <div class="subtitle">
     <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> · <span title="Tributary Campus — the Cuttlefish Protocol command center. Constitutional AI agents, TrustGraph scoring, and the Tributary AI Campus." style="cursor:help;border-bottom:1px dotted #ff8800;">Tributary Campus</span> v10.0.0 · 
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
@@ -5112,12 +5112,12 @@ app.get('/', (req, res) => {
       </div>
     </div>
 
-    <!-- Bottom row: Campus Resolutions + Mesh Peers + LoRa Bridge -->
+    <!-- Bottom row: Campus Forum + Mesh Peers + LoRa Bridge -->
   <div class="quarterdeck-bottom">
-    <!-- Campus Resolutions (bulletin board) -->
+    <!-- Campus Forum (bulletin board) -->
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);max-height:160px;overflow-y:auto;">
       <h4 style="color:var(--accent-orange);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;display:flex;justify-content:space-between;align-items:center;">
-        <span>📜 Campus Resolutions <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Resolutions &amp; Progress</span></span>
+        <span>📜 Campus Forum <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Resolutions &amp; Progress</span></span>
         <a href="javascript:void(0)" onclick="quickCreateBoardTopic()" style="color:var(--accent-teal);font-size:0.7rem;text-decoration:none;font-weight:700;cursor:pointer;" title="Create a new resolution">+ new</a>
       </h4>
       <div id="board-topics-list" style="font-size:0.65rem;"></div>
@@ -5138,6 +5138,51 @@ app.get('/', (req, res) => {
         <span>Bridge: <span id="qds-mt-bridge" style="color:#6b6b80;">checking...</span></span><br>
         <span>Peers: <span id="qds-mt-peers" style="color:#6b6b80;">-</span></span><br>
         <span>Msgs: <span id="qds-mt-msgs" style="color:#6b6b80;">-</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 🏛️ DAO & Ecosystem -->
+<div class="card" style="grid-column:1/-1;">
+  <h3 style="color:var(--accent-teal);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    🏛️ DAO & Ecosystem
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
+  </h3>
+  <div class="subgrid-4">
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
+      <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
+      <div class="stat"><span class="label">Health Score</span><span class="value" id="dao-health-score">-</span></div>
+      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
+      <div class="stat"><span class="label">Agents</span><span class="value" id="dao-agent-count">-</span></div>
+      <div class="stat"><span class="label">Tasks</span><span class="value" id="dao-task-count">-</span></div>
+      <div class="stat"><span class="label">Services</span><span class="value" id="dao-service-status">-</span></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎫 Membership</div>
+      <div class="stat"><span class="label"><a href="https://whop.com/xmrt-dao" target="_blank" style="color:#4ade80;text-decoration:none;">Free Tier</a></span><span class="value">free</span></div>
+      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_W6r4uqGWNaKHp" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium</a></span><span class="value">$9.99/mo</span></div>
+      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_Wj1nh8AJhdsLN" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium Yearly</a></span><span class="value">$99.99/yr</span></div>
+      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_n853GD3f5IXm0" target="_blank" style="color:#60a5fa;text-decoration:none;">Supporter</a></span><span class="value">$19.99</span></div>
+      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">Premium: 2x rewards · governance · early hardware</div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🌐 Ecosystem</div>
+      <div class="stat"><span class="label"><a href="https://xmrtsolutions.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token Faucet</a></span><span class="value">testnet</span></div>
+      <div class="stat"><span class="label"><a href="https://coldcash.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">ColdCash</a></span><span class="value">private payments</span></div>
+      <div class="stat"><span class="label"><a href="https://pipuente.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">PiPuente</a></span><span class="value">cross-chain bridge</span></div>
+      <div class="stat"><span class="label"><a href="https://paragraph.com/@xmrt" target="_blank" style="color:#60a5fa;text-decoration:none;">Paragraph Blog</a></span><span class="value">DAO journal</span></div>
+      <div class="stat"><span class="label"><a href="https://sepolia.etherscan.io/token/0x77307DFbc436224d5e6f2048d2b6bDfA66998a15" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token</a></span><span class="value">0x7730...8a15</span></div>
+      <div class="stat"><span class="label"><a href="https://github.com/xmrtdao" target="_blank" style="color:#60a5fa;text-decoration:none;">GitHub Org</a></span><span class="value">59 repos</span></div>
+    </div>
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🔧 Tools</div>
+      <div class="stat"><span class="label">Relay Tools</span><span class="value" id="dao-tool-count">${toolCount}</span></div>
+      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
+      ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#4ade80;">Local: ' + localFunctions.map(f => f.name).join(', ') + '</div>' : ''}
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
+        <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
       </div>
     </div>
   </div>
@@ -5184,15 +5229,15 @@ app.get('/', (req, res) => {
   </div>
 </div>
 
-<!-- 💰 Plunder & Mining -->
+<!-- 💰 Mining & Rewards -->
 <div class="card" style="grid-column:1/-1;">
-  <h3 style="color:#fbbf24;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    💰 Plunder & Mining
+  <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    💰 Mining & Rewards
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Pool Stats · Leaderboard · Heartbeat</span>
   </h3>
   <div class="subgrid-3">
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📒 Plunder Ledger</div>
+    <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
+      <div style="font-size:0.65rem;color:var(--accent-yellow);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📒 Mining Ledger</div>
       <div class="stat"><span class="label">Pool Hashrate</span><span class="value" id="pool-hash">checking...</span></div>
       <div class="stat"><span class="label">Valid Shares</span><span class="value" id="pool-shares">-</span></div>
       <div class="stat"><span class="label">XMR Paid / Due</span><span class="value" id="pool-xmr">-</span></div>
@@ -5313,55 +5358,10 @@ app.get('/', (req, res) => {
   </div>
 </div>
 
-<!-- 🏛️ DAO & Ecosystem -->
-<div class="card" style="grid-column:1/-1;">
-  <h3 style="color:var(--accent-teal);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    🏛️ DAO & Ecosystem
-    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
-  </h3>
-  <div class="subgrid-4">
-    <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
-      <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
-      <div class="stat"><span class="label">Health Score</span><span class="value" id="dao-health-score">-</span></div>
-      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
-      <div class="stat"><span class="label">Agents</span><span class="value" id="dao-agent-count">-</span></div>
-      <div class="stat"><span class="label">Tasks</span><span class="value" id="dao-task-count">-</span></div>
-      <div class="stat"><span class="label">Services</span><span class="value" id="dao-service-status">-</span></div>
-    </div>
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎫 Membership</div>
-      <div class="stat"><span class="label"><a href="https://whop.com/xmrt-dao" target="_blank" style="color:#4ade80;text-decoration:none;">Free Tier</a></span><span class="value">free</span></div>
-      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_W6r4uqGWNaKHp" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium</a></span><span class="value">$9.99/mo</span></div>
-      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_Wj1nh8AJhdsLN" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium Yearly</a></span><span class="value">$99.99/yr</span></div>
-      <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_n853GD3f5IXm0" target="_blank" style="color:#60a5fa;text-decoration:none;">Supporter</a></span><span class="value">$19.99</span></div>
-      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">Premium: 2x rewards · governance · early hardware</div>
-    </div>
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🌐 Ecosystem</div>
-      <div class="stat"><span class="label"><a href="https://xmrtsolutions.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token Faucet</a></span><span class="value">testnet</span></div>
-      <div class="stat"><span class="label"><a href="https://coldcash.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">ColdCash</a></span><span class="value">private payments</span></div>
-      <div class="stat"><span class="label"><a href="https://pipuente.vercel.app" target="_blank" style="color:#60a5fa;text-decoration:none;">PiPuente</a></span><span class="value">cross-chain bridge</span></div>
-      <div class="stat"><span class="label"><a href="https://paragraph.com/@xmrt" target="_blank" style="color:#60a5fa;text-decoration:none;">Paragraph Blog</a></span><span class="value">DAO journal</span></div>
-      <div class="stat"><span class="label"><a href="https://sepolia.etherscan.io/token/0x77307DFbc436224d5e6f2048d2b6bDfA66998a15" target="_blank" style="color:#60a5fa;text-decoration:none;">XMRT Token</a></span><span class="value">0x7730...8a15</span></div>
-      <div class="stat"><span class="label"><a href="https://github.com/xmrtdao" target="_blank" style="color:#60a5fa;text-decoration:none;">GitHub Org</a></span><span class="value">59 repos</span></div>
-    </div>
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🔧 Tools</div>
-      <div class="stat"><span class="label">Relay Tools</span><span class="value" id="dao-tool-count">${toolCount}</span></div>
-      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
-      ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#4ade80;">Local: ' + localFunctions.map(f => f.name).join(', ') + '</div>' : ''}
-      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
-        <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Campus Resolutions Full Board -->
+<!-- Campus Forum Full Board -->
 <div id="board-full" class="card" style="grid-column:1/-1;margin-top:0.5rem;">
   <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    📜 Campus Resolutions <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
+    📜 Campus Forum <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
   </h3>
   <div class="board-tabs" id="board-tabs">
     <span class="board-tab active" onclick="switchBoardView('topics')" id="tab-topics">Resolutions</span>
@@ -5471,20 +5471,21 @@ app.get('/', (req, res) => {
   </div>
   
             <div class="footer">
-    <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> &middot; <span style="color:var(--accent-teal);">&#x26a1;</span> Vex &middot; ${new Date().toISOString()} &middot;
-    <a href="https://github.com/xmrtdao" target="_blank" style="color:var(--text-dim);">GitHub</a> &middot;
-    <a href="${tunnelUrl}" target="_blank" style="color:var(--text-dim);">Relay</a> &middot;
-    Functions: ${supabaseUrl}/functions/v1/{name}
-  </div>
+              <span style="color:var(--accent-orange);font-weight:600;">XMRT DAO</span> &middot; <span style="color:var(--accent-teal);">&#x26a1;</span> Vex &middot; ${new Date().toISOString()} &middot;
+              <a href="https://github.com/xmrtdao" target="_blank" style="color:var(--text-dim);">GitHub</a> &middot;
+              <a href="${tunnelUrl}" target="_blank" style="color:var(--text-dim);">Relay</a> &middot;
+              Functions: ${supabaseUrl}/functions/v1/{name}
+            </div>
+            </div><!-- /fn-catalog -->
 
-  <script src="/static/dashboard.js"></script>
+            <script src="/static/dashboard.js"></script>
 
-  <script src="/static/markdown.js"></script>
+            <script src="/static/markdown.js"></script>
   
-  </body>
-</html>`);
+  
+            </body>
+            </html>`);
 });
-
 // ════════════════════════════════════════════════════════════════
 // RESTORED ROUTES — 2026-06-03
 // Originally deleted in commit 7e70bac (mesh dashboard endpoints),
