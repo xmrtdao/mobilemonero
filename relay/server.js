@@ -1934,6 +1934,132 @@ const toolHandlers = {
     } catch (err) { return { success: false, error: err.message }; }
   },
 
+  // ── x402 Agentic Payment Handlers ──────────────────────────────────
+  // Implements the HTTP 402 Payment Required / x402 agentic-payment flow.
+  // CORE agents (Vex, Hermes, Eliza) can create invoice requests that return
+  // 402 + Payment-Request metadata, execute payments against a configured
+  // provider (Stripe or crypto), and reconcile payment state.
+  // Backed by public.service_invoices + public.pfp_payments.
+
+  'x402-request': async (args) => {
+    const amount = Number(args?.amount);
+    const asset = args?.asset || 'XMRT';
+    const purpose = args?.purpose || 'agentic_payment';
+    const customerDid = args?.customer_did || args?.customerDid || null;
+    const merchantDid = args?.merchant_did || args?.merchantDid || 'relay';
+    if (!amount || amount <= 0) return { success: false, error: 'amount (positive number) is required' };
+    try {
+      const invoiceId = 'inv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
+      await pgPool.query(
+        `INSERT INTO public.x402_invoices
+           (invoice_id, merchant_did, customer_did, amount, asset, purpose, status, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)
+         ON CONFLICT DO NOTHING`,
+        [invoiceId, merchantDid, customerDid, amount, asset, purpose, expiresAt]
+      ).catch(() => {});
+      return {
+        success: true,
+        payment_request: {
+          invoice_id: invoiceId,
+          amount,
+          asset,
+          purpose,
+          merchant_did: merchantDid,
+          customer_did: customerDid,
+          expires_at: expiresAt,
+          http_status: 402, // HTTP 402 Payment Required semantics
+        },
+      };
+    } catch (e) { return { success: false, error: e.message }; }
+  },
+
+  'x402-pay': async (args) => {
+    const invoiceId = args?.invoice_id || args?.invoiceId;
+    const provider = args?.provider || process.env.X402_PROVIDER || 'stripe';
+    if (!invoiceId) return { success: false, error: 'invoice_id is required (from x402-request)' };
+    try {
+      const r = await pgPool.query(
+        `SELECT * FROM public.x402_invoices WHERE invoice_id=$1`, [invoiceId]
+      ).catch(() => ({ rows: [] }));
+      const inv = r.rows[0];
+      if (!inv) return { success: false, error: 'invoice not found' };
+      if (inv.status === 'paid') return { success: true, data: { invoice_id: invoiceId, status: 'already_paid' } };
+
+      let providerRef = null;
+      if (provider === 'stripe' && process.env.STRIPE_SECRET_KEY) {
+        try {
+          const stripe = (await import('stripe'))?.default;
+          const client = new stripe(process.env.STRIPE_SECRET_KEY);
+          const pi = await client.paymentIntents.create({
+            amount: Math.round(inv.amount * 100),
+            currency: (inv.asset || 'usd').toLowerCase(),
+            metadata: { invoice_id: invoiceId, purpose: inv.purpose },
+            automatic_payment_methods: { enabled: true },
+          });
+          providerRef = pi.id;
+          await pgPool.query(
+            `UPDATE public.x402_invoices SET provider=$1, provider_ref=$2, updated_at=NOW() WHERE invoice_id=$3`,
+            [provider, providerRef, invoiceId]
+          ).catch(() => {});
+        } catch (e) {
+          return { success: false, error: 'stripe: ' + e.message };
+        }
+      } else {
+        // Crypto/Web3 fallback — record the intent, mark pending until settled
+        providerRef = 'pending:' + Date.now();
+        await pgPool.query(
+          `UPDATE public.x402_invoices SET provider=$1, provider_ref=$2, updated_at=NOW() WHERE invoice_id=$3`,
+          [provider, providerRef, invoiceId]
+        ).catch(() => {});
+      }
+      return {
+        success: true,
+        data: { invoice_id: invoiceId, provider, provider_ref: providerRef, status: inv.status },
+      };
+    } catch (e) { return { success: false, error: e.message }; }
+  },
+
+  'x402-status': async (args) => {
+    const invoiceId = args?.invoice_id || args?.invoiceId || null;
+    try {
+      if (invoiceId) {
+        const r = await pgPool.query(
+          `SELECT invoice_id, merchant_did, customer_did, amount, asset, purpose, status, provider, provider_ref, expires_at, updated_at
+             FROM public.x402_invoices WHERE invoice_id=$1`, [invoiceId]
+        ).catch(() => ({ rows: [] }));
+        if (!r.rows[0]) return { success: false, error: 'invoice not found' };
+        return { success: true, invoice: r.rows[0] };
+      }
+      const r = await pgPool.query(
+        `SELECT invoice_id, merchant_did, customer_did, amount, asset, purpose, status, provider, provider_ref, expires_at, updated_at
+           FROM public.x402_invoices ORDER BY updated_at DESC LIMIT 25`
+      ).catch(() => ({ rows: [] }));
+      return { success: true, invoices: r.rows, count: r.rows.length };
+    } catch (e) { return { success: false, error: e.message }; }
+  },
+
+  'x402-settle': async (args) => {
+    const invoiceId = args?.invoice_id || args?.invoiceId;
+    const providerRef = args?.provider_ref || args?.providerRef || null;
+    if (!invoiceId) return { success: false, error: 'invoice_id is required' };
+    try {
+      const r = await pgPool.query(
+        `UPDATE public.x402_invoices SET status='paid', provider_ref=COALESCE($2,provider_ref), updated_at=NOW()
+         WHERE invoice_id=$1 RETURNING invoice_id, amount, asset, purpose, status, updated_at`,
+        [invoiceId, providerRef]
+      ).catch(() => ({ rows: [] }));
+      if (!r.rows[0]) return { success: false, error: 'invoice not found' };
+      await pgPool.query(
+        `INSERT INTO public.pfp_payments (stripe_charge_id, amount, currency, status, description, metadata, created_at)
+         VALUES ($1,$2,$3,'succeeded',$4,$5, NOW()) ON CONFLICT DO NOTHING`,
+        [providerRef || ('x402_' + invoiceId), r.rows[0].amount, r.rows[0].asset, r.rows[0].purpose,
+         JSON.stringify({ invoice_id: invoiceId, asset: r.rows[0].asset })]
+      ).catch(() => {});
+      return { success: true, invoice: r.rows[0] };
+    } catch (e) { return { success: false, error: e.message }; }
+  },
+
   'ef:cron-proxy': async (args) => {
     // Local replacement: read from /cron/status instead of dead cloud edge function
     try {
@@ -7263,6 +7389,10 @@ app.get('/tools', (req, res) => {
 function getToolDescription(name) {
   const descriptions = {
     'web-search': 'Search the web via Ollama or DuckDuckGo fallback',
+    'x402-request': 'Create an x402 agentic payment request (invoice). Returns a 402-style Payment-Request with invoice_id, amount, asset. Args: amount (required, positive), asset (default XMRT), purpose, customer_did, merchant_did.',
+    'x402-pay': 'Execute payment for an x402 invoice via a provider (Stripe or crypto). Args: invoice_id (from x402-request), provider (default stripe). Returns provider_ref.',
+    'x402-status': 'Check x402 invoice payment status. Args: invoice_id (optional — omit for all recent invoices). Returns status pending/paid.',
+    'x402-settle': 'Reconcile/settle an x402 invoice as paid (webhook or manual confirmation). Args: invoice_id, provider_ref. Records an audit row in pfp_payments.',
     'web-scrape': 'Extract readable text content from any URL',
     'ollama-chat': 'Chat with local LLM via Ollama',
     'ollama-models': 'List available Ollama models',
