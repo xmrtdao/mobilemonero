@@ -5154,7 +5154,7 @@ app.get('/', (req, res) => {
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">❤️‍🔥 Health</div>
       <div class="stat"><span class="label">Local DB</span><span class="value" id="dao-health-status">checking...</span></div>
       <div class="stat"><span class="label">Health Score</span><span class="value" id="dao-health-score">-</span></div>
-      <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
+      <div class="stat"><span class="label">Fn Calls / 24h</span><span class="value" id="dao-fn-calls">-</span></div>
       <div class="stat"><span class="label">Agents</span><span class="value" id="dao-agent-count">-</span></div>
       <div class="stat"><span class="label">Tasks</span><span class="value" id="dao-task-count">-</span></div>
       <div class="stat"><span class="label">Services</span><span class="value" id="dao-service-status">-</span></div>
@@ -7418,10 +7418,12 @@ app.get('/api/dao/health', async (req, res) => {
       // 2) Aggregate the dashboard fields from local tables using pool.query()
       // (pool.query acquires+releases a connection per query — safe for parallel use)
       const queries = [
-        pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents").catch(() => ({ rows: [{ c: 0 }] })),
-        pgPool.query("SELECT COUNT(*)::int AS c FROM agent.agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
+        // Count the real fleet agents (app.cuttlefish_agents) — agent.agents only
+        // holds the legacy Eliza-Dev row and undercounts the actual fleet.
+        pgPool.query("SELECT COUNT(*)::int AS c FROM app.cuttlefish_agents").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM app.cuttlefish_agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks").catch(() => ({ rows: [{ c: 0 }] })),
-        pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks WHERE status IN ('completed','done')").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks WHERE status IN ('completed','done','DONE','COMPLETED')").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.python_execs").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.api_keys").catch(() => ({ rows: [{ c: 0 }] })),

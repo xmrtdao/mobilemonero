@@ -1228,7 +1228,7 @@ loadAgentExperienceCard();
       .then(function(r){return r.json();})
       .then(function(d){
         var statusEl = document.getElementById('dao-health-status');
-        var fnEl = document.getElementById('dao-fn-count');
+        var fnEl = document.getElementById('dao-fn-calls');
         var agentEl = document.getElementById('dao-agent-count');
         var taskEl = document.getElementById('dao-task-count');
         var gossipEl = document.getElementById('dao-gossip-status');
@@ -1271,8 +1271,11 @@ loadAgentExperienceCard();
           }
           if (agentEl && h.components.agents) {
             var agents = h.components.agents;
-            var total = (agents.IDLE || 0) + (agents.BUSY || 0) + (agents.OFFLINE || 0);
-            agentEl.textContent = total + ' (' + (agents.BUSY || 0) + ' busy)';
+            // Handle both shapes: {IDLE,BUSY,OFFLINE} and {total,busy}
+            var total = (agents.total !== undefined) ? agents.total
+                      : ((agents.IDLE || 0) + (agents.BUSY || 0) + (agents.OFFLINE || 0));
+            var busy = (agents.busy !== undefined) ? agents.busy : (agents.BUSY || 0);
+            agentEl.textContent = total + ' (' + busy + ' busy)';
           } else if (agentEl && s && s.components && s.components.agents && s.components.agents.stats) {
             var a2 = s.components.agents.stats;
             agentEl.textContent = (a2.total || 0) + ' (' + (a2.busy || 0) + ' busy)';
@@ -1282,7 +1285,10 @@ loadAgentExperienceCard();
             taskEl.textContent = (t.total || 0) + ' (' + (t.completed || 0) + ' done)';
           } else if (taskEl && h.components.tasks) {
             var tt = h.components.tasks;
-            taskEl.textContent = (tt.total || 0) + ' (' + (tt.COMPLETED || 0) + ' done)';
+            // Handle both shapes: {total,completed} and {total,COMPLETED}
+            var tTotal = (tt.total !== undefined) ? tt.total : 0;
+            var tDone = (tt.completed !== undefined) ? tt.completed : (tt.COMPLETED || 0);
+            taskEl.textContent = tTotal + ' (' + tDone + ' done)';
           }
         }
 
