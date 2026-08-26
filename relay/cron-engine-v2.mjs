@@ -104,6 +104,100 @@ async function logToDb(activityType, title, status, description, metadata = {}, 
   }
 }
 
+// ── Cron Execution Write Path ──────────────────────────
+// Writes a cron job execution to the dedicated tracking tables:
+//   - public.cron_execution_log  (audit trail, one row per run)
+//   - public.edge_function_logs (only for edge-function jobs)
+//   - public.cron_registry       (run_count / last_run_at / last_status)
+// plus the existing eliza_activity_log feed. This closes the
+// "write path gap" where cron jobs ran but nothing recorded them
+// in the dedicated log tables (they were stuck at 0 rows).
+async function logCronExecution(job, res, startedAt) {
+  const finishedAt = new Date();
+  const durationMs = startedAt ? Math.max(0, finishedAt.getTime() - startedAt.getTime()) : null;
+  const jobName = job.name || job.fn || `job-${job.id}`;
+  const fnName = job.fn || (job.command && job.command.match(/functions\/v1\/([a-zA-Z0-9_-]+)/)?.[1]) || job.command || null;
+  const status = res.ok ? 'completed' : 'failed';
+  const platform = job.type === 'edge' ? 'edge' : 'local';
+  const pool = getSharedPool();
+
+  // 1. cron_execution_log — one row per run
+  try {
+    await pool.query(
+      `INSERT INTO public.cron_execution_log
+         (job_name, function_name, platform, status, started_at, finished_at, duration_ms, payload, result, error, run_count, owner_agent, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+      [
+        jobName,
+        fnName,
+        platform,
+        status,
+        startedAt ? startedAt.toISOString() : null,
+        finishedAt.toISOString(),
+        durationMs,
+        JSON.stringify({ jobId: job.id, type: job.type }),
+        res.ok ? JSON.stringify({ rows: res.rows ?? null, status: res.status ?? null }) : null,
+        res.ok ? null : String(res.error || '').slice(0, 2000),
+        1,
+        'cron',
+      ]
+    );
+  } catch (e) {
+    log(`logCronExecution: cron_execution_log write failed: ${e.message}`, 'WARN');
+  }
+
+  // 2. edge_function_logs — only for edge-function jobs
+  if (job.type === 'edge' && fnName) {
+    try {
+      await pool.query(
+        `INSERT INTO public.edge_function_logs
+           (function_name, event_type, event_message, level, timestamp, execution_time_ms, status_code, metadata, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          fnName,
+          'cron_execution',
+          res.ok ? `Cron job ${jobName} completed` : `Cron job ${jobName} failed: ${String(res.error || '').slice(0, 200)}`,
+          res.ok ? 'info' : 'error',
+          finishedAt.toISOString(),
+          durationMs,
+          res.status ?? (res.ok ? 200 : 500),
+          JSON.stringify({ jobId: job.id, type: job.type }),
+          status,
+        ]
+      );
+    } catch (e) {
+      log(`logCronExecution: edge_function_logs write failed: ${e.message}`, 'WARN');
+    }
+  }
+
+  // 3. cron_registry — increment run_count, set last_run_at / last_status
+  try {
+    await pool.query(
+      `UPDATE public.cron_registry
+         SET run_count = COALESCE(run_count, 0) + 1,
+             last_run_at = NOW(),
+             last_status = $2,
+             updated_at = NOW()
+       WHERE job_name = $1`,
+      [jobName, status]
+    );
+  } catch (e) {
+    log(`logCronExecution: cron_registry update failed: ${e.message}`, 'WARN');
+  }
+
+  // 4. eliza_activity_log — keep the existing feed (Ships Log)
+  await logToDb(
+    job.type === 'sql' ? 'cron_execution' : 'edge_function',
+    jobName,
+    status,
+    res.ok
+      ? `${job.type}: ${jobName}`
+      : `Error: ${(res.error || '').slice(0, 200)}`,
+    { jobId: job.id, rows: res.rows, status: res.status, error: res.error },
+    'cron'
+  );
+}
+
 async function loadJobsFromPg() {
   const c = await getSharedPool().connect();
   try {
@@ -400,6 +494,58 @@ async function runPythonJob(code) {
   }
 }
 
+// ── Robust Shell Command Runner ────────────────────────────────────
+// The old implementation used promisify(exec)(cmd, { timeout }). On Windows
+// Node, exec's timeout path calls child.kill() which races the process 'exit'/
+// 'close' events and triggers a FATAL libuv abort:
+//   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src/win/async.c
+// (e.g. task-discussion-announcer running node relay/task-announcer.mjs every
+// 15 min). That assertion is a hard process crash -- uncaughtException cannot
+// catch it. Use spawn() and manage the lifecycle ourselves: wait for the real
+// 'close' event (all stdio drained + handle settled) and always clear the
+// timer before resolving, so a timer kill can never race a closing handle.
+import { spawn } from 'node:child_process';
+async function runShellCommand(command, { timeoutMs = 120_000, cwd = __dirname } = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      // spawn with shell:true passes the whole command string through the OS
+      // shell (cmd.exe on Windows), preserving the original exec() behavior.
+      child = spawn(command, { cwd, windowsHide: true, shell: true });
+    } catch (e) {
+      resolve({ ok: false, error: 'spawn failed: ' + e.message });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // Kill the child, then wait for 'close' before resolving (no UV race).
+      try { child.kill(); } catch {}
+      // Guard: if the child never closes, resolve anyway after a grace period.
+      const grace = setTimeout(() => resolve({ ok: false, error: 'shell timeout after ' + timeoutMs + 'ms', timedOut: true }), 5000);
+      child.once('close', () => { clearTimeout(grace); resolve({ ok: false, error: 'shell timeout after ' + timeoutMs + 'ms', timedOut: true, stderr: stderr.slice(0, 200) }); });
+    }, timeoutMs);
+
+    child.stdout?.on('data', d => { stdout += d.toString(); });
+    child.stderr?.on('data', d => { stderr += d.toString(); });
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: false, error: e.message });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: code === 0, rows: stdout.length, stderr: stderr.slice(0, 200), exitCode: code });
+    });
+  });
+}
+
 function loadState() {
   try { return JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { return { lastRun: {} }; }
 }
@@ -428,6 +574,7 @@ async function tick() {
     if (lastMin === thisMin) continue; // already ran this minute
     const label = job.name || job.fn || `job-${job.id}`;
     log(`[${job.id}] ${job.type}: ${label}`);
+    const startedAt = new Date();
     let res;
     if (job.type === 'sql') {
       res = await runSql(job.command);
@@ -448,38 +595,21 @@ async function tick() {
       // to localhost:8080, causing them to time out (e.g. trustgraph-scanner,
       // health-check, fleet-chat-heartbeat all fetch the relay).
       try {
-        const { exec } = await import('node:child_process');
-        const { promisify } = await import('node:util');
-        const execAsync = promisify(exec);
-        const { stdout } = await execAsync(job.command, { timeout: 120_000, cwd: join(__dirname, '..'), maxBuffer: 1024 * 1024 });
-        res = { ok: true, rows: (stdout || '').toString().length };
+        res = await runShellCommand(job.command, { timeoutMs: 120_000, cwd: join(__dirname, '..') });
       } catch (e) {
-        res = { ok: false, error: e.stderr?.toString()?.slice(0, 200) || e.message };
+        res = { ok: false, error: e.message };
       }
     } else {
       res = { ok: false, error: `unknown type: ${job.type}` };
     }
     state.lastRun[job.id] = thisMin;
+    // Write to the dedicated tracking tables (cron_execution_log,
+    // edge_function_logs, cron_registry) + eliza_activity_log feed.
+    await logCronExecution(job, res, startedAt);
     if (res.ok) {
       log(`[${job.id}] OK (${res.rows ?? res.status ?? '?'} rows/ms)`);
-      logToDb(
-        job.type === 'sql' ? 'cron_execution' : 'edge_function',
-        `${job.name || job.fn || `job-${job.id}`}`,
-        `completed`,
-        `${job.type}: ${job.name || job.fn || job.command?.slice(0, 80)}`,
-        { jobId: job.id, rows: res.rows, status: res.status },
-        'cron'
-      );
     } else {
       log(`[${job.id}] FAIL: ${res.error}`, 'WARN');
-      logToDb(
-        job.type === 'sql' ? 'cron_execution' : 'edge_function',
-        `${job.name || job.fn || `job-${job.id}`}`,
-        `failed`,
-        `Error: ${(res.error || '').slice(0, 200)}`,
-        { jobId: job.id, error: res.error },
-        'cron'
-      );
     }
   }
   saveState(state);
