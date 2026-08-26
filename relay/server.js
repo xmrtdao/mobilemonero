@@ -767,6 +767,50 @@ const toolHandlers = {
       return await r.json();
     } catch (e) { return { error: e.message }; }
   },
+  'cuttlefishclaws-gate-evaluate': async (args) => {
+    const { agent_did, activity_type, domain, purpose } = args || {};
+    if (!agent_did || !activity_type || !domain) return { error: 'agent_did, activity_type, and domain are required' };
+    try {
+      const r = await fetch('http://127.0.0.1:3120/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'cuttlefishclaws_gate_evaluate', arguments: { agent_did, activity_type, domain, purpose: purpose || 'write' } },
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = await r.json();
+      const text = data?.result?.content?.[0]?.text;
+      if (text) { try { return JSON.parse(text); } catch { return { raw: text }; } }
+      return data;
+    } catch (e) { return { error: e.message }; }
+  },
+  'cuttlefishclaws-trustgraph-scorer': async (args) => {
+    const { agent } = args || {};
+    try {
+      const r = await fetch('http://127.0.0.1:3120/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'cuttlefishclaws_agents_list', arguments: {} },
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await r.json();
+      const text = data?.result?.content?.[0]?.text;
+      if (!text) return data;
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { return { raw: text }; }
+      const agents = parsed.agents || parsed || [];
+      if (agent) {
+        const match = agents.find(a => (a.did === agent) || (a.name === agent) || (a.agent_id === agent));
+        return { agent, score: match || null, total: agents.length };
+      }
+      return { agents, total: agents.length };
+    } catch (e) { return { error: e.message }; }
+  },
   'cuttlefishclaws-agent-onboard': async (args) => {
     const { did, agentType, prepaidUsdcAmount, metadata } = args || {};
     if (!did || !agentType) return { error: 'did and agentType required' };
@@ -843,6 +887,27 @@ const toolHandlers = {
     try {
       const r = await fetch('http://127.0.0.1:8080/api/cuttlefishclaws/rate-card', { signal: AbortSignal.timeout(5000) });
       return await r.json();
+    } catch (e) { return { error: e.message }; }
+  },
+
+  'trust-trajectory': async (args) => {
+    const { agent, action } = args || {};
+    try {
+      const r = await fetch('http://127.0.0.1:8080/api/trustgraph/trajectory', { signal: AbortSignal.timeout(20000) });
+      const data = await r.json();
+      if (action === 'summary' || (agent && !data.series?.[agent])) {
+        // Compact summary: per-agent current score + band + event count
+        const summary = {};
+        for (const [name, pts] of Object.entries(data.series || {})) {
+          const last = pts[pts.length - 1];
+          summary[name] = { score: last?.score, lastEvent: last?.event, lastAt: last?.t, points: pts.length };
+        }
+        return { success: true, summary, totalEvents: data.totalEvents };
+      }
+      if (agent) {
+        return { success: true, agent, series: data.series?.[agent] || [], totalEvents: data.totalEvents };
+      }
+      return { success: true, series: data.series, totalEvents: data.totalEvents, tokenUsage: data.tokenUsage, ecosystemSummary: data.ecosystemSummary };
     } catch (e) { return { error: e.message }; }
   },
 
@@ -982,7 +1047,7 @@ const toolHandlers = {
     const action = args?.action;
     const service = args?.service;
     const validActions = ['restart', 'status', 'start', 'stop'];
-    const validServices = ['relay', 'pg', 'local-sb', 'vite', 'tunnel', 'python-exec', 'alice', 'cron-engine-v2', 'cuttlefishclaws-mcp', 'suite-mcp', 'campaign-scheduler', '31harbor-scheduler', 'zero-claw'];
+    const validServices = ['relay', 'pg', 'local-sb', 'vite', 'tunnel', 'python-exec', 'alice', 'cron-engine-v2', 'cuttlefishclaws-mcp', 'suite-mcp', 'campaign-scheduler', '31harbor-scheduler', 'zero-claw', 'supervisor'];
     if (!action || !validActions.includes(action)) {
       return { error: `action must be one of: ${validActions.join(', ')}` };
     }
@@ -1034,6 +1099,31 @@ const toolHandlers = {
       const { readFileSync, writeFileSync } = await import('fs');
       const { join } = await import('path');
       const queueFile = join(DATA_DIR, 'service-actions.json');
+      // Special-case: the supervisor cannot restart itself from within its own
+      // tick (it would kill itself mid-loop). Handle supervisor restarts here
+      // directly: clear the stale PID lock and trigger the scheduled task.
+      if (service === 'supervisor') {
+        if (action === 'status') {
+          const pidFile = join(DATA_DIR, 'supervisor.pid');
+          let pid = null;
+          try { pid = parseInt(readFileSync(pidFile, 'utf8').trim()); } catch {}
+          return { success: true, service, status: pid ? 'running' : 'down', pid, startedAt: 0, restartsThisHour: 0 };
+        }
+        if (action === 'restart' || action === 'start') {
+          const pidFile = join(DATA_DIR, 'supervisor.pid');
+          try { writeFileSync(pidFile, ''); } catch {}
+          const { execFileSync } = await import('child_process');
+          try { execFileSync('schtasks', ['/Run', '/TN', 'XMRT-LocalSupervisor'], { windowsHide: true, timeout: 10000 }); } catch (e) {
+            return { error: `failed to trigger supervisor task: ${e.message}` };
+          }
+          return { success: true, service, status: 'restarting', action, message: 'Supervisor PID lock cleared and XMRT-LocalSupervisor task triggered. It will run a fresh --once tick within ~1 minute.' };
+        }
+        if (action === 'stop') {
+          const pidFile = join(DATA_DIR, 'supervisor.pid');
+          try { writeFileSync(pidFile, ''); } catch {}
+          return { success: true, service, status: 'stopped', action, message: 'Supervisor PID lock cleared. It will not restart until the scheduled task fires.' };
+        }
+      }
       let queue = [];
       if (existsSync(queueFile)) {
         try { queue = JSON.parse(readFileSync(queueFile, 'utf8')); } catch {}
@@ -3322,6 +3412,8 @@ app.use(async (req, res, next) => {
       req.path === '/webhook/resend-inbound' ||
       req.path.startsWith('/functions/v1/') ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/auth/cert-login' ||
+      req.path.startsWith('/api/suite/') ||
+      req.path.startsWith('/rest/v1/') ||
       req.path.startsWith('/api/contact/cuttlefishclaws') ||
       req.path === '/api/cuttlefishclaws/trust-score' ||
       req.path === '/api/cuttlefishclaws/cac-status' ||
@@ -3334,6 +3426,10 @@ app.use(async (req, res, next) => {
       req.path === '/api/footlocker' || req.path.startsWith('/api/footlocker/') ||
       req.path === '/api/catalog' ||
       req.path === '/api/university' ||
+      // Public website endpoints — partyfavorphoto.com chat widget + booking
+      // system post here from the browser with no API key (tunnel, no auth).
+      req.path === '/api/fleet-chat/send' ||
+      req.path === '/api/leads/pfp' ||
       req.path.startsWith('/suite/') ||
       req.path === '/elze' || req.path.startsWith('/elze/') ||
       req.path === '/cuttlefishclaws/' || req.path.startsWith('/cuttlefishclaws/')) {
@@ -4992,6 +5088,11 @@ app.get('/', (req, res) => {
     .chat-card { grid-column: 1 / -1; }
     .chat-input-wrap { display: flex; gap: 4px; flex-wrap: nowrap; }
     .chat-input-wrap input { min-width: 0; width: 100%; }
+    @media (max-width: 480px) {
+      .chat-input-wrap { flex-wrap: wrap; }
+      .chat-input-wrap input#fleet-chat-name { width: 100%; flex-shrink: 0; }
+      .chat-input-wrap input#fleet-chat-input { order: 3; width: 100%; }
+    }
 
     /* Search & Filter */
     .controls { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; align-items: center; }
@@ -5071,9 +5172,11 @@ app.get('/', (req, res) => {
     .subgrid-3 { display: grid; grid-template-columns: 1fr; gap: 8px; }
     @media (min-width: 480px) { .subgrid-3 { grid-template-columns: 1fr 1fr; } }
     @media (min-width: 768px) { .subgrid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; } }
-    .subgrid-4 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .subgrid-4 { display: grid; grid-template-columns: 1fr; gap: 8px; }
     @media (min-width: 480px) { .subgrid-4 { grid-template-columns: repeat(2, 1fr); } }
     @media (min-width: 768px) { .subgrid-4 { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
+    .sec-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
+    @media (min-width: 480px) { .sec-grid { grid-template-columns: 1fr 1fr; } }
   
     canvas#mesh-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
     body { position: relative; z-index: 0; }
@@ -5193,7 +5296,7 @@ app.get('/', (req, res) => {
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
       <h4 style="color:var(--accent-red);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🛡️ Training & Security <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— TrustGraph · CAC Tiers · XMRT-DAO-CERT · Access Control</span></h4>
       <div id="qds-security" style="font-size:0.6rem;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+        <div class="sec-grid">
           <div>
             <div class="stat"><span class="label">TrustGraph</span><span class="value" id="sec-tg-status" style="color:#4ade80;font-size:0.65rem;">● online</span></div>
             <div class="stat"><span class="label">Agents</span><span class="value" id="sec-agent-count" style="font-size:0.65rem;">19</span></div>
@@ -6496,7 +6599,14 @@ app.all('/api/v1/functions/:name', async (req, res) => {
 const LOCAL_RUNTIME_URL = process.env.LOCAL_RUNTIME_URL || 'http://127.0.0.1:54321';
 
 async function proxyToRuntime(req, res, targetPath) {
-  const target = `${LOCAL_RUNTIME_URL}${targetPath}`;
+  // Preserve the incoming query string (e.g. ?request_id=...) so the upstream
+  // local-sb edge function receives it. targetPath has no query; pull it from
+  // the raw request URL and append it.
+  let fullTargetPath = targetPath;
+  const rawUrl = (req.originalUrl || req.url || '');
+  const qIdx = rawUrl.indexOf('?');
+  if (qIdx >= 0) fullTargetPath += rawUrl.slice(qIdx);
+  const target = `${LOCAL_RUNTIME_URL}${fullTargetPath}`;
   try {
     const headers = { ...req.headers };
     delete headers.host;
@@ -6562,6 +6672,18 @@ app.all(['/functions/v1/:name', '/functions/v1/:name/*path'], async (req, res) =
   }
   const tail = req.params.path ? '/' + (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : '';
   await proxyToRuntime(req, res, `/functions/v1/${name}${tail}`);
+});
+
+// ── REST proxy: /rest/v1/* → local-sb (54321) ─────────────────────
+// Mirrors the /functions/v1 proxy so the Suite SPA can point its Supabase
+// client at the relay origin (window.location.origin) instead of a hardcoded
+// 127.0.0.1:54321. This makes the SPA work identically on the laptop AND
+// through the tunnel (phone/other machines), where 127.0.0.1 is the device
+// itself and the ai-chat edge function call would otherwise fail → Office
+// Clerk fallback. The relay origin proxies both /functions/v1 and /rest/v1.
+app.all(['/rest/v1/*path'], async (req, res) => {
+  const tail = req.params.path ? '/' + (Array.isArray(req.params.path) ? req.params.path.join('/') : req.params.path) : '';
+  await proxyToRuntime(req, res, `/rest/v1${tail}`);
 });
 
 // Backwards-compat: short alias `POST /ai-chat` -> `/functions/v1/ai-chat`
@@ -7427,6 +7549,7 @@ function getToolDescription(name) {
     'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
+    'trust-trajectory': 'Get the full TrustGraph trajectory — per-agent trust score series over time, token usage, and ecosystem summary. Args: agent (optional, single agent name e.g. "eliza"), action (optional, "summary" for compact per-agent current score). No args returns full series for all agents. Best for: "show trust trajectory", "what is eliza trust score trend", "trust graph summary".',
     'get_agent_key': 'Retrieve this agent XMRT-DAO API key for authenticating CORE-level tool calls. Returns the xrt_ prefixed key.',
     'edge-function': 'Proxy a call to a Supabase edge function by name (e.g. system-status, schema-tables)',
     'fleet-chat': 'Send a message to the fleet chat as an agent (vex|eliza|hermes) on a channel (fleet|all|vex|eliza|hermes)',
@@ -7479,6 +7602,7 @@ function getToolDescription(name) {
     'ef:paragraph-publish': 'Publish an article to Paragraph.com via cloud edge function',
     'ef:typefully-send': 'Schedule/send a tweet via Typefully integration',
     'ef:universal-invoke': 'Call any edge function by name with custom payload',
+    'trust-trajectory': 'Get the full TrustGraph trajectory — per-agent trust score series over time, token usage, and ecosystem summary. Args: agent (optional, single agent name e.g. "eliza"), action (optional, "summary" for compact per-agent current score). No args returns full series for all agents. Best for: "show trust trajectory", "what is eliza trust score trend", "trust graph summary".',
   };
   return descriptions[name] || 'No description';
 }
@@ -9486,7 +9610,8 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 - \`ollama-chat\` — Chat with a local LLM. Args: message, model, temperature, maxTokens.
 - \`state-get\` — Read a value from persistent state. Args: key.
 - \`state-set\` — Write a value to persistent state. Args: key, value.
-- \`agent-profile\` — Read agent profiles from the database. Args: agent_id or list all.
+|- \`agent-profile\` — Read agent profiles from the database. Args: agent_id or list all.
+|- \`trust-trajectory\` — **TrustGraph trajectory.** Get per-agent trust score series over time, token usage, and ecosystem summary. Args: agent (optional, e.g. "eliza"), action (optional, "summary"). Best for "show trust trajectory", "what is eliza trust score trend".
 |- \`knowledge-sync\` — Sync local knowledge base.
 |- \`vex-vision\` — **Vision tool.** Capture a screenshot (screen:true) or describe an image file/URL. Returns plain text description. Cloud-only — kimi-k2.6:cloud via OpenRouter. No local models on this 6GB laptop.
 |- \`vex-vision-screenshots\` — **Historical screenshots.** Read and describe recent screenshots from Windows Pictures/Screenshots folder. Args: limit (default 5), filename (optional specific file).
