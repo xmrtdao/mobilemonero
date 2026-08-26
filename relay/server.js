@@ -12083,7 +12083,7 @@ app.all('/functions/v1/*path', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', async () => {
+const relayHttpServer = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Relay listening on http://0.0.0.0:${PORT}`);
   const toolsCount = Object.keys(toolHandlers).length;
   const handlersCount = Object.keys(handlers).length;
@@ -12421,6 +12421,56 @@ GROUNDING RULES:
     setInterval(() => { serviceHealthTick().catch(e => logService(`tick error: ${e.message}`)); }, 30000);
   }, 2000);
 });
+
+// ── Realtime WebSocket proxy ──────────────────────────────────────────
+// The Suite SPA points its Supabase client at the relay origin, and
+// supabase-js derives realtimeUrl = <origin>/realtime/v1. The relay proxies
+// /functions/v1 and /rest/v1 but NOT /realtime/v1, so any .channel().subscribe()
+// (ActivityPulse, AgentStatusGrid, AgentHierarchy, ContributorDashboard, etc.)
+// hit GET /realtime/v1/websocket -> 404. local-sb runs the actual realtime WS
+// server on :54321; forward upgrades here so live push subscriptions work.
+if (relayHttpServer && typeof relayHttpServer.on === 'function') {
+  relayHttpServer.on('upgrade', (req, socket, head) => {
+    let url = '';
+    try { url = new URL(req.url, 'http://localhost').pathname; } catch { url = req.url || ''; }
+    if (url.startsWith('/realtime/v1')) {
+      const net = require('net');
+      const [host, portStr] = '127.0.0.1:54321'.split(':');
+      const port = parseInt(portStr, 10);
+      const upstream = net.connect(port, host);
+      upstream.on('connect', () => {
+        // Re-send the raw HTTP upgrade request so local-sb's own 'upgrade'
+        // handler sees it and completes the WS handshake. Use real CRLF.
+        const rn = String.fromCharCode(13, 10);
+        let request = req.method + ' ' + req.url + ' HTTP/1.1' + rn;
+        for (const h of Object.keys(req.headers)) {
+          if (h === 'connection' || h === 'upgrade' || h === 'sec-websocket-key' || h === 'sec-websocket-version') continue;
+          request += h + ': ' + req.headers[h] + rn;
+        }
+        request += 'Host: ' + host + rn;
+        request += 'Connection: Upgrade' + rn;
+        request += 'Upgrade: websocket' + rn;
+        request += 'Sec-WebSocket-Key: ' + (req.headers['sec-websocket-key'] || '') + rn;
+        request += 'Sec-WebSocket-Version: ' + (req.headers['sec-websocket-version'] || '13') + rn;
+        const wsProto = req.headers['sec-websocket-protocol'];
+        if (wsProto) request += 'Sec-WebSocket-Protocol: ' + wsProto + rn;
+        request += rn;
+        upstream.write(request);
+        if (head && head.length) upstream.write(head);
+        // Pipe raw bytes both directions once the WS is established.
+        socket.pipe(upstream);
+        upstream.pipe(socket);
+      });
+      upstream.on('error', () => { try { socket.destroy(); } catch {} });
+      upstream.on('close', () => { try { socket.end(); } catch {} });
+      socket.on('error', () => { try { upstream.destroy(); } catch {} });
+      socket.on('close', () => { try { upstream.end(); } catch {} });
+    } else {
+      try { socket.destroy(); } catch {}
+    }
+  });
+  console.log('[realtime] WebSocket upgrade proxy registered for /realtime/v1 -> 127.0.0.1:54321');
+}
 
 // ── Mining Pool Stats ──
 // XMRT-DAO fleet pool wallet (must match mmlauncher/scripts/mobile-signup.py)
