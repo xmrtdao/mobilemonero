@@ -6,6 +6,7 @@
 
 import { Router } from 'express';
 import pg from 'pg';
+import { POOL_CONFIG } from '../../relay/lib/pool-config.mjs';
 
 const { Pool, types } = pg;
 
@@ -15,7 +16,7 @@ types.setTypeParser(20, (v) => v == null ? null : parseInt(v, 10)); // int8
 let _pool = null;
 function getPool(dbUrl) {
   if (_pool) return _pool;
-  _pool = new Pool({ connectionString: dbUrl, max: 25, idleTimeoutMillis: 30_000 });
+  _pool = new Pool({ connectionString: dbUrl, ...POOL_CONFIG.rest });
   _pool.on('error', (e) => console.error('[rest] pool error:', e?.message || e));
   return _pool;
 }
@@ -27,6 +28,10 @@ const OP_MAP = {
   like: 'LIKE', ilike: 'ILIKE',
   is: 'IS',
   in: 'IN',
+  cs: '@>',      // jsonb contains (PostgREST cs.)
+  cd: '<@',      // jsonb contained by
+  ov: '?',       // jsonb key exists
+  'contains': '@>',
 };
 
 function isLiteral(v) {
@@ -66,13 +71,22 @@ function parseFilters(params) {
         if (current.trim()) orParts.push(current.trim());
         
         const orClauses = orParts.map(part => {
-          const m = String(part).match(/^([a-zA-Z_][a-zA-Z0-9_>]*)\s*\.\s*([a-zA-Z]+)\.\s*(.+)$/);
+          const m = String(part).match(/^([a-zA-Z_][\w>-]*)\s*\.\s*([a-zA-Z]+)\.\s*(.+)$/);
           if (m && OP_MAP[m[2]]) {
             const col = m[1];
             const op = m[2];
             const raw = m[3];
             // Handle JSONB column references like entity->>description
-            const colSql = col.includes('->>') ? col : `"${col}"`;
+            // PG requires the key after ->> to be a string literal: entity->>'description'
+            let colSql;
+            if (col.includes('->>')) {
+              const arrowIdx = col.indexOf('->>');
+              const jsonbCol = col.slice(0, arrowIdx);
+              const jsonbKey = col.slice(arrowIdx + 3);
+              colSql = `"${jsonbCol}"->>'${jsonbKey}'`;
+            } else {
+              colSql = `"${col}"`;
+            }
             if (op === 'in') {
               let body2 = raw;
               if (body2.startsWith('(') && body2.endsWith(')')) body2 = body2.slice(1, -1);
@@ -87,6 +101,9 @@ function parseFilters(params) {
               let val = raw;
               if (op === 'like' || op === 'ilike') {
                 val = raw.replace(/\*/g, '%');
+              }
+              if (['cs', 'cd', 'ov', 'contains'].includes(op)) {
+                return { sql: `${colSql} ${OP_MAP[op]} $${i++}::jsonb`, args: [val], paramsUsed: 1 };
               }
               return { sql: `${colSql} ${OP_MAP[op]} $${i++}`, args: [val], paramsUsed: 1 };
             }
@@ -123,6 +140,9 @@ function parseFilters(params) {
           const lit = isLiteral(raw);
           if (lit) {
             acc.push({ sql: `"${k}" ${OP_MAP[op]} ${lit.sql}` });
+          } else if (['cs', 'cd', 'ov', 'contains'].includes(op)) {
+            // jsonb operators: the right-hand operand must be cast to jsonb
+            acc.push({ sql: `"${k}" ${OP_MAP[op]} $${i++}::jsonb`, args: [raw], paramsUsed: 1 });
           } else {
             acc.push({ sql: `"${k}" ${OP_MAP[op]} $${i++}`, args: [raw], paramsUsed: 1 });
           }
@@ -210,9 +230,17 @@ export default function makeRestRouter({ dbUrl }) {
       const segments = tablePath.split('/').filter(Boolean);
       if (segments.length === 0) return res.status(400).json({ error: 'table_required' });
       const table = segments[0];
-      // Validate table name (only letters, digits, underscore)
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+      // Validate table name (only letters, digits, underscore, and dot for schema prefix)
+      if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(table)) {
         return res.status(400).json({ error: 'invalid_table_name' });
+      }
+      // Handle schema-prefixed table names like "app.tasks"
+      let schemaOverride = null;
+      let bareTable = table;
+      if (table.includes('.')) {
+        const parts = table.split('.');
+        schemaOverride = parts[0];
+        bareTable = parts[1];
       }
       // Resolve which schema a bare table name lives in. Real PostgREST exposes
       // a configured list via `db-schemas`; we mirror that by looking up the
@@ -233,10 +261,22 @@ export default function makeRestRouter({ dbUrl }) {
                     ELSE 5 END,
                   table_schema
          LIMIT 1`,
-        [table]
+        [bareTable]
       );
-      const resolvedSchema = tableExistsRes.rows[0]?.table_schema || 'public';
-      const fullTable = `"${resolvedSchema}"."${table}"`;
+      const resolvedSchema = schemaOverride || tableExistsRes.rows[0]?.table_schema || 'public';
+      const fullTable = `"${resolvedSchema}"."${bareTable}"`;
+
+      // ── Unmapped / missing table detection (Vex: inverse-drift visibility) ──
+      // If a bare table resolves to a schema but doesn't actually exist there
+      // (phantom), or a schema-overridden table is absent, log it so the
+      // missing-reference 500 class is visible in ship logs even though it
+      // isn't boot-time fatal. Catches the "no map entry at all" case (e.g.
+      // interaction_patterns) that the boot-time drift check cannot see.
+      if (!tableExistsRes.rows.length) {
+        console.warn(`[rest-resolver] ⚠️ table "${bareTable}" not found in any schema (requested ${req.method} ${req.path}). Phantom-relation 500 likely.`);
+      } else if (schemaOverride && !tableExistsRes.rows.some(r => r.table_schema === schemaOverride)) {
+        console.warn(`[rest-resolver] ⚠️ "${schemaOverride}.${bareTable}" does not exist (schema-overridden reference resolves to ${tableExistsRes.rows[0].table_schema}).`);
+      }
 
       const params = new URLSearchParams();
       // Express req.query already parsed
@@ -395,11 +435,21 @@ export default function makeRestRouter({ dbUrl }) {
             // pg serializes JS arrays as PG array literals ({1,2,3}) instead of
             // JSON ([1,2,3]). For jsonb columns we need the JSON form, so
             // stringify any array/object value before passing to pg.query().
-            const setArgs = cols.map((c) =>
-              typeof body[c] === 'object' && body[c] !== null
-                ? JSON.stringify(body[c])
-                : body[c]
-            );
+            const setArgs = cols.map((c) => {
+              const val = body[c];
+              // pg serializes JS arrays as PG array literals ({1,2,3}) instead of
+              // JSON ([1,2,3]). For jsonb columns we need the JSON form, so
+              // stringify any array/object value before passing to pg.query().
+              // But for integer[] / text[] columns, we need PG array format.
+              if (Array.isArray(val)) {
+                // Convert JS array to PG array literal: [1,2,3] -> {1,2,3}
+                return '{' + val.map(v => typeof v === 'string' ? `"${v.replace(/"/g, '\\"')}"` : v).join(',') + '}';
+              }
+              if (typeof val === 'object' && val !== null) {
+                return JSON.stringify(val);
+              }
+              return val;
+            });
             const whereSqlRenumbered = renumberPlaceholders(whereSql, cols.length);
             const sql = `UPDATE ${fullTable} SET ${sets.join(', ')} ${whereSqlRenumbered} RETURNING ${selectCols}`;
             const r = await client.query(sql, [...setArgs, ...whereArgs]);
