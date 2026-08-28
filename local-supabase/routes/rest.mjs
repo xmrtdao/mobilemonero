@@ -245,25 +245,46 @@ export default function makeRestRouter({ dbUrl }) {
       // Resolve which schema a bare table name lives in. Real PostgREST exposes
       // a configured list via `db-schemas`; we mirror that by looking up the
       // table in information_schema so any non-public schema (app, sandbox,
-      // util, storage) the user creates works automatically. We prefer
-      // `app` > `public` > other user schemas > system schemas, since
-      // multiple schemas could have a same-named table.
+      // util, storage) the user creates works automatically.
+      //
+      // SCHEMA PRECEDENCE (2026-08-28, fixed): prefer the schema that actually
+      // has DATA, so a bare-name read returns the authoritative copy instead of
+      // an empty/partial one. The classic case is shared_context: it exists in
+      // both `public` (8 rows) and `knowledge` (110 rows) — the old fixed order
+      // `app > public > ...` resolved to `public` and silently returned 8 rows
+      // when the real data lived in `knowledge`. We count rows per candidate
+      // schema and pick the richest; ties break to the legacy precedence
+      // (app > public > knowledge) for determinism.
       const tableExistsRes = await pool.query(
         `SELECT table_schema FROM information_schema.tables
          WHERE table_name = $1
            AND table_schema NOT IN ('pg_catalog','information_schema')
          ORDER BY CASE table_schema
-                    WHEN 'app'        THEN 0
-                    WHEN 'public'     THEN 1
-                    WHEN 'auth'       THEN 2
-                    WHEN 'storage'    THEN 3
-                    WHEN 'realtime'   THEN 4
-                    ELSE 5 END,
-                  table_schema
-         LIMIT 1`,
+                   WHEN 'app'        THEN 0
+                   WHEN 'public'     THEN 1
+                   WHEN 'auth'       THEN 2
+                   WHEN 'storage'    THEN 3
+                   WHEN 'realtime'   THEN 4
+                   ELSE 5 END,
+                 table_schema`,
         [bareTable]
       );
-      const resolvedSchema = schemaOverride || tableExistsRes.rows[0]?.table_schema || 'public';
+      // Pick the candidate schema with the most rows (data-rich = authoritative).
+      // An explicit schemaOverride (e.g. `knowledge.shared_context`) always wins.
+      let resolvedSchema = schemaOverride || 'public';
+      if (!schemaOverride && tableExistsRes.rows.length) {
+        let richest = tableExistsRes.rows[0].table_schema;
+        let richestCount = -1;
+        for (const cand of tableExistsRes.rows) {
+          const s = cand.table_schema;
+          try {
+            const cnt = await pool.query(`SELECT count(*) AS c FROM "${s}"."${bareTable}"`);
+            const n = Number(cnt.rows[0]?.c || 0);
+            if (n > richestCount) { richestCount = n; richest = s; }
+          } catch { /* skip schemas we can't count */ }
+        }
+        resolvedSchema = richest;
+      }
       const fullTable = `"${resolvedSchema}"."${bareTable}"`;
 
       // ── Unmapped / missing table detection (Vex: inverse-drift visibility) ──
