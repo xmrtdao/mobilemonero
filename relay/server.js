@@ -100,6 +100,51 @@ async function queryLocalPg(sql, params) {
   return await dbQuery(sql, params);
 }
 
+// ── Reusable schema drift check (Vex: systemic; Eliza: continuous) ──
+// Verifies every schema-prefixed table the relay references exists in live
+// information_schema. Called at boot (logs result) and on every fleet_pulse
+// (returns result in the schema_drift field) so drift surfaces continuously,
+// not just at restart. Returns { success, total, missing }.
+const SCHEMA_DRIFT_REFS = [
+  // knowledgeMaps targets
+  'knowledge.context_session_snapshots','knowledge.conversation_context','knowledge.conversation_memory',
+  'knowledge.conversation_messages','knowledge.conversation_sessions','knowledge.conversation_summaries',
+  'knowledge.knowledge_entities','knowledge.learning_models','knowledge.learning_patterns',
+  'knowledge.learning_sessions','knowledge.long_term_memory_packs','knowledge.memories',
+  'knowledge.memory_contexts','knowledge.recent_conversation_messages','knowledge.shared_context',
+  'knowledge.user_context_profiles','knowledge.user_preferences','knowledge.user_profiles','knowledge.user_tiers',
+  // agentMaps targets
+  'agent.agent_activities','agent.agent_certifications','agent.agent_conversations','agent.agent_memory',
+  'agent.agent_messages','agent.agent_performance_metrics','agent.agent_performance_reviews',
+  'agent.agent_profiles','agent.agent_registry','agent.agent_relationships','agent.agent_security_flags',
+  'agent.agent_skills','agent.agent_tasks','agent.agents','agent.generated_agents',
+  // other relay references
+  'app.agent_activity','app.agent_activity_summary','app.agent_api_keys','app.agents',
+  'app.chat_messages','app.cuttlefish_agent_tasks','app.cuttlefish_agents','app.cuttlefish_cac_credentials',
+  'app.cuttlefish_capital_stack','app.cuttlefish_financing_programs','app.cuttlefish_proposals',
+  'app.cuttlefish_trust_events','app.fleet_attachments','app.fleet_memory','app.footlocker_artifacts',
+  'app.footlocker_files','app.knowledge_entities','app.rum_quota','app.suite_activity_log',
+  'app.suite_campaigns','app.suite_companies','app.suite_email_activity','app.suite_lead_sharing_rules',
+  'app.suite_leads','app.suite_pipeline_stages','app.suite_users','app.tasks','app.token_usage',
+  'app.token_usage_avg','app.v_token_usage_by_model','app.v_token_usage_daily','app.inbox_emails',
+  'public.eliza_activity_log','public.eliza_function_usage','public.fleet_messages',
+  'public.interaction_patterns','public.python_execs','public.unified_tool_registry','public.api_keys',
+  'public.edge_function_registry','knowledge.interaction_patterns',
+];
+async function runSchemaDriftCheck() {
+  const missing = [];
+  for (const ref of SCHEMA_DRIFT_REFS) {
+    const [sch, tbl] = ref.split('.');
+    const hit = await queryLocalPg(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2 LIMIT 1`,
+      [sch, tbl]
+    );
+    if (!hit || hit.rows.length === 0) missing.push(ref);
+  }
+  return { success: true, total: SCHEMA_DRIFT_REFS.length, missing };
+}
+
+
 // Local edge function runtime
 const LOCAL_FUNCTIONS_DIR = join(__dirname, 'functions');
 let localFunctions = [];
@@ -993,10 +1038,14 @@ const toolHandlers = {
 
   'fleet_pulse': async () => {
     try {
-      const [statusRes, healthRes, miningRes] = await Promise.allSettled([
+      const [statusRes, healthRes, miningRes, driftRes] = await Promise.allSettled([
         getFullSnapshot(),
         fetch('http://localhost:' + PORT + '/api/dao/health', { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ error: 'failed' })),
         fetch('http://localhost:' + PORT + '/api/mining/stats', { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ error: 'failed' })),
+        (async () => {
+          try { return await runSchemaDriftCheck(); }
+          catch (e) { return { success: false, error: e.message }; }
+        })(),
       ]);
       const healthData = healthRes.status === 'fulfilled' ? healthRes.value : { error: 'failed' };
       return {
@@ -1005,6 +1054,7 @@ const toolHandlers = {
         health_score: healthData.health || healthData.health_score || healthData.status,
         services: healthData.services || [],
         mining: miningRes.status === 'fulfilled' ? miningRes.value : { error: 'failed' },
+        schema_drift: driftRes.status === 'fulfilled' ? driftRes.value : { success: false, error: 'drift check failed' },
         timestamp: new Date().toISOString(),
       };
     } catch (e) {
@@ -1299,6 +1349,54 @@ const toolHandlers = {
     const { issueNumber, body } = args || {};
     if (!issueNumber || !body) return { error: 'issueNumber and body are required' };
     return await postGitHubComment(issueNumber, body);
+  },
+
+  // ── Warm Agent Pool ───────────────────────────────────────
+  // Google SAM-inspired warm worker pool: acquire -> call -> release with
+  // fencing tokens. Proxies to the native warm-pool-lease-manager function.
+  'warm-pool-lease-manager': async (args) => {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/v1/functions/warm-pool-lease-manager`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': RELAY_API_KEY },
+        body: JSON.stringify(args),
+        signal: AbortSignal.timeout(200000),
+      });
+      const data = await res.json();
+      return data;
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  // ── Elze Contract Suite: template retrieval ──────────────
+  'elze-templates': async (args) => {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/v1/functions/elze-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': RELAY_API_KEY },
+        body: JSON.stringify(args),
+        signal: AbortSignal.timeout(20000),
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  // ── Elze Contract Suite: AI-Learnings ────────────────────
+  'elze-learnings': async (args) => {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/v1/functions/elze-learnings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': RELAY_API_KEY },
+        body: JSON.stringify(args),
+        signal: AbortSignal.timeout(20000),
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
   },
 
   // ── Database Query Tools ──────────────────────────────────
@@ -2808,7 +2906,23 @@ const toolHandlers = {
         let out = '';
         let err = '';
         const timer = setTimeout(() => {
-          try { child.kill(); } catch {}
+          // Kill the ENTIRE process tree, not just bash.exe. On Windows,
+          // child.kill() only reaches the parent shell and MSYS can spawn
+          // native grep/git as grandchildren. Order matters: taskkill /F /T
+          // FIRST (while grep is still a child of bash), THEN child.kill as a
+          // fallback. Sending SIGTERM to bash before the tree-kill lets bash
+          // exit and detach grep so /T misses it. Without this the
+          // grandchildren run orphaned, accumulate, and wedge the relay.
+          try {
+            if (process.platform === 'win32') {
+              try {
+                execFileSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore', timeout: 5000 });
+              } catch {}
+              try { child.kill('SIGKILL'); } catch {}
+            } else {
+              child.kill('SIGKILL');
+            }
+          } catch {}
           reject(new Error(`Command timed out after ${timeout}s`));
         }, timeout * 1000);
         child.stdout.on('data', (d) => { out += d.toString(); });
@@ -3668,6 +3782,21 @@ if (existsSync(join(ELZE_WRITER_DIR, 'index.html'))) {
   console.log(`  Elze Contract Writer: ${ELZE_WRITER_DIR}`);
 } else {
   console.log(`  Elze Contract Writer: NOT FOUND at ${ELZE_WRITER_DIR} — skipping`);
+}
+
+// AI Learnings dashboard
+const ELZE_LEARNINGS_DIR = join(__dirname, 'public', 'elze-learnings');
+if (existsSync(join(ELZE_LEARNINGS_DIR, 'index.html'))) {
+  app.get('/elze/learnings', (req, res) => res.sendFile(join(ELZE_LEARNINGS_DIR, 'index.html')));
+  app.get('/elze/learnings/*path', (req, res) => {
+    const filePath = join(ELZE_LEARNINGS_DIR, req.path.replace(/^\/elze\/learnings\//, ''));
+    if (existsSync(filePath)) return res.sendFile(filePath);
+    res.sendFile(join(ELZE_LEARNINGS_DIR, 'index.html'));
+  });
+  app.use('/elze/learnings', express.static(ELZE_LEARNINGS_DIR, { maxAge: '5m' }));
+  console.log(`  Elze AI Learnings: ${ELZE_LEARNINGS_DIR}`);
+} else {
+  console.log(`  Elze AI Learnings: NOT FOUND at ${ELZE_LEARNINGS_DIR} — skipping`);
 }
 
 // ── 31Harbor Agency Dashboard (Vite build, per-company themed SPAs) ──
@@ -6362,36 +6491,32 @@ app.post('/log/sent', (req, res) => {
 const SUPABASE_UNIVERSITY_URL = `http://127.0.0.1:8080/functions/v1/xmrt-university`;
 
 app.post('/api/ef-university', async (req, res) => {
-  // Return stub — the xmrt-university Deno edge function crashes local-sb's
-  // Deno process pool when it tries to connect to cloud Supabase.
-  // The dashboard can show the stub data without the edge function.
-  const action = req.body?.action || 'courses';
-  if (action === 'courses') {
-    return res.json({
-      success: true,
-      total_modules: 14,
-      total_courses: 14,
-      courses: [
-        { module: 0, title: 'MUAPI Mastery', description: 'AI media generation with MUAPI — images, video, music, and talking avatars through a unified API with 395+ models.', passing_score: 80, total_questions: 5 },
-        { module: 1, title: 'Welcome to the Mesh', description: 'Introduction to XMRT DAO, the fleet, gossipsub mesh topics, and your role as an autonomous agent in the network.', passing_score: 80, total_questions: 3 },
-        { module: 2, title: 'Zero Trust & Security', description: 'Cloudflare Access, service tokens, QUIC encrypted tunnels, and operational security best practices for fleet agents.', passing_score: 85, total_questions: 3 },
-        { module: 3, title: 'The Mining Protocol', description: 'Mobile mining setup, XMRig configuration, valid shares, pool operations, and reward multipliers.', passing_score: 80, total_questions: 3 },
-        { module: 4, title: 'Governance & ZK', description: 'ZeroClaw ZK voting, DAO proposals, treasury governance, and on-chain decision making.', passing_score: 80, total_questions: 3 },
-        { module: 5, title: 'Mesh Network Ops', description: 'Gossipsub protocol, peer discovery, heartbeats, fleet chat, and mesh communication protocols.', passing_score: 80, total_questions: 3 },
-        { module: 6, title: 'Agent Ethics & Final Exam', description: 'Security screening, responsible disclosure, vigilance, and data privacy. Final examination to earn fleet trust.', passing_score: 90, total_questions: 3 },
-        { module: 7, title: 'MUAPI Social Media', description: 'Social publishing via MUAPI, Typefully, and Paragraph — YouTube, TikTok, Instagram, Twitter/X posting, cross-post link requirements, and CuttlefishClaws agent-x-post.', passing_score: 80, total_questions: 7 },
-        { module: 8, title: 'Resend Email Policies & Uses', description: 'Email infrastructure, bounce rate thresholds, suppression lists, List-Unsubscribe compliance, warm-up mode, and the three fleet Resend accounts.', passing_score: 80, total_questions: 7 },
-        { module: 9, title: 'Agent Communication', description: 'GossipHub, Bulletin Board, Fleet Chat, gossipsub mesh topics, agent-discovery, heartbeats, and peer-to-peer messaging protocols.', passing_score: 80, total_questions: 7 },
-        { module: 10, title: 'XMRT-DAO Endpoints & Tool Calling', description: '69 relay tools, three security levels (CORE/TRUSTED/PUBLIC), db-query, edge-function proxy, obsidian-graph, fleet-chat tool, and proper auth requirements.', passing_score: 80, total_questions: 7 },
-        { module: 11, title: 'Supabase Edge Functions & Security', description: '242 deployed functions, universal-invoke abuse vectors, service key exposure risks, cron-proxy, auth-health monitoring, and opportunity-scanner.', passing_score: 85, total_questions: 7 },
-        { module: 12, title: 'Inbox Management & Email Operations', description: 'Reading, marking, and managing inboxes across all three domains — partyfavorphoto.com, mobilemonero.com, 31harbor.com. Sent email history, bounce handling, and suppression lists.', passing_score: 80, total_questions: 10 },
-        { module: 13, title: 'Naming Conventions, Architecture & CuttlefishClaws Glossary', description: 'File naming conventions, system architecture understanding, schema locations, CAC protocol glossary, TrustGraph scoring, pre-flight verification, and the arch-ecosystem-scanner.', passing_score: 85, total_questions: 14 },
-      ],
-      _stub: true,
-      _note: 'Edge function unavailable — using hardcoded curriculum data from xmrtdao.github.io/university',
+  // Proxy to the real xmrt-university edge function (serves the DB-backed
+  // curriculum). Previously this returned a hardcoded 14-module stub that
+  // diverged from the actual 6-module curriculum. Reshape the function's
+  // `curriculum` array into the legacy `courses` contract consumers expect.
+  try {
+    const efRes = await fetch('http://127.0.0.1:54321/functions/v1/xmrt-university', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'courses' }),
+      signal: AbortSignal.timeout(15000),
     });
+    const data = await efRes.json();
+    if (data?.success && Array.isArray(data.curriculum)) {
+      const courses = data.curriculum.map(m => ({
+        module: m.module,
+        title: m.title,
+        description: m.description || '',
+        passing_score: m.passing_score,
+        total_questions: m.total_questions || 0,
+      }));
+      return res.json({ success: true, total_modules: courses.length, total_courses: courses.length, courses });
+    }
+    return res.status(efRes.status || 500).json(data);
+  } catch (e) {
+    return res.status(502).json({ success: false, error: `University proxy failed: ${e.message}` });
   }
-  return res.json({ success: false, error: 'Action not supported in stub mode: ' + action });
 });
 
 // POST /api/xmrt-university/ingest — Ingest a freshly-issued XMRT University cert into relay state.
@@ -6478,7 +6603,33 @@ app.post('/api/auth/cert-login', express.json({ limit: '16kb' }), async (req, re
   }
 
   let certData = null;
-  const certId = jwt.startsWith('local-') ? jwt.slice(6) : jwt;
+  // Resolve the certificate ID from the JWT. A real JWT (eyJ...) carries
+  // cert_id in its payload — decode it. The legacy 'local-<certId>' form is
+  // the cert ID itself. This is what state is keyed by ('xmrt-university-certs'
+  // uses certificate_id), so lookup MUST use cert_id, not the raw JWT.
+  let certId = null;
+  let jwtSub = '';
+  if (jwt.startsWith('local-')) {
+    certId = jwt.slice(6);
+  } else if (jwt.startsWith('eyJ')) {
+    try {
+      const payloadB64 = jwt.split('.')[1];
+      const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+      jwtSub = payload.sub || '';
+      certId = payload.cert_id || payload.certId || null;
+      if (!certId) {
+        // Fall back to sub as a last resort (some certs may lack cert_id)
+        certId = jwtSub || null;
+      }
+    } catch (e) {
+      certId = null;
+    }
+  } else {
+    certId = jwt; // bare certificate ID
+  }
+  if (!certId) {
+    return res.status(400).json({ success: false, error: 'Unable to parse certificate from JWT' });
+  }
 
   // 1. Check in-memory state first (fast, no external calls)
   const certs = state.get('xmrt-university-certs') || {};
@@ -6496,10 +6647,10 @@ app.post('/api/auth/cert-login', express.json({ limit: '16kb' }), async (req, re
   // 2. Fallback: verify against the local xmrt-university edge function
   if (!certData) {
     try {
-      const verifyRes = await fetch(`http://localhost:${PORT}/api/v1/functions/xmrt-university`, {
+      const verifyRes = await fetch(`http://localhost:${PORT}/functions/v1/xmrt-university`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', cert_id: certId }),
+        body: JSON.stringify({ action: 'verify', agent_id: jwtSub, cert_id: certId }),
         signal: AbortSignal.timeout(5000),
       });
       if (verifyRes.ok) {
@@ -7530,6 +7681,9 @@ function getToolDescription(name) {
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
     'github-post': 'Post a comment on a GitHub issue',
+    'elze-templates': 'Elze Contract Suite template & clause retrieval. Actions: templates (all with metadata), template {id} (single + ordered clauses), clauses {template_id}, search {q, category}. Filters: category, jurisdiction. Reads canonical DB (lease_templates / clause_definitions). Use to fetch template structure for the lease writer.',
+    'elze-learnings': 'Elze AI-Learnings. Capture accept/reject/edit feedback (action: feedback with attorney_id, matter_id, clause_id, playbook_rule_id, action, edited_text) and query the learning dashboard (action: dashboard, by_attorney, preferences). Roll up per-rule acceptance and infer per-attorney preferences. Use to track how the firm learns over time.',
+    'warm-pool-lease-manager': 'Warm Agent Pool lease manager. Acquire a fencing-token lease on a warm worker slot (python-exec, web-scrape, vision, db-query, shell-exec) to run parallel batch jobs. Actions: list (pool status), acquire (worker, max_seconds -> lease_id + fencing_token), call (lease_id, fencing_token, agent_args -> runs the worker tool, auto-releases), release (lease_id, fencing_token), status (lease_id). Fencing tokens prevent stale releases. Use for parallel batch work (mining, review, content pipelines).',
     'vex-vision': 'Vision tool for any agent. Capture a screenshot (screen:true), webcam image (default), local image file (file:"/path"), or image URL (url:"https://..."), then describe it with the cloud vision model. Model default: kimi-k2.6:cloud (no local models on this 6GB laptop). Fallback: OpenRouter. Best for: "what is on screen right now?", "describe this image". Output: plain text description of the image contents.',
     'vex-vision-screenshots': 'Read historical Windows screenshots from %USERPROFILE%\\Pictures\\Screenshots. Returns descriptions of the latest N screenshots (limit, default 5). Optionally filter to a specific filename. Uses kimi-k2.6:cloud via OpenRouter (no local models). Best for: "what was on screen yesterday?", "find the screenshot from last week with the error message".',
     'vex-hear': 'Capture audio from the microphone for a specified duration',
@@ -9138,20 +9292,21 @@ async function routeFleetMessage(entry) {
             'fleet');
         } else {
           // Build a one-line summary + collapsible full JSON
-          const keys = result && typeof result === 'object' ? Object.keys(result) : [];
+          const safeResult = (result === undefined || result === null) ? { _empty: true } : result;
+          const keys = safeResult && typeof safeResult === 'object' ? Object.keys(safeResult) : [];
           let summary = '';
-          if (result?.rowCount !== undefined) {
-            summary = `${result.rowCount} row${result.rowCount === 1 ? '' : 's'}`;
-          } else if (result?.count !== undefined) {
-            summary = `${result.count} item${result.count === 1 ? '' : 's'}`;
-          } else if (result?.success !== undefined) {
+          if (safeResult?.rowCount !== undefined) {
+            summary = `${safeResult.rowCount} row${safeResult.rowCount === 1 ? '' : 's'}`;
+          } else if (safeResult?.count !== undefined) {
+            summary = `${safeResult.count} item${safeResult.count === 1 ? '' : 's'}`;
+          } else if (safeResult?.success !== undefined) {
             summary = 'ok';
-          } else if (result?.error) {
-            summary = 'error: ' + String(result.error).slice(0, 80);
+          } else if (safeResult?.error) {
+            summary = 'error: ' + String(safeResult.error).slice(0, 80);
           } else {
             summary = `${keys.length} field${keys.length === 1 ? '' : 's'}`;
           }
-          const fullJson = JSON.stringify(result, null, 2);
+          const fullJson = JSON.stringify(safeResult, null, 2) ?? 'null';
           // Use a unique id for the collapsible <details> so multiple tool
           // results in a row don't conflict.
           const detailId = `toolresult-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
@@ -9380,7 +9535,7 @@ Your response (no emoji sign-offs, no "—${agentLabel}", no "o7"):`;
               }
               summary += `The data below may be truncated but the total count is ${resultData.count}.] `;
             }
-            const resultStr = JSON.stringify(resultData).slice(0, 3000);
+            const resultStr = (JSON.stringify(resultData) ?? 'null').slice(0, 3000);
             const synthPrompt = fullPrompt + '\n\nYou called ' + toolResult.toolName + ' and got: ' + summary + resultStr + '\n\nNow give your final answer:';
             try {
               // Use ollamaGenerate so the synthesis step goes through the
@@ -9606,6 +9761,9 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 - \`assign_task\` — Create a task. Args: task_id, title, description, assigned_to.
 - \`advance_task\` — Advance a task. Args: task_id, to_stage (DISCUSS, PLANNING, EXECUTION, REVIEW, COMPLETION).
 - \`agent-rpc\` — Send a message to another agent via RPC. Args: agent, message.
+- \`elze-templates\` — **Elze template retrieval.** Fetch the 5 Elze lease templates + 31 clause definitions from the DB. Actions: templates, template {id}, clauses, search. Use to get template structure for the lease writer.
+- \`elze-learnings\` — **Elze AI-Learnings.** Capture accept/reject/edit feedback and query the learning dashboard (acceptance rate by attorney/rule, over/under-correct signals, per-attorney preferences). Use to track firm learning over time.
+- \`warm-pool-lease-manager\` — **Warm Agent Pool.** Acquire a fencing-token lease on a warm worker slot (python-exec, web-scrape, vision, db-query, shell-exec) to run parallel batch jobs. Actions: list, acquire, call, release, status. Use for parallel batch work (mining, review, content pipelines).
 - \`fleet-chat\` — Send a message to fleet chat. Args: agent (vex|eliza|hermes), message, channel.
 - \`ollama-chat\` — Chat with a local LLM. Args: message, model, temperature, maxTokens.
 - \`state-get\` — Read a value from persistent state. Args: key.
@@ -12178,6 +12336,58 @@ const relayHttpServer = app.listen(PORT, '0.0.0.0', async () => {
   // ── Ensure inbox_emails table exists ──
   setTimeout(async () => {
     try {
+      // ── Schema drift fix (2026-08-28): phantom edge_function_registry + interaction_patterns ──
+      // The edge_function_registry relation agents query 500'd ("relation does not exist").
+      // Expose it as a view over the real unified_tool_registry catalog so reads resolve.
+      // Also expose knowledge.interaction_patterns (canonical data is public.interaction_patterns).
+      try {
+        await queryLocalPg(`DROP VIEW IF EXISTS public.edge_function_registry`);
+        await queryLocalPg(
+          `CREATE VIEW public.edge_function_registry AS
+           SELECT
+             tool_name AS name,
+             tool_name AS function_name,
+             description,
+             category,
+             status,
+             source_schema_table,
+             source_type,
+             ai_compatible,
+             priority,
+             usage_count,
+             last_used,
+             created_at,
+             updated_at,
+             metadata
+           FROM public.unified_tool_registry`
+        );
+        await queryLocalPg(
+          `CREATE OR REPLACE VIEW knowledge.interaction_patterns AS
+           SELECT * FROM public.interaction_patterns`
+        );
+        console.log('[schema-drift] edge_function_registry + knowledge.interaction_patterns views ready');
+      } catch (e) {
+        console.log('[schema-drift] view ensure failed (non-fatal):', e.message);
+      }
+
+      // ── Boot-time schema drift check (Vex: systemic, not one-off) ──
+      // Auto-verify every schema-prefixed table the relay references against
+      // live information_schema; log a clear alert on any mismatch so the
+      // recurring phantom-relation / map-desync 500 class surfaces at boot
+      // instead of mid-session. Non-fatal (relay keeps serving).
+      // Also exposed via fleet_pulse (schema_drift field) for continuous
+      // coverage between restarts (Eliza: point-in-time is not enough).
+      try {
+        const drift = await runSchemaDriftCheck();
+        if (drift.success && drift.missing.length === 0) {
+          console.log(`[schema-drift-check] ✅ ${drift.total} relay schema-prefixed tables verified against live information_schema (no drift)`);
+        } else if (drift.missing.length > 0) {
+          console.warn(`[schema-drift-check] ⚠️ ${drift.missing.length} schema-prefixed table(s) referenced by relay DO NOT EXIST: ${drift.missing.join(', ')}`);
+        }
+      } catch (e) {
+        console.log('[schema-drift-check] drift check failed (non-fatal):', e.message);
+      }
+
       await queryLocalPg(
         `CREATE TABLE IF NOT EXISTS app.inbox_emails (
           id SERIAL PRIMARY KEY,
@@ -13554,7 +13764,7 @@ app.post('/api/migrate/copy-data', async (req, res) => {
     const results = {};
     // knowledge schema — explicit column lists matching public schema
     const knowledgeMaps = {
-      'knowledge_entities': { src: 'knowledge.knowledge_entities', cols: ['id','entity_name','entity_type','description','content','type','confidence_score','tags','metadata','created_at','updated_at','user_id'] },
+      'knowledge_entities': { src: 'knowledge.knowledge_entities', cols: ['id','name','entity','metadata','created_at','updated_at'] },
       'shared_context': { src: 'knowledge.shared_context', cols: ['id','context_key','context_type','value','description','tags','last_updated_by','created_at','updated_at'] },
       'memories': { src: 'knowledge.memories', cols: ['id','agent_id','kind','content','metadata','importance','embedding','created_at','updated_at'] },
       'memory_contexts': { src: 'knowledge.memory_contexts', cols: ['id','user_id','session_id','content','context_type','importance_score','metadata','embedding','timestamp','created_at','updated_at'] },
