@@ -7,13 +7,19 @@
 --   - Vex confirmed via introspection it was a phantom (real registry = unified_tool_registry)
 -- Fix: expose edge_function_registry as a view over the real unified_tool_registry
 -- so agent db-query/REST reads stop 500ing and resolve to the actual catalog.
+--
+-- Updated 2026-08-28: added `function_name` alias column (agents/tooling query
+-- catalog by `function_name`, which exists on the source proposal/log tables but
+-- not on the original view that only exposed `name`). Requires DROP+CREATE because
+-- PostgreSQL cannot rename/add a view column via CREATE OR REPLACE.
 -- ═══════════════════════════════════════════════════════════
 
 -- 1. edge_function_registry — compatibility view over the real unified_tool_registry
---    (which already holds edge functions like xmrt-university, search-edge-functions, etc.)
-CREATE OR REPLACE VIEW public.edge_function_registry AS
+DROP VIEW IF EXISTS public.edge_function_registry;
+CREATE VIEW public.edge_function_registry AS
 SELECT
   tool_name AS name,
+  tool_name AS function_name,
   description,
   category,
   status,
