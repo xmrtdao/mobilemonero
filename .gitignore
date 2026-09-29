@@ -32,3 +32,25 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment and secrets.
+# This repo had no .env rule at all, which is how relay/.env ended up
+# committed on another repository. Any file that can hold a key is excluded.
+.env
+.env.*
+!.env.example
+!.env.auth.example
+**/.env
+**/.env.*
+*.pem
+*.key
+*.p12
+id_rsa*
+
+# Runtime state and logs
+relay-data/logs/
+relay-data/state.json
+relay-data/activity.json
+relay-data/py-exec-*.py
+*.bak-*
+
