@@ -15,3 +15,20 @@ relay/.env
 node_modules/
 .next/
 .DS_Store
+
+# Cloudflare API token: a live secret with DNS and API-token scope.
+# relay/.env holds the copy the tooling reads; this is the original paste.
+CF Jobby Mobilemonero.txt
+
+# Credential backups of relay/.env. Each holds 23-26 live keys
+# (Supabase service role, OpenRouter, Resend) and was untracked AND
+# unignored, so a git add -A at the root would have committed them.
+relay/.env.bak*
+local-supabase/.env
+
+
+# The relay server lives in xmrtdao/mobilemonero, which is where the canonical copy is
+# committed. This repo tracked a partial, stale copy of it - 3,490 lines against the
+# running 16,184 - and its own README lists relay/ as local-only. Ignored rather
+# than deleted: the working copy is what actually runs and must keep working.
+relay/server.js
