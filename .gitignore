@@ -36,3 +36,6 @@ relay/server.js
 # Runtime JSON state written by the relay (task lists, activity log, session state).
 # It changes on every request and is not source.
 relay/relay-data/
+
+# resume_server's rotating access/error log. Runtime output, not source.
+jobby-mcjobberson/resume_server.log*
