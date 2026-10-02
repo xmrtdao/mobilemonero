@@ -32,3 +32,7 @@ local-supabase/.env
 # running 16,184 - and its own README lists relay/ as local-only. Ignored rather
 # than deleted: the working copy is what actually runs and must keep working.
 relay/server.js
+
+# Runtime JSON state written by the relay (task lists, activity log, session state).
+# It changes on every request and is not source.
+relay/relay-data/

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <base href="/elze/learnings/">
+  <title>Elze AI Learnings™ — Acceptance Tracking</title>
+  <meta name="description" content="Per-attorney AI learning dashboard: acceptance rate by attorney, matter, and playbook rule, over/under-correct signals, and inferred preferences. The Mixus moat.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Garamond:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#0a0a14;--panel:#12121f;--card:#161627;--mono:#6366f1;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--blue:#60a5fa;--muted:#8a8aa0;--text:#e4e4ef;--border:rgba(255,255,255,.06)}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    .wrap{max-width:1200px;margin:0 auto;padding:28px 24px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand-mark{width:40px;height:40px;border-radius:10px;background:rgba(201,169,110,.1);border:1px solid rgba(201,169,110,.25);display:flex;align-items:center;justify-content:center;font-size:20px}
+    h1{font-family:'Inter Garamond',serif;font-size:30px;font-weight:700}
+    h1 span{color:var(--mono)}
+    .sub{color:var(--muted);font-size:13px;margin-top:2px}
+    .back{color:var(--mono);text-decoration:none;font-size:13px;border:1px solid var(--border);padding:8px 14px;border-radius:8px}
+    .back:hover{background:rgba(201,169,110,.08)}
+    .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+    select,input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:8px;font-size:13px}
+    select:focus,input:focus{outline:none;border-color:var(--mono)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:24px}
+    .stat{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px}
+    .stat .num{font-size:28px;font-weight:800}
+    .stat .lbl{color:var(--muted);font-size:12px;margin-top:4px}
+    .stat.green .num{color:var(--green)}.stat.red .num{color:var(--red)}.stat.amber .num{color:var(--amber)}.stat.blue .num{color:var(--blue)}.stat.mono .num{color:var(--mono)}
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+    .panel h2{font-size:16px;font-weight:700;margin-bottom:14px;color:var(--text)}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+    th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+    tr:hover td{background:rgba(255,255,255,.02)}
+    .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+    .pill.hi{background:rgba(34,197,94,.15);color:var(--green)}
+    .pill.med{background:rgba(245,158,11,.15);color:var(--amber)}
+    .pill.lo{background:rgba(239,68,68,.15);color:var(--red)}
+    .pill.signal{background:rgba(96,165,250,.15);color:var(--blue)}
+    .bar{height:6px;border-radius:3px;background:var(--card);overflow:hidden;margin-top:6px}
+    .bar>div{height:100%;border-radius:3px}
+    .empty{color:var(--muted);text-align:center;padding:30px;font-size:14px}
+    .loading{color:var(--mono);text-align:center;padding:40px;font-size:14px}
+    .tag{color:var(--muted);font-size:12px}
+    .error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:13px}
+    @media(max-width:640px){.grid{grid-template-columns:1fr 1fr}.brand-mark{display:none}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="brand-mark">🧠</div>
+      <div>
+        <h1>AI <span>Learnings</span></h1>
+        <div class="sub">Per-attorney acceptance tracking — the loop that makes redlines sharper over time</div>
+      </div>
+    </div>
+    <a class="back" href="/elze/analyzer">← Back to Analyzer</a>
+  </header>
+
+  <div class="filters">
+    <select id="filterAttorney"><option value="">All attorneys</option></select>
+    <button class="back" id="btnRefresh">⟳ Refresh</button>
+  </div>
+
+  <div id="errorBox" class="error" style="display:none"></div>
+
+  <div class="grid" id="statGrid"></div>
+
+  <div class="panel">
+    <h2>Acceptance Rate by Attorney</h2>
+    <table id="attorneyTable"><thead><tr><th>Attorney</th><th>Events</th><th>Accepted</th><th>Rejected</th><th>Edited</th><th>Acceptance Rate</th><th>Trend</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="panel">
+    <h2>Acceptance by Playbook Rule</h2>
+    <table id="ruleTable"><thead><tr><th>Rule</th><th>Events</th><th>Acceptance</th><th>Signal</th><th>Distribution</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="panel">
+    <h2>Over / Under-Correcting Rules</h2>
+    <div id="overUnder"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Inferred Attorney Preferences</h2>
+    <div id="preferences"><div class="empty">Select an attorney above to see inferred preferences from accepted edits.</div></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  const FN = '/api/v1/functions/elze-learnings';
+  const els = {
+    statGrid: document.getElementById('statGrid'),
+    attorneyTable: document.querySelector('#attorneyTable tbody'),
+    ruleTable: document.querySelector('#ruleTable tbody'),
+    overUnder: document.getElementById('overUnder'),
+    preferences: document.getElementById('preferences'),
+    filterAttorney: document.getElementById('filterAttorney'),
+    errorBox: document.getElementById('errorBox'),
+    btnRefresh: document.getElementById('btnRefresh'),
+  };
+
+  async function call(payload){
+    const res = await fetch(FN, {method:'POST',headers:{'Content-Type':'application/json','x-api-key':sessionStorage.getItem('elze_key')||''},body:JSON.stringify(payload)});
+    return await res.json();
+  }
+
+  function showError(msg){ els.errorBox.style.display='block'; els.errorBox.textContent=msg; }
+  function hideError(){ els.errorBox.style.display='none'; }
+
+  function ratePill(rate){
+    if(rate==null) return '<span class="pill med">n/a</span>';
+    const n=Number(rate);
+    if(n>=85) return '<span class="pill hi">'+n+'%</span>';
+    if(n>=50) return '<span class="pill med">'+n+'%</span>';
+    return '<span class="pill lo">'+n+'%</span>';
+  }
+  function distBar(accepted,rejected,edited,total){
+    if(!total) return '';
+    const a=(accepted/total*100).toFixed(0), r=(rejected/total*100).toFixed(0), e=(edited/total*100).toFixed(0);
+    return '<div class="bar"><div style="width:'+a+'%;background:#22c55e;display:inline-block"></div><div style="width:'+r+'%;background:#ef4444;display:inline-block"></div><div style="width:'+e+'%;background:#60a5fa;display:inline-block"></div></div><div class="tag">'+a+'% accept · '+r+'% reject · '+e+'% edit</div>';
+  }
+
+  async function load(){
+    hideError();
+    const d = await call({action:'dashboard'});
+    if(!d || !d.success){ showError((d&&d.error)||'Failed to load dashboard'); return; }
+    const totals = d.totals||{};
+
+    // Stats
+    els.statGrid.innerHTML = [
+      ['total_events','Total Decisions','blue',totals.total_events||0],
+      ['accepted','Accepted','green',totals.accepted||0],
+      ['rejected','Rejected','red',totals.rejected||0],
+      ['edited','Edited','amber',totals.edited||0],
+      ['overUnder','Over/Under-Correcting Rules','mono',(d.overUnder||[]).length],
+    ].map(([k,lbl,color,val])=>
+      '<div class="stat '+color+'"><div class="num">'+val+'</div><div class="lbl">'+lbl+'</div></div>'
+    ).join('');
+
+    // Attorney table
+    els.attorneyTable.innerHTML = (d.byAttorney||[]).map(a=>
+      '<tr><td><strong>'+esc(a.attorney_id)+'</strong></td><td>'+a.events+'</td><td>'+a.accepted+'</td><td>'+a.rejected+'</td><td>'+(a.edited||0)+'</td><td>'+ratePill(a.acceptance_rate)+'</td><td>'+distBar(Number(a.accepted),Number(a.rejected),Number(a.edited||0),Number(a.events))+'</td></tr>'
+    ).join('') || '<tr><td colspan="7" class="empty">No feedback recorded yet.</td></tr>';
+
+    // Rule table
+    els.ruleTable.innerHTML = (d.byRule||[]).map(r=>
+      '<tr><td><strong>'+esc(r.rule_id)+'</strong></td><td>'+r.events+'</td><td>'+ratePill(r.acceptance_rate)+'</td><td>'+signalPill(d.overUnder||[],r.rule_id)+'</td><td>'+distBar(Number(r.accepted),Number(r.rejected),Number(r.edited||0),Number(r.events))+'</td></tr>'
+    ).join('') || '<tr><td colspan="5" class="empty">No rule data yet.</td></tr>';
+
+    // Over/under
+    const ou = d.overUnder||[];
+    els.overUnder.innerHTML = ou.length ? ou.map(x=>
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span><strong>'+esc(x.rule_id)+'</strong> <span class="tag">'+x.total_events+' events</span></span><span><span class="pill signal">'+esc(x.signal)+'</span> <span style="margin-left:8px">'+x.acceptance_rate+'%</span></span></div>'
+    ).join('') : '<div class="empty">Need ≥3 events per rule to classify over/under-correcting.</div>';
+
+    // Populate attorney filter
+    const atts = (d.byAttorney||[]).map(a=>a.attorney_id);
+    const cur = els.filterAttorney.value;
+    els.filterAttorney.innerHTML = '<option value="">All attorneys</option>'+atts.map(a=>'<option value="'+esc(a)+'"'+(a===cur?' selected':'')+'>'+esc(a)+'</option>').join('');
+
+    // Preferences
+    loadPreferences();
+  }
+
+  function signalPill(overUnder, ruleId){
+    const x = overUnder.find(o=>o.rule_id===ruleId);
+    if(!x) return '<span class="pill med">balanced</span>';
+    return '<span class="pill '+(x.signal==='over-correct'?'lo':'hi')+'">'+esc(x.signal)+'</span>';
+  }
+
+  async function loadPreferences(){
+    const att = els.filterAttorney.value;
+    if(!att){ els.preferences.innerHTML='<div class="empty">Select an attorney above to see inferred preferences from accepted edits.</div>'; return; }
+    const p = await call({action:'preferences',attorney_id:att});
+    if(!p || !p.success){ els.preferences.innerHTML='<div class="empty">No preference data.</div>'; return; }
+    const inferred = p.inferred_preferences||[];
+    const profile = p.profile||{};
+    let html = '';
+    if(profile && profile.preferred_governing_law){
+      html += '<div class="tag" style="margin-bottom:10px">Preferred governing law: <strong>'+esc(profile.preferred_governing_law)+'</strong> · Liability cap: <strong>'+esc(profile.preferred_liability_cap||'—')+'</strong></div>';
+    }
+    html += inferred.length ? inferred.map(i=>
+      '<div style="padding:8px 0;border-bottom:1px solid var(--border)"><strong>'+esc(i.playbook_rule_id)+'</strong> <span class="pill hi">accepted ×'+i.n+'</span></div>'
+    ).join('') : '<div class="empty">No accepted edits for this attorney yet.</div>';
+    els.preferences.innerHTML = html;
+  }
+
+  function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  els.btnRefresh.addEventListener('click', load);
+  els.filterAttorney.addEventListener('change', loadPreferences);
+  load();
+})();
+</script>
+</body>
+</html>

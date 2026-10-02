@@ -1,0 +1,1793 @@
+#!/usr/bin/env node
+/**
+ * ef:contract-analyzer — Multi-document contract analysis for Virginia law
+ *
+ * Supports:
+ *   - commercial_lease  → VA common law (no VRLTA)
+ *   - residential_lease → VA VRLTA (§ 55.1-1200 et seq.)
+ *   - service_contract  → VA common law + UCC Article 2
+ *   - partnership_agreement → VA Revised Uniform Partnership Act (§ 50-73.1 et seq.)
+ *   - articles_of_incorporation → VA Stock Corporation Act (§ 13.1-601 et seq.)
+ *   - independent_contractor → VA common law + worker classification (§ 60.2-230)
+ *   - non_disclosure     → VA Uniform Trade Secrets Act (§ 59.1-336 et seq.)
+ *   - employment         → VA Employment Commission (§ 60.2-100 et seq.)
+ *
+ * Architecture: Codicil's cite-or-be-silent + PaperHawk's anti-hallucination
+ */
+
+const META = {
+  description: 'Analyze contracts and legal documents against Virginia statutes. Supports leases, service contracts, partnership agreements, articles of incorporation, NDAs, employment agreements, and independent contractor agreements.',
+  category: 'legal',
+  version: '0.5.0',
+  author: 'hermes-agent',
+  dependencies: ['court-lookup'],
+};
+
+// ── Document Type Detection ──────────────────────────────────
+function detectDocumentType(text) {
+  const t = text.toLowerCase();
+  const checks = {
+    commercial_lease: /commercial\s+lease|office\s+lease|retail\s+lease|industrial\s+lease|warehouse\s+lease|triple\s+net|nnn\s+lease|gross\s+lease/i,
+    residential_lease: /residential\s+lease|apartment\s+lease|dwelling\s+unit|rental\s+agreement|tenant|landlord.*residential/i,
+    service_contract: /service\s+agreement|services\s+agreement|statement\s+of\s+work|sow|master\s+service|consulting\s+agreement/i,
+    partnership_agreement: /partnership\s+agreement|general\s+partnership|limited\s+partnership|lp\s+agreement|llp\s+agreement/i,
+    articles_of_incorporation: /articles\s+of\s+incorporation|articles\s+of\s+organization|certificate\s+of\s+incorporation|corporate\s+charter|bylaws/i,
+    independent_contractor: /independent\s+contractor|freelance\s+agreement|1099|contractor\s+agreement|consulting\s+agreement/i,
+    non_disclosure: /non.?disclosure|confidentiality\s+agreement|nda|proprietary\s+information|trade\s+secret/i,
+    employment: /employment\s+agreement|employee\s+agreement|at.?will\s+employment|offer\s+letter|severance\s+agreement/i,
+  };
+
+  const scores = {};
+  for (const [type, pattern] of Object.entries(checks)) {
+    const matches = (text.match(pattern) || []).length;
+    if (matches > 0) scores[type] = matches;
+  }
+
+  // Return the type with the most matches, default to commercial_lease
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  return sorted.length > 0 ? sorted[0][0] : 'commercial_lease';
+}
+
+// ── Jurisdiction Detection ──────────────────────────────────
+// The analyzer's rule base is Virginia-specific (common law + VA code).
+// If the governing-law clause points at another jurisdiction, flag it so a
+// non-VA lease isn't scored as VA-non-compliant without context.
+//
+// Many commercial leases use generic governing-law phrasing ("laws of the
+// state in which the Property is located") WITHOUT naming a state. So we also
+// scan jurisdiction-specific statute references (e.g. ISRA/NJDEP/N.J.S.A. for
+// NJ) and the property-address state (postal abbreviation + ZIP) — not just
+// the governing-law clause.
+function detectJurisdiction(text) {
+  const t = text.toLowerCase();
+
+  // Jurisdiction signals, strongest first. Each carries:
+  //   code/state   — the jurisdiction
+  //   states       — named-state keywords (full names + abbreviations)
+  //   laws         — jurisdiction-specific statute references (anywhere in doc)
+  //   zips         — postal abbreviation followed by a ZIP code (address signal)
+  const rules = [
+    { code: 'NJ', state: 'New Jersey', states: ['new jersey', 'n\\.j\\.', '(?<![a-z])nj(?![a-z])'],
+      laws: ['isra', 'njdep', 'n\.j\.s\.a', 'new jersey department of environmental', 'site remediation', 'environmental cleanup responsibility act', 'brownfield', 'lien law', 'nj flood'],
+      zips: ['nj'] },
+    { code: 'NY', state: 'New York', states: ['new york', 'n\\.y\\.', 'new york city'],
+      laws: ['n\\.y\\. gen\\. oblig', 'ny gen oblig', 'gol', 'multiple dwelling law', 'mdl'],
+      zips: ['ny'] },
+    { code: 'CA', state: 'California', states: ['california', 'cal\\.'],
+      laws: ['cal\. civ\. code', 'ccc', 'ca civ code', 'carl moyer'],
+      zips: ['ca'] },
+    { code: 'TX', state: 'Texas', states: ['texas', 'tex\\.'], laws: ['tex\. prop\. code', 'texas property code'], zips: ['tx'] },
+    { code: 'FL', state: 'Florida', states: ['florida', 'fla\\.'], laws: ['fla\. stat', 'florida statutes'], zips: ['fl'] },
+    { code: 'PA', state: 'Pennsylvania', states: ['pennsylvania', 'pa\\.'], laws: ['pa\. cons\. stat', 'pennsylvania consolidated statutes'], zips: ['pa'] },
+    { code: 'IL', state: 'Illinois', states: ['illinois', 'ill\\.'], laws: ['815 ilcs', 'illinois compiled statutes'], zips: ['il'] },
+    { code: 'MA', state: 'Massachusetts', states: ['massachusetts', 'mass\\.'], laws: ['m\.g\.l', 'massachusetts general laws'], zips: ['ma'] },
+    { code: 'GA', state: 'Georgia', states: ['georgia', 'ga\\.'], laws: ['o\.c\.g\.a', 'official code of georgia'], zips: ['ga'] },
+    { code: 'MD', state: 'Maryland', states: ['maryland', 'md\\.'], laws: ['md\. code', 'maryland code'], zips: ['md'] },
+    { code: 'DE', state: 'Delaware', states: ['delaware', 'del\\.'], laws: ['25 del\\. c\\.', 'delaware landlord-tenant code', 'del code'], zips: ['de'] },
+    { code: 'DC', state: 'District of Columbia', states: ['district of columbia', 'washington d\.c\.', 'd\\.c\\.'], laws: ['dc code'], zips: [] },
+    { code: 'VA', state: 'Virginia', states: ['virginia', 'commonwealth of virginia', 'va\\.?\\s+code'],
+      laws: ['va\\.?\\s+code', 'virginia code', '55\.1-1200', 'vrlta', 'virginia residential landlord', 'virginia landlord'], zips: ['va'] },
+  ];
+
+  // 1) Governing-law clause (highest signal — an explicit choice-of-law beats
+  //    a stray address mention). Generic phrasing with no named state falls
+  //    through to the broader scans below.
+  const govLaw = t.match(/(?:govern(?:ed|ing)\s*(?:law|clause)?|choice of law)[\s\S]{0,350}/i);
+  const govWindow = govLaw ? govLaw[0] : '';
+
+  for (const r of rules) {
+    const named = r.states.some(s => new RegExp(s, 'i').test(govWindow));
+    const lawHit = r.laws.some(l => new RegExp(l, 'i').test(govWindow));
+    if (named || lawHit) return { code: r.code, state: r.state, source: 'governing-law' };
+  }
+
+  // 2) Jurisdiction-specific statute references ANYWHERE in the document.
+  //    ISRA/NJDEP/N.J.S.A. are unambiguous NJ signals even if governing law is
+  //    generic. Only skip VA — its common-law default is handled separately.
+  const statuteMatches = [];
+  for (const r of rules) {
+    if (r.code === 'VA') continue;
+    for (const l of r.laws) {
+      const m = t.match(new RegExp(l, 'i'));
+      if (m) { statuteMatches.push({ r, law: l, idx: m.index }); }
+    }
+  }
+  if (statuteMatches.length) {
+    statuteMatches.sort((a, b) => a.idx - b.idx);
+    const { r } = statuteMatches[0];
+    return { code: r.code, state: r.state, source: 'statute-reference' };
+  }
+
+  // 3) Property address state — postal abbreviation immediately followed by a
+  //    5-digit ZIP (e.g. "West Deptford, NJ 08066"). This is a strong address
+  //    signal even in a condensed lease where the state isn't in the GL clause.
+  for (const r of rules) {
+    if (!r.zips.length) continue;
+    for (const z of r.zips) {
+      const m = t.match(new RegExp(`\\b${z}\\b[,.\s]*\\d{5}(?:[-–]\\d{4})?`, 'i'));
+      if (m) return { code: r.code, state: r.state, source: 'address' };
+    }
+  }
+
+  // 4) Named state anywhere (weakest signal) — catches "located in New Jersey"
+  //    style phrasing in the body without a governing-law or address hit.
+  for (const r of rules) {
+    const named = r.states.some(s => new RegExp(s, 'i').test(t));
+    if (named) return { code: r.code, state: r.state, source: 'text' };
+  }
+
+  // Explicit VA reference anywhere
+  if (/virginia|commonwealth of virginia|va\.?\s+code|virginia code/i.test(t)) {
+    return { code: 'VA', state: 'Virginia', source: 'text' };
+  }
+
+  // No governing law found at all
+  const hasLaw = /govern(?:ed|ing)|governing law|choice of law/i.test(t);
+  return hasLaw ? { code: 'UNKNOWN', state: 'Not specified' } : { code: 'NONE', state: 'No governing-law clause detected' };
+}
+
+// ── Statute Knowledge Bases ──────────────────────────────────
+
+// VRLTA — Residential leases only (§ 55.1-1200 et seq.)
+const VRLTA_STATUTES = {
+  '55.1-1200': { title: 'Definitions', summary: 'Defines key terms: landlord, tenant, rental agreement, dwelling unit, etc.' },
+  '55.1-1204': { title: 'Landlord obligations — fit and habitable dwelling', summary: 'Landlord must maintain premises in fit and habitable condition.' },
+  '55.1-1212': { title: 'Security deposits', summary: 'Security deposit cannot exceed 2 months\' rent. Must be returned within 45 days.' },
+  '55.1-1214': { title: 'Late payment fees', summary: 'Late fee cannot exceed 10% of monthly rent. Must have 5-day grace period.' },
+  '55.1-1215': { title: 'Utility charges', summary: 'Landlord cannot charge for utilities unless separately metered.' },
+  '55.1-1216': { title: 'Entry by landlord', summary: 'Landlord may enter only with 24-hour notice for repairs/inspection.' },
+  '55.1-1229': { title: 'Mitigation of damages', summary: 'Landlord has duty to mitigate damages by using reasonable efforts to re-rent.' },
+  '55.1-1230': { title: 'Subleases and assignments', summary: 'Tenant may sublease with landlord\'s written consent, not unreasonably withheld.' },
+  '55.1-1231': { title: 'Prohibited provisions', summary: 'Certain lease provisions are void: waiving landlord negligence liability, confession of judgment, etc.' },
+  '55.1-1248': { title: 'Self-help eviction prohibited', summary: 'Landlord may not use self-help to evict tenant.' },
+  '55.1-1264': { title: 'Rent increase — frequency', summary: 'Rent may not be increased more than once in any 12-month period.' },
+};
+
+// Commercial lease — VA common law (no statute)
+const COMMERCIAL_COMMON_LAW = {
+  'COMMON-LAW-SELF-HELP': { title: 'Self-help eviction — common law', summary: 'Virginia common law prohibits self-help eviction. Landlord must use unlawful detainer process (Va. Code § 8.01-124).' },
+  'COMMON-LAW-MITIGATION': { title: 'Duty to mitigate — common law', summary: 'Virginia common law requires landlord to use reasonable efforts to mitigate damages.' },
+  'COMMON-LAW-NEGLIGENCE': { title: 'Waiver of negligence — public policy', summary: 'Virginia public policy prohibits exculpatory clauses for gross negligence or willful misconduct.' },
+  'COMMON-LAW-CONFESSION': { title: 'Confession of judgment — void', summary: 'Confession of judgment clauses are void in Virginia as against public policy.' },
+  'COMMON-LAW-REASONABLE-FEE': { title: 'Late fees — reasonableness', summary: 'Commercial lease late fees must be reasonable. Fees >10% may be unenforceable as penalties.' },
+  'COMMON-LAW-ENTRY': { title: 'Entry — reasonable notice', summary: 'Virginia common law requires reasonable notice before entry, typically 24 hours.' },
+  'COMMON-LAW-ATTORNEY-FEES': { title: 'Attorney fees — reciprocity', summary: 'If lease provides for landlord attorney fees, reciprocal right for tenant (Va. Code § 8.01-66.1).' },
+  'COMMON-LAW-ASSIGNMENT': { title: 'Assignment — reasonableness', summary: 'Landlord cannot unreasonably withhold consent to assignment or sublease.' },
+  'COMMON-LAW-CASUALTY': { title: 'Casualty/rent abatement', summary: 'Virginia common law abates rent when leased premises are destroyed absent contrary agreement; tenant should have termination/abatement rights.' },
+  'COMMON-LAW-CONDEMNATION': { title: 'Condemnation — award allocation', summary: 'Virginia allocates condemnation awards between landlord and tenant based on leasehold and reversionary interests.' },
+  'COMMON-LAW-CURE': { title: 'Default cure — reasonableness', summary: 'Commercial leases should provide a reasonable cure period (typically 5-10 days monetary, 30 days non-monetary).' },
+  'COMMON-LAW-TERM': { title: 'Termination for convenience', summary: 'Commercial leases should terminate for material uncured default, not at landlord\'s discretion.' },
+  'COMMON-LAW-QUIET-ENJOYMENT': { title: 'Quiet enjoyment', summary: 'Implied at common law; express covenant protects tenant against landlord interference.' },
+  'COMMON-LAW-HOLDOVER': { title: 'Holdover — reasonable penalty', summary: 'Virginia courts scrutinize holdover provisions; 125-150% is the common commercial range.' },
+  'COMMON-LAW-SECURITY': { title: 'Security deposit — reasonableness', summary: 'Commercial leases typically require 1-3 months rent; larger deposits may be commercially unreasonable.' },
+  'COMMON-LAW-RENEWAL': { title: 'Renewal option', summary: 'Renewal options need clear exercise mechanics; ambiguous terms can forfeit the tenant\'s option.' },
+  'COMMON-LAW-RADIUS': { title: 'Radius restriction', summary: 'Overly broad radius/use restrictions can be unenforceable and are scrutinized by Virginia courts.' },
+  'COMMON-LAW-ESTOPPEL': { title: 'Estoppel certificate', summary: 'Estoppel certificates are standard; 10 days is the common commercial response window.' },
+  'COMMON-LAW-INSURANCE': { title: 'Insurance & waiver of subrogation', summary: 'Commercial leases should carry mutual insurance obligations and a waiver of subrogation to avoid insurer-subrogation disputes (CL-S02/CL-S03).' },
+  'COMMON-LAW-CAM': { title: 'CAM charges', summary: 'Common area maintenance (CAM) charges should be itemized with capital-improvement amortization caps, a management-fee cap, and tenant audit rights.' },
+  'COMMON-LAW-REPAIR': { title: 'Repair obligations', summary: 'Landlord typically bears structural repairs (roof, foundation, HVAC replacement); tenant bears routine interior maintenance. Ambiguous split is construed against drafter.' },
+  'COMMON-LAW-SNDA': { title: 'Subordination, Non-Disturbance & Attornment', summary: 'Without an SNDA, lender foreclosure can terminate a tenant lease; tenant should obtain an SNDA protecting it against lender eviction after non-disturbance.' },
+  'COMMON-LAW-GUARANTY': { title: 'Personal guaranty', summary: 'Unlimited personal guaranties expose the guarantor to full lease liability; cap to the initial term and a specific amount to keep it commercially reasonable.' },
+  'COMMON-LAW-COMMENCEMENT': { title: 'Commencement date', summary: 'A lease without an outside completion date risks indefinite delay; a definite commencement/expiration with an outside delivery date protects the tenant.' },
+  'COMMON-LAW-INDEMNITY': { title: 'Indemnification — scope', summary: 'Broad indemnification for the landlord own negligence may be void as against public policy; always carve out gross negligence and willful misconduct.' },
+  'COMMON-LAW-RELOCATION': { title: 'Relocation', summary: 'Any landlord relocation right should guarantee comparable space at the same rent, moving costs, and an equal tenant-improvement allowance.' },
+};
+
+
+// Service contracts — VA common law + UCC Article 2
+const SERVICE_CONTRACT_LAW = {
+  'COMMON-LAW-SCOPE': { title: 'Scope of work — definiteness', summary: 'Service contracts must have definite scope, deliverables, and timeline to be enforceable.' },
+  'COMMON-LAW-PAYMENT': { title: 'Payment terms — definiteness', summary: 'Payment terms must be clearly stated. Ambiguous payment terms construed against drafter.' },
+  'COMMON-LAW-TERMINATION': { title: 'Termination — reasonableness', summary: 'Termination for convenience clauses must provide reasonable notice. At-will termination may be unconscionable.' },
+  'COMMON-LAW-INDEMNITY': { title: 'Indemnification — scope', summary: 'Broad indemnification for own negligence may be void as against public policy.' },
+  'COMMON-LAW-LIMITATION': { title: 'Limitation of liability — unconscionability', summary: 'Limitations of liability for gross negligence, willful misconduct, or personal injury are void.' },
+  'COMMON-LAW-WARRANTY': { title: 'Warranty disclaimers — UCC', summary: 'Warranty disclaimers must be conspicuous. Implied warranties of merchantability may apply to goods component.' },
+};
+
+// Partnership agreements — VA RUPA (§ 50-73.1)
+const PARTNERSHIP_LAW = {
+  '50-73.1': { title: 'RUPA definitions', summary: 'Virginia Revised Uniform Partnership Act definitions and scope.' },
+  '50-73.7': { title: 'Partnership formation', summary: 'Association of two or more persons to carry on as co-owners of a business for profit.' },
+  '50-73.19': { title: 'Partner authority', summary: 'Each partner has authority to bind the partnership in ordinary course of business.' },
+  '50-73.24': { title: 'Partner liability', summary: 'Partners are jointly and severally liable for partnership obligations.' },
+  '50-73.28': { title: 'Duty of loyalty', summary: 'Partners owe fiduciary duties of loyalty and care to the partnership.' },
+  '50-73.29': { title: 'Duty of care', summary: 'Partners must refrain from gross negligence, reckless conduct, or intentional misconduct.' },
+  '50-73.40': { title: 'Dissociation', summary: 'Partner may dissociate upon notice. Wrongful dissociation may cause damages.' },
+  '50-73.49': { title: 'Dissolution', summary: 'Partnership dissolves upon occurrence of specified events or partner vote.' },
+};
+
+// Articles of incorporation — VA Stock Corporation Act (§ 13.1-601)
+const CORPORATION_LAW = {
+  '13.1-604': { title: 'Articles of incorporation — required provisions', summary: 'Must include: name, purpose, registered agent, stock authorization, incorporators.' },
+  '13.1-605': { title: 'Articles of incorporation — optional provisions', summary: 'May include: director liability limits, indemnification, preemptive rights.' },
+  '13.1-620': { title: 'Bylaws', summary: 'Initial bylaws adopted by incorporators or board. May contain any provision for managing affairs.' },
+  '13.1-624': { title: 'Registered agent', summary: 'Corporation must maintain registered agent and office in Virginia.' },
+  '13.1-626': { title: 'Shares — issuance', summary: 'Board may authorize issuance of shares for consideration. Treasury shares are not assets.' },
+  '13.1-670': { title: 'Director duties', summary: 'Directors must act in good faith, with ordinary care, and in best interest of corporation.' },
+  '13.1-672': { title: 'Director liability', summary: 'Directors are not personally liable for acts within their authority absent bad faith.' },
+  '13.1-690': { title: 'Shareholder meetings', summary: 'Annual meetings required. Special meetings may be called by board or as specified in articles.' },
+  '13.1-700': { title: 'Shareholder voting', summary: 'Each share entitled to one vote unless otherwise provided in articles.' },
+  '13.1-720': { title: 'Indemnification', summary: 'Corporation may indemnify directors and officers for good faith conduct.' },
+};
+
+// Independent contractor — VA worker classification (§ 60.2-230)
+const INDEPENDENT_CONTRACTOR_LAW = {
+  '60.2-230': { title: 'Worker classification — independent contractor', summary: '20-factor ABC test for independent contractor vs employee classification.' },
+  'COMMON-LAW-CONTROL': { title: 'Right to control — common law', summary: 'Independent contractor retains control over means and methods of work.' },
+  'COMMON-LAW-INSURANCE': { title: 'Insurance requirements', summary: 'Independent contractors should maintain own insurance. Indemnification for contractor negligence.' },
+  'COMMON-LAW-IP': { title: 'Intellectual property — work for hire', summary: 'Independent contractors retain IP rights unless agreement explicitly assigns them.' },
+};
+
+// Non-disclosure — VA Uniform Trade Secrets Act (§ 59.1-336)
+const NONDISCLOSURE_LAW = {
+  '59.1-336': { title: 'UTSA definitions', summary: 'Virginia Uniform Trade Secrets Act definitions: trade secret, misappropriation, etc.' },
+  '59.1-337': { title: 'Injunctive relief', summary: 'Actual or threatened misappropriation may be enjoined.' },
+  '59.1-338': { title: 'Damages', summary: 'Damages for misappropriation include actual loss and unjust enrichment.' },
+  '59.1-341': { title: 'Preservation of secrecy', summary: 'Court shall preserve secrecy of alleged trade secret in legal proceedings.' },
+  'COMMON-LAW-REASONABLE': { title: 'Reasonable efforts — common law', summary: 'NDA must describe confidential information with reasonable specificity. Blanket NDAs may be unenforceable.' },
+  'COMMON-LAW-TIME': { title: 'Time limit — reasonableness', summary: 'Non-disclosure obligations must have reasonable time limit. Perpetual NDAs may be unreasonable.' },
+};
+
+// Employment — VA Employment Commission (§ 60.2-100)
+const EMPLOYMENT_LAW = {
+  '60.2-100': { title: 'Employment Commission — definitions', summary: 'Definitions for unemployment compensation, employer, employee, wages.' },
+  '40.1-2': { title: 'Employment — at-will', summary: 'Virginia is an at-will employment state. Employment may be terminated at any time for any reason.' },
+  '40.1-27.3': { title: 'Non-compete — restrictions', summary: 'Non-compete clauses void unless: (i) enforceable under common law, (ii) employee earns > avg weekly wage.' },
+  '40.1-28.7:1': { title: 'Wage payment', summary: 'Employer must pay wages at least monthly. Final wages due within 30 days of termination.' },
+  '40.1-29': { title: 'Overtime', summary: 'Employer must pay overtime at 1.5x for hours worked over 40 per week unless exempt.' },
+  '40.1-51.4:1': { title: 'Discrimination prohibited', summary: 'Employer may not discriminate based on race, color, religion, sex, national origin, age, disability.' },
+  '65.2-300': { title: 'Workers compensation', summary: 'Employer must provide workers compensation insurance for employees.' },
+};
+
+// ── Statute Registry ─────────────────────────────────────────
+const STATUTE_REGISTRY = {
+  commercial_lease: { name: 'Commercial Lease', statutes: COMMERCIAL_COMMON_LAW, jurisdiction: 'Virginia Common Law' },
+  residential_lease: { name: 'Residential Lease', statutes: VRLTA_STATUTES, jurisdiction: 'VA VRLTA § 55.1-1200' },
+  service_contract: { name: 'Service Contract', statutes: SERVICE_CONTRACT_LAW, jurisdiction: 'VA Common Law + UCC' },
+  partnership_agreement: { name: 'Partnership Agreement', statutes: PARTNERSHIP_LAW, jurisdiction: 'VA RUPA § 50-73.1' },
+  articles_of_incorporation: { name: 'Articles of Incorporation', statutes: CORPORATION_LAW, jurisdiction: 'VA Stock Corp Act § 13.1-601' },
+  independent_contractor: { name: 'Independent Contractor Agreement', statutes: INDEPENDENT_CONTRACTOR_LAW, jurisdiction: 'VA § 60.2-230' },
+  non_disclosure: { name: 'Non-Disclosure Agreement', statutes: NONDISCLOSURE_LAW, jurisdiction: 'VA UTSA § 59.1-336' },
+  employment: { name: 'Employment Agreement', statutes: EMPLOYMENT_LAW, jurisdiction: 'VA § 40.1-2' },
+};
+
+// ── Red Flag Rules by Document Type ─────────────────────────
+
+const COMMERCIAL_LEASE_RULES = [
+  {
+    id: 'CL-001', title: 'Self-help eviction clause', statute: 'COMMON-LAW-SELF-HELP', severity: 'critical',
+    check: (text) => {
+      if (/self[- ]help|without\s+(?:obtaining\s+)?a\s+court\s+order|re[- ]enter\s+and\s+take\s+possession/i.test(text)) {
+        const m = text.match(/(?:self[- ]help|without\s+(?:obtaining\s+)?a\s+court\s+order|re[- ]enter\s+and\s+take\s+possession)[^.]*\./i);
+        return { finding: 'Self-help eviction clause — lease permits eviction without court process', cite: m ? getFullSentence(text, m.index) : 'Self-help language detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-002', title: 'No duty to mitigate damages', statute: 'COMMON-LAW-MITIGATION', severity: 'high',
+    check: (text) => {
+      if (/(?:no\s+duty|not\s+(?:required|obligated)|shall\s+not\s+(?:be\s+)?(?:required|obligated)|without\s+duty)\s+to\s+mitigat/i.test(text)) {
+        const m = text.match(/(?:no\s+duty|not\s+(?:required|obligated)|shall\s+not\s+(?:be\s+)?(?:required|obligated)|without\s+duty)\s+to\s+mitigat[^.]*\./i);
+        return { finding: 'Lease disclaims landlord duty to mitigate damages', cite: m ? getFullSentence(text, m.index) : 'No duty to mitigate detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-003', title: 'Waiver of landlord negligence liability', statute: 'COMMON-LAW-NEGLIGENCE', severity: 'critical',
+    check: (text) => {
+      if (/waiv(e|er).*(landlord|owner|lessor).*(liab|neglig)/i.test(text)) {
+        const m = text.match(/waiv(e|er)[^.]*(landlord|owner|lessor)[^.]*(liab|neglig)[^.]*\./i);
+        return { finding: 'Lease attempts to waive landlord liability for negligence', cite: m ? getFullSentence(text, m.index) : 'Waiver of negligence detected' };
+      }
+      if (/indemnif[^.]*(landlord|owner|lessor)[^.]*neglig/i.test(text) && !/except\s+to\s+the\s+extent|caused\s+(by|solely\s+by)\s+(landlord|owner|lessor)/i.test(text)) {
+        const m = text.match(/indemnif[^.]*landlord[^.]*neglig[^.]*\./i);
+        return { finding: 'Indemnification clause shifts landlord negligence liability to tenant', cite: m ? getFullSentence(text, m.index) : 'Broad indemnification detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-004', title: 'Confession of judgment clause', statute: 'COMMON-LAW-CONFESSION', severity: 'critical',
+    check: (text) => {
+      if (/confession\s+of\s+judgment|consent\s+to\s+(judgment|suit)/i.test(text)) {
+        const m = text.match(/(confession\s+of\s+judgment|consent\s+to\s+(judgment|suit))[^.]*\./i);
+        return { finding: 'Confession of judgment clause — void as against public policy', cite: m ? getFullSentence(text, m.index) : 'Confession of judgment detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-005', title: 'Late fee exceeds reasonable amount', statute: 'COMMON-LAW-REASONABLE-FEE', severity: 'high',
+    check: (text) => {
+      const pctMatch = text.match(/late\s+(?:fee|charge|payment)[^.]*?(\d+|ten|fifteen|twenty|twenty-five|thirty)\s*(?:percent|%)/i);
+      if (pctMatch) {
+        const wordToNum = { ten: 10, fifteen: 15, twenty: 20, 'twenty-five': 25, thirty: 30 };
+        const pct = parseInt(pctMatch[1]) || wordToNum[pctMatch[1]?.toLowerCase()?.replace(/\s/g, '')] || 0;
+        if (pct > 10) {
+          return { finding: `Late fee of ${pct}% may be unreasonable and unenforceable as a penalty`, cite: getFullSentence(text, pctMatch.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-006', title: 'No reasonable notice for entry', statute: 'COMMON-LAW-ENTRY', severity: 'high',
+    check: (text) => {
+      if (/(?:landlord|owner|lessor)[^.]{0,80}(?:enter|access|inspect)[^.]{0,80}(?:without\s+notice|at\s+any\s+time|no\s+notice)/i.test(text) && !/emergency|imminent\s+danger/i.test(text)) {
+        const m = text.match(/(?:landlord|owner|lessor)[^.]*?(?:enter|access|inspect)[^.]*?(?:without\s+notice|at\s+any\s+time|no\s+notice)[^.]*\./i);
+        return { finding: 'Entry clause allows landlord entry without reasonable notice', cite: m ? getFullSentence(text, m.index) : 'No-notice entry detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-007', title: 'Unreasonable assignment restriction', statute: 'COMMON-LAW-ASSIGNMENT', severity: 'medium',
+    check: (text) => {
+      if (/assign|sublet|sublease/i.test(text)) {
+        if (/(?:not\s+be\s+)?unreasonably\s+(?:withhold|delay)/i.test(text)) return null;
+        if (/consent\s+(?:shall|may)\s+not\s+be\s+(?:withheld|denied)/i.test(text)) return null;
+        const m = text.match(/(?:assign|sublet|sublease)[\s\S]{0,300}?(?:sole\s+(?:and\s+)?absolute\s+discretion|absolute\s+(?:and\s+)?sole\s+discretion|sole\s+discretion|absolute\s+discretion)/i);
+        if (m) {
+          return { finding: 'Assignment clause gives landlord absolute discretion — may be unreasonable', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  // ── Suggestion-level rules (yellow highlight, no required action) ──
+  {
+    id: 'CL-S01', title: 'Consider adding attorney fee reciprocity', statute: 'COMMON-LAW-ATTORNEY-FEES', severity: 'suggestion',
+    check: (text) => {
+      if (/(?:attorney\s+fee|legal\s+fee)/i.test(text)) {
+        // Search full text for reciprocity language — not just matched sentences
+        if (!/reciproc|mutual|prevailing\s+party|each\s+party|bidirectional/i.test(text)) {
+          const m = text.match(/(?:attorney\s+fee|legal\s+fee)[^.]*\./i);
+          if (m) {
+            return { finding: 'Attorney fees clause does not specify reciprocity — VA law implies reciprocal right if lease provides for landlord fees', cite: m[0] };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-S02', title: 'Consider adding insurance waiver of subrogation', statute: 'COMMON-LAW-INSURANCE', severity: 'suggestion',
+    check: (text) => {
+      if (/insurance/i.test(text)) {
+        // Search full text for subrogation waiver — not just the matched sentence
+        if (!/waiver\s+of\s+subrogation|mutual\s+waiver|subrogation\s+waiver/i.test(text)) {
+          const m = text.match(/insurance[^.]*\./i);
+          if (m) {
+            return { finding: 'Insurance clause does not include mutual waiver of subrogation — common in commercial leases', cite: m[0] };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-S03', title: 'Consider adding CAM charge details', statute: 'COMMON-LAW-CAM', severity: 'suggestion',
+    check: (text) => {
+      if (/(?:cam|common\s+area\s+maintenance|operating\s+expenses)/i.test(text)) {
+        // Search full text for CAM detail keywords — not just matched sentences
+        if (!/amortiz|cap\s+at|pro\s+rata|management\s+fee|reconciliation|audit\s+right/i.test(text)) {
+          const m = text.match(/(?:cam|common\s+area\s+maintenance|operating\s+expenses)[^.]*\./i);
+          if (m) {
+            return { finding: 'CAM clause lacks detail on capital improvement amortization, management fee caps, or audit rights', cite: m[0] };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-008', title: 'Rent escalation without cap', statute: 'COMMON-LAW-REASONABLE-FEE', severity: 'medium',
+    check: (text) => {
+      // Find escalation language that names an ANNUAL rate, and parse the actual
+      // per-year percentage. Two hard requirements to avoid false positives:
+      //  (1) The escalation keyword, an annual anchor, and the number must appear
+      //      in the SAME sentence/clause — a tight window so a cumulative total or
+      //      an unrelated final-year figure ("rent shall be 39% of gross sales")
+      //      can't be misread as an annual escalation.
+      //  (2) The rate must be a plausible annual escalation figure (0.5–100),
+      //      parsed with decimals ("3.6%" must stay 3.6, not 39).
+      const re = /(?:escalat|increase|adjust|rent\s+will\s+increase|rent\s+shall\s+increase)[^.]*?(?:annual|yearly|per\s+annum|each\s+year|every\s+year|annually)[^.]*?(\d+(?:\.\d+)?|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|twenty-five|thirty)(?:\s*[-–to]+\s*\d+(?:\.\d+)?)?\s*(?:percent|%|\bper\s+cent\b)/i;
+      const m = text.match(re);
+      if (!m) return null;
+      const wordToNum = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, 'twenty-five': 25, thirty: 30 };
+      const raw = m[1]?.trim().toLowerCase();
+      const pct = parseFloat(raw) || wordToNum[raw] || 0;
+      if (isNaN(pct) || pct <= 0) return null;
+      // Ignore implausible "rates" — 39% annual escalation is almost always a
+      // misread of a cumulative total or a one-off final-year figure. Flag only
+      // clear, excessive ANNUAL escalations above a conservative threshold.
+      if (pct > 5 && pct <= 100) {
+        return { finding: `Rent escalates ${pct}% annually with no cap. Consider capping annual escalation at 3-5% or tying to CPI.`, cite: getFullSentence(text, m.index) };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-009', title: 'Tenant pays for structural repairs', statute: 'COMMON-LAW-REPAIR', severity: 'medium',
+    check: (text) => {
+      if (/tenant\s+(?:shall|must|will|agrees\s+to)\s+(?:pay|bear|be\s+responsible\s+for)[\s\S]{0,150}?(?:structural|roof|foundation|hvac|plumbing|electrical\s+system)/i.test(text)) {
+        const m = text.match(/tenant\s+(?:shall|must|will|agrees\s+to)\s+(?:pay|bear|be\s+responsible\s+for)[\s\S]{0,200}?(?:structural|roof|foundation|hvac|plumbing|electrical\s+system)[^.]*\./i);
+        if (m) {
+          return { finding: 'Lease shifts structural/HVAC repair costs to tenant. Landlord typically bears structural repair obligations in commercial leases.', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-010', title: 'Missing SNDA clause', statute: 'COMMON-LAW-SNDA', severity: 'suggestion',
+    check: (text) => {
+      if (!/non-disturbance|subordination|attornment|snda/i.test(text)) {
+        const m = text.match(/mortgage|deed\s+of\s+trust|lender/i);
+        if (m) {
+          return { finding: 'Lease references financing but lacks Subordination, Non-Disturbance, and Attornment (SNDA) protections for tenant.', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-011', title: 'Unlimited personal guaranty', statute: 'COMMON-LAW-GUARANTY', severity: 'medium',
+    check: (text) => {
+      if (/personal\s+guarant|guarantor|guaranty/i.test(text)) {
+        if (!/(?:limit|cap|maximum|solely\s+for|not\s+exceed|limited\s+to)/i.test(text)) {
+          const m = text.match(/(?:personal\s+guarant|guarantor|guaranty)[^.]*\./i);
+          if (m) {
+            return { finding: 'Personal guaranty present without monetary cap or time limit. Consider limiting to unpaid rent during initial term only.', cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-012', title: 'No commencement date certainty', statute: 'COMMON-LAW-COMMENCEMENT', severity: 'suggestion',
+    check: (text) => {
+      if (!/commencement\s+date|lease\s+term\s+begins|rent\s+commences|outside\s+date/i.test(text)) {
+        return { finding: 'Lease lacks clear commencement date or outside date. Without certainty, tenant may be liable for rent before space is ready.', cite: 'No commencement date mechanism detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-013', title: 'Broad indemnification without carve-outs', statute: 'COMMON-LAW-INDEMNITY', severity: 'high',
+    check: (text) => {
+      if (/indemnif/i.test(text)) {
+        if (!/(?:except\s+to\s+the\s+extent|caused\s+by|gross\s+negligence|willful\s+misconduct|solely\s+by\s+landlord|landlord\s+negligence)/i.test(text)) {
+          const m = text.match(/indemnif[^.]*\./i);
+          if (m) {
+            return { finding: 'Indemnification clause lacks carve-outs for landlord negligence, gross negligence, or willful misconduct.', cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-014', title: 'No relocation clause protection', statute: 'COMMON-LAW-RELOCATION', severity: 'suggestion',
+    check: (text) => {
+      if (/relocate|move\s+tenant|comparable\s+space|substitute\s+premises/i.test(text)) {
+        if (!/(?:comparable\s+size|same\s+rent|reasonable|at\s+landlord.s\s+cost|improvement\s+allowance)/i.test(text)) {
+          const m = text.match(/relocate[^.]*\./i);
+          if (m) {
+            return { finding: 'Relocation clause lacks protections for tenant: comparable size, same rent, or landlord-paid moving/improvement costs.', cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-015', title: 'Casualty/rent abatement — tenant remains liable during destruction', statute: 'COMMON-LAW-CASUALTY', severity: 'critical',
+    check: (text) => {
+      if (/(?:fire|casualty|destr(?:oy|uction)|damaged?\s+by)/i.test(text)) {
+        // Tenant liable for full rent while premises unusable, or no termination right
+        if (/(?:tenant\s+(?:shall|will|agrees|remains?)\s+(?:remain|continue)\s+(?:liable|obligated)\s+for\s+full\s+rent|rent\s+(?:shall|will)\s+continue|no\s+abatement|without\s+abatement|tenant\s+shall\s+pay\s+rent)/i.test(text) && !/(?:abate|proportionat|suspension\s+of\s+rent|terminate.{0,80}(?:casualty|destruction|fire)|unusable|repair.{0,60}(?:90|180|120)\s+days)/i.test(text)) {
+          const m = text.match(/(?:fire|casualty|destr(?:oy|uction)|damaged?\s+by)[^.]*\./i);
+          if (m) return { finding: 'Tenant remains liable for full rent if Premises are destroyed by casualty, with no rent abatement or termination right. Virginia common law abates rent when leased premises are destroyed absent contrary agreement — this clause shifts that risk to tenant.', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-016', title: 'Condemnation — landlord keeps entire award', statute: 'COMMON-LAW-CONDEMNATION', severity: 'high',
+    check: (text) => {
+      if (/(?:condemn|eminent\s+domain|taking\s+of\s+the\s+premises)/i.test(text)) {
+        if (!/(?:tenant.{0,60}(?:share|portion|relocation|business\s+loss|leasehold\s+value|improvements)|allocat|apportion|tenant.{0,60}compensat|tenant.{0,60}award)/i.test(text)) {
+          const m = text.match(/(?:condemn|eminent\s+domain)[^.]*\./i);
+          if (m) return { finding: 'Condemnation clause does not protect tenant\'s right to a share of the award for leasehold value, tenant improvements, or business losses. Virginia law allocates condemnation awards between landlord and tenant based on leasehold and reversionary interests.', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-017', title: 'Unreasonable cure period for default', statute: 'COMMON-LAW-CURE', severity: 'high',
+    check: (text) => {
+      if (/(?:default|breach|cure|remedi)/i.test(text)) {
+        const m = text.match(/default[^.]*\./i);
+        if (m) {
+          const sentence = m[0];
+          const days = sentence.match(/(\d+)\s*(?:days?|hours?)/i);
+          if (days) {
+            const n = parseInt(days[1]);
+            // Monetary defaults should have some cure window; 3 days or less is harsh for commercial
+            if (n <= 3 && /(?:monetary|rent|payment)/i.test(sentence)) {
+              return { finding: `Cure period of only ${n} day(s) for monetary default is unreasonably short for a commercial lease. Consider at least 5-10 days for rent and 30 days for non-monetary defaults.`, cite: getFullSentence(text, m.index) };
+            }
+            // No cure period at all
+          } else if (/(?:immediate|forthwith|without\s+notice|terminate\s+upon)/i.test(sentence)) {
+            return { finding: 'Default provision allows termination without any cure period. Tenant should have a reasonable opportunity to cure, especially for non-monetary defaults.', cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-018', title: 'At-will / termination for convenience by landlord', statute: 'COMMON-LAW-TERM', severity: 'critical',
+    check: (text) => {
+      if (/(?:terminat(?:e|ion)|cancel(?:lation)?)\b[^.]*?(?:for\s+any\s+reason|at\s+(?:its|landlord.s|their)\s+(?:sole\s+)?discretion|for\s+convenience|at\s+will|upon\s+\d+\s+days?\s+notice)/i.test(text) || /(?:landlord\s+may|landlord\s+shall\s+have\s+the\s+right\s+to)\s+terminat[^.]*?(?:any\s+reason|convenience)/i.test(text)) {
+        const m = text.match(/(?:terminat|cancel)[^.]*\./i);
+        if (m) return { finding: 'Lease permits landlord termination without cause (at will / for convenience). Commercial leases should only terminate for material uncured default, not at landlord\'s discretion — otherwise tenant\'s business investment is at risk.', cite: getFullSentence(text, m.index) };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-019', title: 'Missing quiet enjoyment covenant', statute: 'COMMON-LAW-QUIET-ENJOYMENT', severity: 'high',
+    check: (text) => {
+      if (!/(?:quiet\s+enjoyment|peaceable|peaceful\s+enjoyment|quiet\s+possession)/i.test(text)) {
+        return { finding: 'Lease lacks an express quiet enjoyment covenant. While implied at common law, an express covenant protects tenant against landlord interference and is standard in commercial leases.', cite: 'No quiet enjoyment clause detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-020', title: 'Unreasonable holdover penalty', statute: 'COMMON-LAW-HOLDOVER', severity: 'medium',
+    check: (text) => {
+      if (/(?:hold\s*over|holdover|retain\s+possession|remains?\s+in\s+possession)/i.test(text)) {
+        const m = text.match(/(?:hold\s*over|holdover|remains?\s+in\s+possession)[^.]*\./i);
+        if (m) {
+          const pct = m[0].match(/(\d+(?:\.\d+)?)\s*(?:%|percent)/i);
+          if (pct) {
+            const n = parseFloat(pct[1]);
+            if (n > 150) return { finding: `Holdover penalty of ${n}% of Base Rent is excessive. Virginia courts scrutinize holdover provisions as potential penalties; 125-150% is the common commercial range.`, cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-021', title: 'Unreasonable security deposit', statute: 'COMMON-LAW-SECURITY', severity: 'medium',
+    check: (text) => {
+      if (/(?:security\s+deposit|damage\s+deposit)/i.test(text)) {
+        const m = text.match(/(?:security\s+deposit|damage\s+deposit)[^.]*\./i);
+        if (m) {
+          const sentence = m[0];
+          const monthRe = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s*(?:months?[']?\s+(?:of\s+)?(?:base\s+)?rent|monthly\s+rent|month\s+rent|month[']?s\s+(?:of\s+)?rent)/i;
+          const months = sentence.match(monthRe);
+          const wordMap = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
+          if (months) {
+            const raw = months[1].toLowerCase();
+            const n = parseInt(raw) || wordMap[raw] || 0;
+            if (n >= 6) return { finding: `Security deposit of ${n} month(s) of rent is unusually large. Commercial leases typically require 1-3 months; larger deposits may be commercially unreasonable.`, cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-022', title: 'Missing renewal option protection', statute: 'COMMON-LAW-RENEWAL', severity: 'suggestion',
+    check: (text) => {
+      if (/(?:renew|extension\s+option|option\s+to\s+extend|renewal\s+option)/i.test(text)) {
+        if (!/(?:notice.{0,60}\d+\s+days|written\s+notice|notify|exercis)/i.test(text)) {
+          const m = text.match(/(?:renew|extension\s+option|option\s+to\s+extend)[^.]*\./i);
+          if (m) return { finding: 'Renewal option lacks clear exercise mechanics (written notice deadline, rent determination method). Ambiguous renewal terms can forfeit tenant\'s option.', cite: getFullSentence(text, m.index) };
+        }
+      } else {
+        return { finding: 'Lease has no renewal option. Consider a renewal option with defined rent terms to protect tenant\'s ongoing business at the Premises.', cite: 'No renewal option detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-023', title: 'Radius restriction / non-compete without limitation', statute: 'COMMON-LAW-RADIUS', severity: 'medium',
+    check: (text) => {
+      if (/(?:radius|competing\s+(?:store|business)|not\s+operate.{0,40}(?:within|compet)|exclusive)/i.test(text)) {
+        const m = text.match(/(?:radius|competing|not\s+operate|exclusive)[^.]*\./i);
+        // Detect overbreadth: large radius (>= 3 miles) and/or post-term tail (extends after the lease term)
+        const overbroadRadius = /(?:within|for)\s+(?:more\s+than\s+)?(\d+)\s+miles?/i.exec(m ? m[0] : '');
+        const radiusMiles = overbroadRadius ? parseInt(overbroadRadius[1]) : 0;
+        const postTerm = m ? /(?:after|following|subsequent\s+to|for\s+\d+\s+years?\s+after|thereafter)\b.*(?:term|expiration|lease|years?\s+after)/i.test(m[0]) : false;
+        const hasGeographicLimit = /(?:shopping\s+center|center|property|premises|specific\s+radius|within\s+the\s+center)/i.test(m ? m[0] : '');
+        if (m && (radiusMiles >= 3 || postTerm) && !hasGeographicLimit) {
+          return { finding: `Radius restriction (${radiusMiles ? radiusMiles + ' mile(s)' : ''}${postTerm ? ', extending beyond the lease term' : ''}) may be overbroad. Virginia courts scrutinize restrictive covenants; scope should be reasonable, geographically limited to the center/property, and generally not extend beyond the lease term.`, cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-024', title: 'Estoppel certificate obligation without limits', statute: 'COMMON-LAW-ESTOPPEL', severity: 'suggestion',
+    check: (text) => {
+      if (/(?:estoppel|estoppel\s+certificate)/i.test(text)) {
+        const m = text.match(/(?:estoppel)[^.]*\./i);
+        if (m) {
+          const days = m[0].match(/(\d+)\s*(?:days?)/i);
+          if (days && parseInt(days[1]) < 7) {
+            return { finding: `Estoppel certificate must be provided within only ${days[1]} day(s). A very short window risks unintentional default; 10 days is the common commercial standard.`, cite: getFullSentence(text, m.index) };
+          }
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CL-025', title: 'No exclusive use protection for tenant', statute: 'COMMON-LAW-USE', severity: 'suggestion',
+    check: (text) => {
+      // If the lease restricts tenant's use but grants no exclusive use, flag
+      if (/(?:use\s+restriction|solely\s+for|used\s+only|permitted\s+use|restricted\s+use)/i.test(text) && !/(?:exclusive\s+use|exclusive\s+right|no\s+other\s+tenant.{0,60}(?:compete|same\s+use))/i.test(text)) {
+        return { finding: 'Lease restricts tenant\'s permitted use but does not grant tenant an exclusive use right against competing tenants in the same property. In multi-tenant centers, consider an exclusive-use covenant to protect tenant\'s business.', cite: 'Use restriction present without exclusive use protection' };
+      }
+      return null;
+    }
+  },
+];
+
+const RESIDENTIAL_LEASE_RULES = [
+  {
+    id: 'RL-001', title: 'Security deposit exceeds 2 months rent', statute: '55.1-1212', severity: 'high',
+    check: (text) => {
+      const monthsMatch = text.match(/security\s+deposit[\s\S]{0,300}?(\d+|one|two|three|four|five|six)\s*(?:\(\d+\))?\s*months?\s*'?\s*(?:rent|base\s+rent)/i);
+      if (monthsMatch) {
+        const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+        const months = parseInt(monthsMatch[1]) || wordToNum[monthsMatch[1]?.toLowerCase()] || 0;
+        if (months > 2) return { finding: `Security deposit of ${months} months' rent exceeds VA maximum of 2 months`, cite: getFullSentence(text, monthsMatch.index) };
+      }
+      const returnMatch = text.match(/(?:deposit|security)[\s\S]{0,80}?(?:return|refund)[\s\S]{0,60}?(\d+|forty-five|sixty|ninety|thirty|twenty)\s*days?/i);
+      if (returnMatch) {
+        const wordToNum = { thirty: 30, 'forty-five': 45, sixty: 60, ninety: 90, twenty: 20 };
+        const days = parseInt(returnMatch[1]) || wordToNum[returnMatch[1]?.toLowerCase()?.replace(/\s/g, '')] || 0;
+        if (days > 45) return { finding: `Security deposit return period of ${days} days exceeds VA maximum of 45 days`, cite: getFullSentence(text, returnMatch.index) };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-002', title: 'Late fee exceeds 10% of monthly rent', statute: '55.1-1214', severity: 'high',
+    check: (text) => {
+      const pctMatch = text.match(/late\s+(?:fee|charge|payment)[^.]*?(\d+|ten|fifteen|twenty|twenty-five|thirty)\s*(?:percent|%)/i);
+      if (pctMatch) {
+        const wordToNum = { ten: 10, fifteen: 15, twenty: 20, 'twenty-five': 25, thirty: 30 };
+        const pct = parseInt(pctMatch[1]) || wordToNum[pctMatch[1]?.toLowerCase()?.replace(/\s/g, '')] || 0;
+        if (pct > 10) return { finding: `Late fee of ${pct}% exceeds VA maximum of 10% of monthly rent`, cite: getFullSentence(text, pctMatch.index) };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-003', title: 'No grace period for late payment', statute: '55.1-1214', severity: 'high',
+    check: (text) => {
+      const lateSection = text.match(/(?:LATE\s+(?:PAYMENT|FEE)|late\s+fee|late\s+payment|late\s+charge)[\s\S]{0,600}(?:percent|%|delinquent|late|fee)/i);
+      if (lateSection && !/\b\d\s*[-–]\s*day\s+(grace|period)|grace\s+period|within\s+(a\s+)?(\w+\s+)?\d+\s+days?\s+(after|of|from)\s+(the\s+)?(date\s+)?due/i.test(lateSection[0])) {
+        return { finding: 'Late fee clause does not specify a grace period (5-day minimum required)', cite: getFullSentence(text, lateSection.index) };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-004', title: 'Self-help eviction clause', statute: '55.1-1248', severity: 'critical',
+    check: (text) => {
+      if (/self[- ]help|without\s+(?:obtaining\s+)?a\s+court\s+order|re[- ]enter\s+and\s+take\s+possession/i.test(text)) {
+        const m = text.match(/(?:self[- ]help|without\s+(?:obtaining\s+)?a\s+court\s+order|re[- ]enter\s+and\s+take\s+possession)[^.]*\./i);
+        return { finding: 'Self-help eviction clause — landlord may evict without court process', cite: m ? getFullSentence(text, m.index) : 'Self-help language detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-005', title: 'No 24-hour notice for entry', statute: '55.1-1216', severity: 'high',
+    check: (text) => {
+      if (/(?:landlord|owner|lessor)[^.]{0,80}(?:enter|access|inspect)[^.]{0,80}(?:without\s+notice|at\s+any\s+time|no\s+notice)/i.test(text) && !/emergency|imminent\s+danger/i.test(text)) {
+        const m = text.match(/(?:landlord|owner|lessor)[^.]*?(?:enter|access|inspect)[^.]*?(?:without\s+notice|at\s+any\s+time|no\s+notice)[^.]*\./i);
+        return { finding: 'Entry clause allows landlord entry without required 24-hour notice', cite: m ? getFullSentence(text, m.index) : 'No-notice entry detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-006', title: 'No duty to mitigate damages', statute: '55.1-1229', severity: 'medium',
+    check: (text) => {
+      if (/(?:no\s+duty|not\s+(?:required|obligated)|shall\s+not\s+(?:be\s+)?(?:required|obligated)|without\s+duty)\s+to\s+mitigat/i.test(text)) {
+        const m = text.match(/(?:no\s+duty|not\s+(?:required|obligated)|shall\s+not\s+(?:be\s+)?(?:required|obligated)|without\s+duty)\s+to\s+mitigat[^.]*\./i);
+        return { finding: 'Lease disclaims landlord duty to mitigate damages', cite: m ? getFullSentence(text, m.index) : 'No duty to mitigate detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-007', title: 'Waiver of landlord negligence liability', statute: '55.1-1231', severity: 'critical',
+    check: (text) => {
+      if (/waiv(e|er).*(landlord|owner|lessor).*(liab|neglig)/i.test(text)) {
+        const m = text.match(/waiv(e|er)[^.]*(landlord|owner|lessor)[^.]*(liab|neglig)[^.]*\./i);
+        return { finding: 'Lease attempts to waive landlord liability for negligence', cite: m ? getFullSentence(text, m.index) : 'Waiver of negligence detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-008', title: 'Confession of judgment clause', statute: '55.1-1231', severity: 'critical',
+    check: (text) => {
+      if (/confession\s+of\s+judgment|consent\s+to\s+(judgment|suit)/i.test(text)) {
+        const m = text.match(/(confession\s+of\s+judgment|consent\s+to\s+(judgment|suit))[^.]*\./i);
+        return { finding: 'Confession of judgment clause — void as against public policy', cite: m ? getFullSentence(text, m.index) : 'Confession of judgment detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-009', title: 'Utility charges not separately metered', statute: '55.1-1215', severity: 'medium',
+    check: (text) => {
+      if (/tenant.*(pay|responsible|liable).*(utilit|water|electric|gas)/i.test(text)) {
+        const m = text.match(/tenant[^.]*(pay|responsible|liable)[^.]*(utilit|water|electric|gas)[^.]*\./i);
+        if (m && !/separately\s+metered|submeter/i.test(m[0])) {
+          return { finding: 'Tenant charged for utilities without evidence of separate metering', cite: getFullSentence(text, m.index) };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'RL-010', title: 'Rent increase more than once per year', statute: '55.1-1264', severity: 'high',
+    check: (text) => {
+      if (/rent\s+(increas|escalat).*(quarterly|semi.annual|every\s+\d+\s+month)/i.test(text)) {
+        const m = text.match(/rent\s+(increas|escalat)[^.]*\./i);
+        return { finding: 'Rent may increase more frequently than once per 12 months', cite: m ? getFullSentence(text, m.index) : 'Rent escalation clause detected' };
+      }
+      return null;
+    }
+  },
+];
+
+const SERVICE_CONTRACT_RULES = [
+  {
+    id: 'SC-001', title: 'Indefinite scope of work', statute: 'COMMON-LAW-SCOPE', severity: 'high',
+    check: (text) => {
+      if (/services?\s+(to\s+be\s+)?(provided|performed|rendered)/i.test(text) && !/deliverable|milestone|timeline|schedule|statement\s+of\s+work/i.test(text)) {
+        return { finding: 'Service agreement lacks defined scope, deliverables, or timeline', cite: 'Scope of work section detected but lacks specificity' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'SC-002', title: 'Ambiguous payment terms', statute: 'COMMON-LAW-PAYMENT', severity: 'high',
+    check: (text) => {
+      if (/(?:fee|payment|compensation|rate)/i.test(text) && !/\$\s*\d+[,.\d]*|per\s+(hour|day|month|project|unit)/i.test(text)) {
+        return { finding: 'Payment terms are ambiguous — no rate or amount specified', cite: 'Payment section detected but lacks specific amounts' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'SC-003', title: 'Unlimited liability for own negligence', statute: 'COMMON-LAW-INDEMNITY', severity: 'critical',
+    check: (text) => {
+      if (/indemnif[^.]*(?:all\s+)?claims[^.]*(?:arising|resulting|related)[^.]*(?:services?|work)/i.test(text) && !/except\s+to\s+the\s+extent|caused\s+(by|solely\s+by)\s+(provider|contractor|consultant)/i.test(text)) {
+        const m = text.match(/indemnif[^.]*(?:all\s+)?claims[^.]*(?:arising|resulting|related)[^.]*(?:services?|work)[^.]*\./i);
+        return { finding: 'Indemnification clause may require indemnifying for own negligence', cite: m ? getFullSentence(text, m.index) : 'Broad indemnification detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'SC-004', title: 'Limitation of liability excludes nothing', statute: 'COMMON-LAW-LIMITATION', severity: 'medium',
+    check: (text) => {
+      if (/limit(?:ation)?\s+(?:of\s+)?liab/i.test(text) && !/gross\s+negligence|willful\s+misconduct|personal\s+injury|death|fraud/i.test(text)) {
+        return { finding: 'Limitation of liability clause does not carve out gross negligence or willful misconduct', cite: 'Limitation of liability detected without standard exclusions' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'SC-005', title: 'Unreasonable termination clause', statute: 'COMMON-LAW-TERMINATION', severity: 'medium',
+    check: (text) => {
+      if (/terminat(?:ion)?\s+(?:for\s+)?convenience/i.test(text) && !/\d+\s*(?:day|week|month)\s*(?:notice|prior\s+notice)/i.test(text)) {
+        return { finding: 'Termination for convenience clause lacks reasonable notice period', cite: 'Termination for convenience detected without notice period' };
+      }
+      return null;
+    }
+  },
+];
+
+const PARTNERSHIP_RULES = [
+  {
+    id: 'PA-001', title: 'Missing profit/loss sharing terms', statute: '50-73.1', severity: 'high',
+    check: (text) => {
+      if (!/(?:profit|loss|income|revenue)\s*(?:and|or|&)\s*(?:loss|profit|share|distribut)/i.test(text)) {
+        return { finding: 'Partnership agreement lacks profit and loss sharing provisions', cite: 'No profit/loss sharing terms detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'PA-002', title: 'Missing management/authority terms', statute: '50-73.19', severity: 'high',
+    check: (text) => {
+      if (!/(?:manag|authority|vote|decision|control)/i.test(text)) {
+        return { finding: 'Partnership agreement lacks management and authority provisions', cite: 'No management/authority terms detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'PA-003', title: 'Missing dissociation/withdrawal terms', statute: '50-73.40', severity: 'medium',
+    check: (text) => {
+      if (!/(?:dissociat|withdraw|retire|expel|buyout|buy.?out)/i.test(text)) {
+        return { finding: 'Partnership agreement lacks dissociation or withdrawal provisions', cite: 'No dissociation/withdrawal terms detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'PA-004', title: 'Missing dissolution terms', statute: '50-73.49', severity: 'medium',
+    check: (text) => {
+      if (!/(?:dissolution|wind.?up|terminat|dissolv)/i.test(text)) {
+        return { finding: 'Partnership agreement lacks dissolution or winding up provisions', cite: 'No dissolution terms detected' };
+      }
+      return null;
+    }
+  },
+];
+
+const CORPORATION_RULES = [
+  {
+    id: 'CO-001', title: 'Missing registered agent', statute: '13.1-624', severity: 'critical',
+    check: (text) => {
+      if (!/(?:registered\s+agent|agent\s+for\s+service|process\s+agent)/i.test(text)) {
+        return { finding: 'Articles of incorporation missing registered agent provision', cite: 'No registered agent clause detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CO-002', title: 'Missing share authorization', statute: '13.1-626', severity: 'critical',
+    check: (text) => {
+      if (!/(?:share|stock|capital\s+stock|authorized\s+shares)/i.test(text)) {
+        return { finding: 'Articles of incorporation missing share authorization', cite: 'No share/stock authorization detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CO-003', title: 'Missing purpose clause', statute: '13.1-604', severity: 'high',
+    check: (text) => {
+      if (!/(?:purpose|business\s+purpose|nature\s+of\s+business)/i.test(text)) {
+        return { finding: 'Articles of incorporation missing purpose clause', cite: 'No purpose clause detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'CO-004', title: 'Missing director provisions', statute: '13.1-670', severity: 'high',
+    check: (text) => {
+      if (!/(?:director|board|govern)/i.test(text)) {
+        return { finding: 'Articles of incorporation missing director or board provisions', cite: 'No director/board provisions detected' };
+      }
+      return null;
+    }
+  },
+];
+
+const INDEPENDENT_CONTRACTOR_RULES = [
+  {
+    id: 'IC-001', title: 'Worker classification risk', statute: '60.2-230', severity: 'critical',
+    check: (text) => {
+      if (/(?:exclusive|full.?time|required\s+to\s+work|set\s+hours|supervis|control\s+over\s+work)/i.test(text)) {
+        return { finding: 'Agreement contains language suggesting employee relationship rather than independent contractor', cite: 'Employee-like control language detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'IC-002', title: 'Missing IP ownership clause', statute: 'COMMON-LAW-IP', severity: 'high',
+    check: (text) => {
+      if (!/(?:intellectual\s+property|ip\s+ownership|work\s+(?:made\s+for\s+)?hire|assignment\s+of\s+(?:rights|ip)|ownership\s+of\s+work)/i.test(text)) {
+        return { finding: 'Independent contractor agreement missing intellectual property ownership clause', cite: 'No IP ownership clause detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'IC-003', title: 'Missing insurance requirements', statute: 'COMMON-LAW-INSURANCE', severity: 'medium',
+    check: (text) => {
+      if (!/(?:insurance|liability\s+coverage|workers?\s+comp|indemnif)/i.test(text)) {
+        return { finding: 'Independent contractor agreement missing insurance or indemnification provisions', cite: 'No insurance/indemnification terms detected' };
+      }
+      return null;
+    }
+  },
+];
+
+const NONDISCLOSURE_RULES = [
+  {
+    id: 'ND-001', title: 'Overbroad definition of confidential information', statute: 'COMMON-LAW-REASONABLE', severity: 'high',
+    check: (text) => {
+      if (/confidential\s+information|proprietary\s+information/i.test(text) && !/written|identified|marked|designated|disclosed\s+in\s+writing/i.test(text)) {
+        return { finding: 'NDA defines confidential information too broadly — may be unenforceable', cite: 'Confidential information definition lacks specificity' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'ND-002', title: 'No time limit on confidentiality', statute: 'COMMON-LAW-TIME', severity: 'high',
+    check: (text) => {
+      if (/(?:confidential|non.?disclosure|secrecy)\s+(?:obligation|duty|period)/i.test(text) && !/\d+\s*(?:year|month|day)/i.test(text)) {
+        return { finding: 'NDA lacks reasonable time limit on confidentiality obligations', cite: 'No time limit on confidentiality detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'ND-003', title: 'Missing exclusions from confidential information', statute: '59.1-336', severity: 'medium',
+    check: (text) => {
+      if (/confidential\s+information/i.test(text) && !/(?:public\s+(?:domain|knowledge|known)|independently\s+developed|rightfully\s+received|disclosed\s+by\s+law)/i.test(text)) {
+        return { finding: 'NDA missing standard exclusions (public domain, independent development, etc.)', cite: 'No standard exclusions from confidential information detected' };
+      }
+      return null;
+    }
+  },
+];
+
+const EMPLOYMENT_RULES = [
+  {
+    id: 'EM-001', title: 'Non-compete may be unenforceable', statute: '40.1-27.3', severity: 'critical',
+    check: (text) => {
+      if (/non.?compete|covenant\s+not\s+to\s+compete|restrictive\s+covenant/i.test(text)) {
+        if (!/\d+\s*(?:month|year)|geographic|specific\s+(?:product|service|industry)/i.test(text)) {
+          return { finding: 'Non-compete clause lacks reasonable geographic or temporal scope — may be void under VA law', cite: 'Non-compete detected without reasonable scope' };
+        }
+      }
+      return null;
+    }
+  },
+  {
+    id: 'EM-002', title: 'Missing at-will employment language', statute: '40.1-2', severity: 'medium',
+    check: (text) => {
+      if (!/at.?will|employment\s+at\s+will|terminable\s+at\s+will/i.test(text) && /term|duration|period/i.test(text)) {
+        return { finding: 'Employment agreement specifies a term but does not clarify at-will status', cite: 'Employment term detected without at-will clarification' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'EM-003', title: 'Missing wage payment terms', statute: '40.1-28.7:1', severity: 'high',
+    check: (text) => {
+      if (!/(?:salary|wage|compensation|pay|rate)\s*(?:and|per|of|:)/i.test(text)) {
+        return { finding: 'Employment agreement missing compensation terms', cite: 'No compensation terms detected' };
+      }
+      return null;
+    }
+  },
+  {
+    id: 'EM-004', title: 'Missing discrimination policy', statute: '40.1-51.4:1', severity: 'medium',
+    check: (text) => {
+      if (!/(?:discriminat|equal\s+opportunity|eeoc|harassment)/i.test(text)) {
+        return { finding: 'Employment agreement missing non-discrimination or equal opportunity language', cite: 'No non-discrimination language detected' };
+      }
+      return null;
+    }
+  },
+];
+
+// ── Rule Registry ───────────────────────────────────────────
+const RULE_REGISTRY = {
+  commercial_lease: COMMERCIAL_LEASE_RULES,
+  residential_lease: RESIDENTIAL_LEASE_RULES,
+  service_contract: SERVICE_CONTRACT_RULES,
+  partnership_agreement: PARTNERSHIP_RULES,
+  articles_of_incorporation: CORPORATION_RULES,
+  independent_contractor: INDEPENDENT_CONTRACTOR_RULES,
+  non_disclosure: NONDISCLOSURE_RULES,
+  employment: EMPLOYMENT_RULES,
+};
+
+// ── State rule/statute registries (multi-jurisdiction expansion) ──
+// Keyed [state][docType]. Loaded per-state rule sets fill these in (see the
+// *_RULES_*_STATE constants loaded alongside the Virginia base below). resolveRules/
+// resolveStatutes fall back to the Virginia base RULE_REGISTRY/STATUTE_REGISTRY when
+// a state has no loaded set, so Virginia behavior is unchanged and other states get
+// Virginia-common-law coverage as a labeled fallback until their own rules land.
+const STATE_RULE_SETS = {};
+const STATE_STATUTES = {};
+const STATE_CORRECTIONS = {}; // [state] -> { rule_id: correction }
+
+// Import per-state contributed rule sets (DE/MD/NY verified; PA/NJ pending).
+let STATE_CONTRIBUTORS = [];
+try {
+  const mod = await import('./state-rules.mjs');
+  STATE_CONTRIBUTORS = mod.default || [];
+} catch (e) {
+  console.error('[lease-analyzer] state-rules import failed (falling back to VA-only):', e.message);
+}
+
+// Load each state's contributed rule sets (defined further down / imported).
+function loadStateRuleSets() {
+  for (const c of STATE_CONTRIBUTORS) {
+    if (!c || !c.state) continue;
+    STATE_RULE_SETS[c.state] = Object.assign(STATE_RULE_SETS[c.state] || {}, c.rules || {});
+    STATE_STATUTES[c.state] = Object.assign(STATE_STATUTES[c.state] || {}, c.statutes || {});
+    if (c.corrections) STATE_CORRECTIONS[c.state] = Object.assign(STATE_CORRECTIONS[c.state] || {}, c.corrections);
+  }
+}
+loadStateRuleSets();
+
+// ── Corrections Map ──────────────────────────────────────────
+const CORRECTIONS = {
+  'CL-001': { clause: 'Default and Remedies', suggested_text: 'DEFAULT AND REMEDIES. In the event of any default by Tenant, Landlord may, upon thirty (30) days\' written notice, terminate this Lease and re-enter the Premises. Landlord shall have a duty to mitigate damages. Tenant shall have the right to cure any non-monetary default within the notice period.', comment: 'Virginia common law prohibits self-help eviction. Landlord must obtain a court order.' },
+  'CL-002': { clause: 'Duty to Mitigate', suggested_text: 'DEFAULT AND REMEDIES. Landlord shall have a duty to mitigate damages by using reasonable efforts to re-rent the Premises.', comment: 'Virginia common law requires landlord to mitigate damages.' },
+  'CL-003': { clause: 'Indemnification / Waiver of Negligence', suggested_text: 'INDEMNIFICATION. Tenant agrees to indemnify Landlord except to the extent caused by Landlord\'s gross negligence or willful misconduct.', comment: 'Virginia public policy prohibits waiver of landlord negligence liability.' },
+  'CL-004': { clause: 'Confession of Judgment', suggested_text: 'DEFAULT AND REMEDIES. In the event of any default by Tenant, Landlord may pursue all remedies available at law or in equity.', comment: 'Confession of judgment clauses are void in Virginia.' },
+  'CL-005': { clause: 'Late Fee', suggested_text: 'LATE PAYMENT. If any installment of Base Rent is not received within five (5) days after the date due, Tenant shall pay a late fee equal to ten percent (10%) of the delinquent amount.', comment: 'Commercial lease late fees must be reasonable. Fees exceeding 10% may be unenforceable as penalties.' },
+  'CL-006': { clause: 'Landlord Entry', suggested_text: 'LANDLORD\'S ENTRY. Landlord shall provide reasonable notice, typically twenty-four (24) hours, before entering the Premises for inspection, repair, or showing.', comment: 'Virginia common law requires reasonable notice before entry.' },
+  'CL-007': { clause: 'Assignment and Subletting', suggested_text: 'ASSIGNMENT AND SUBLETTING. Tenant shall not assign or sublet without Landlord\'s prior written consent, which shall not be unreasonably withheld, conditioned, or delayed.', comment: 'Landlord cannot unreasonably withhold consent to assignment.' },
+  'CL-008': { clause: 'Rent Escalation', suggested_text: 'RENT ESCALATION. Annual Base Rent increases shall not exceed the greater of three percent (3%) or the annual increase in the Consumer Price Index (CPI-U).', comment: 'Cap rent escalation at 3% or CPI to protect tenant from excessive increases.' },
+  'CL-009': { clause: 'Structural Repairs', suggested_text: 'STRUCTURAL REPAIRS. Landlord shall be responsible for structural repairs, roof, foundation, and HVAC system replacement. Tenant shall be responsible for routine maintenance and repairs to interior non-structural elements.', comment: 'Landlord typically bears structural repair obligations in commercial leases.' },
+  'CL-010': { clause: 'SNDA', suggested_text: 'SUBORDINATION, NON-DISTURBANCE AND ATTORNMENT. This Lease shall be subordinate to any mortgage, provided the mortgage holder executes an SNDA agreement.', comment: 'Tenant should be protected from lender foreclosure with an SNDA.' },
+  'CL-011': { clause: 'Personal Guaranty', suggested_text: 'PERSONAL GUARANTY. Guarantor personally guarantees Tenant\'s obligations under this Lease, limited to unpaid Base Rent and additional rent through the initial term only, capped at $[AMOUNT].', comment: 'Cap personal guaranty to initial term and specific dollar amount.' },
+  'CL-012': { clause: 'Commencement Date', suggested_text: 'COMMENCEMENT DATE. The Commencement Date shall be the earlier of (i) Tenant\'s opening for business, or (ii) [DATE], with an outside date of [DATE + 180 days]. If Landlord fails to deliver by the outside date, Tenant may terminate.', comment: 'Protect tenant from indefinite delay with an outside date and termination right.' },
+  'CL-013': { clause: 'Indemnification', suggested_text: 'INDEMNIFICATION. Tenant agrees to indemnify Landlord except to the extent caused by Landlord\'s gross negligence or willful misconduct.', comment: 'Always carve out landlord negligence and willful misconduct from indemnification.' },
+  'CL-014': { clause: 'Relocation', suggested_text: 'RELOCATION. If Landlord relocates Tenant, Landlord shall provide comparable space at the same rent, pay moving costs, and provide a tenant improvement allowance equal to the original allowance.', comment: 'Relocation must protect tenant with comparable terms and landlord-paid costs.' },
+  'CL-015': { clause: 'Casualty / Rent Abatement', suggested_text: 'CASUALTY. If the Premises are damaged or destroyed by fire or other casualty, rent shall abate proportionately while the Premises are unusable, and either party may terminate if Landlord fails to repair within one hundred eighty (180) days.', comment: 'Virginia common law abates rent when premises are destroyed — this protects tenant from paying for unusable space.' },
+  'CL-016': { clause: 'Condemnation', suggested_text: 'CONDEMNATION. If the Premises are taken by eminent domain, the award shall be apportioned between Landlord and Tenant for their respective leasehold and reversionary interests, and Tenant shall be entitled to compensation for tenant improvements, relocation costs, and business losses.', comment: 'Virginia allocates condemnation awards between landlord and tenant based on their interests.' },
+  'CL-017': { clause: 'Default and Cure', suggested_text: 'DEFAULT AND REMEDIES. Tenant shall have ten (10) days to cure monetary defaults and thirty (30) days to cure non-monetary defaults after written notice from Landlord.', comment: 'Provide a reasonable cure period — 10 days for monetary, 30 days for non-monetary defaults.' },
+  'CL-018': { clause: 'Termination', suggested_text: 'TERMINATION. This Lease may be terminated by Landlord only for a material default by Tenant that remains uncured after the applicable notice and cure period.', comment: 'Commercial leases should not terminate at landlord\'s discretion; only for material uncured default.' },
+  'CL-019': { clause: 'Quiet Enjoyment', suggested_text: 'QUIET ENJOYMENT. Landlord covenants that Tenant shall quietly and peaceably enjoy the Premises without interference from Landlord or its agents, subject to the terms of this Lease.', comment: 'Express quiet enjoyment covenant protects tenant against landlord interference.' },
+  'CL-020': { clause: 'Holdover', suggested_text: 'HOLDOVER. If Tenant holds over, rent shall be one hundred fifty percent (150%) of the Base Rent in effect at the end of the term, and the tenancy shall be month-to-month.', comment: 'Holdover penalties above 150% are scrutinized as penalties in Virginia.' },
+  'CL-021': { clause: 'Security Deposit', suggested_text: 'SECURITY DEPOSIT. Tenant shall pay a security deposit equal to two (2) months\' Base Rent, to be returned within thirty (30) days after the end of the term, less any amounts for damage beyond normal wear and tear.', comment: 'Security deposits typically range from 1-3 months rent in commercial leases.' },
+  'CL-022': { clause: 'Renewal Option', suggested_text: 'RENEWAL OPTION. Tenant shall have the right to renew this Lease for one (1) additional term of five (5) years upon written notice to Landlord not less than ninety (90) days prior to the expiration of the initial term, at the then-current market rent.', comment: 'Renewal options need clear exercise mechanics and rent determination to be enforceable.' },
+  'CL-023': { clause: 'Radius / Use Restriction', suggested_text: 'USE. Tenant shall use the Premises only for [USE], and Tenant shall have the exclusive right to conduct such business within the shopping center. Any radius restriction shall be reasonable in scope and duration.', comment: 'Radius restrictions must be reasonable in scope and duration to be enforceable.' },
+  'CL-024': { clause: 'Estoppel Certificate', suggested_text: 'ESTOPPEL CERTIFICATE. Within ten (10) days of written request by Landlord or Landlord\'s lender, Tenant shall execute an estoppel certificate certifying the status of this Lease.', comment: 'Ten days is the standard estoppel response window; shorter periods risk unintentional default.' },
+  'CL-025': { clause: 'Exclusive Use', suggested_text: 'EXCLUSIVE USE. Landlord covenants that no other tenant in the shopping center shall be permitted to use the Premises for [USE], and Tenant shall have the exclusive right to [USE] within the center.', comment: 'Exclusive-use covenants protect tenant business from competing tenants in the same center.' },
+  'CL-S01': { clause: 'Attorney Fee Reciprocity', suggested_text: '', comment: 'Consider adding reciprocal attorney fees provision. VA Code § 8.01-66.1 implies reciprocal right if lease provides for landlord fees.' },
+  'CL-S02': { clause: 'Insurance Waiver of Subrogation', suggested_text: '', comment: 'Consider adding mutual waiver of subrogation — standard in commercial leases to avoid insurance disputes.' },
+  'RL-001': { clause: 'Security Deposit', suggested_text: 'SECURITY DEPOSIT. Tenant shall pay a security deposit equal to no more than two (2) months rent.', comment: 'VA caps security deposits at 2 months rent (Va. Code § 55.1-1212); must be returned within 45 days.' },
+  'RL-002': { clause: 'Late Fee', suggested_text: 'LATE PAYMENT. If any rent installment is not received within five (5) days after the date due, Tenant shall pay a late fee equal to ten percent (10%) of the delinquent amount.', comment: 'VA caps late fees at 10% of monthly rent (Va. Code § 55.1-1214).' },
+  'RL-003': { clause: 'Late Payment Grace Period', suggested_text: 'LATE PAYMENT. Tenant shall have a five (5) day grace period after the date due before any late fee is assessed.', comment: 'VA requires a 5-day grace period before late fees (Va. Code § 55.1-1214).' },
+  'RL-004': { clause: 'Default and Remedies', suggested_text: 'DEFAULT AND REMEDIES. Landlord shall recover possession only through the unlawful detainer process.', comment: 'VA prohibits self-help eviction (Va. Code § 55.1-1248).' },
+  'RL-005': { clause: 'Landlord Entry', suggested_text: 'LANDLORD ENTRY. Landlord shall provide at least twenty-four (24) hours notice before entering the Dwelling Unit except in an emergency.', comment: 'VA requires 24-hour notice for entry (Va. Code § 55.1-1216).' },
+  'RL-006': { clause: 'Duty to Mitigate', suggested_text: 'MITIGATION. Landlord shall use reasonable efforts to re-rent the Dwelling Unit to mitigate damages upon Tenant abandonment.', comment: 'VA imposes a duty to mitigate damages (Va. Code § 55.1-1229).' },
+  'RL-007': { clause: 'Waiver of Negligence', suggested_text: 'WAIVER. Tenant shall not be deemed to waive any of Landlord liability to Tenant for negligence.', comment: 'VA voids lease provisions waiving landlord negligence liability (Va. Code § 55.1-1231).' },
+  'RL-008': { clause: 'Confession of Judgment', suggested_text: 'DEFAULT AND REMEDIES. Landlord shall pursue all remedies available at law or in equity.', comment: 'Confession of judgment clauses are void under VA law (Va. Code § 55.1-1231).' },
+  'RL-009': { clause: 'Utility Charges', suggested_text: 'UTILITIES. Tenant shall pay for utilities only where separately metered or submetered to the Dwelling Unit.', comment: 'VA requires separate metering before charging tenants for utilities (Va. Code § 55.1-1215).' },
+  'RL-010': { clause: 'Rent Increase', suggested_text: 'RENT. Rent shall not be increased more than once in any twelve (12) month period during the tenancy.', comment: 'VA limits rent increases to once per 12 months (Va. Code § 55.1-1264).' },
+  'SC-001': { clause: 'Scope of Work', suggested_text: 'SCOPE OF WORK. Contractor shall provide the services described in Exhibit A, including specific deliverables and a completion timeline.', comment: 'Service contracts need a definite scope, deliverables, and timeline to be enforceable.' },
+  'SC-002': { clause: 'Payment Terms', suggested_text: 'PAYMENT. Client shall pay Contractor the sum of $[AMOUNT] for the Services, payable [net 30 / upon completion of each milestone].', comment: 'Payment terms must state a definite rate or amount.' },
+  'SC-003': { clause: 'Indemnification', suggested_text: 'INDEMNIFICATION. Contractor shall indemnify Client except to the extent caused by Contractor negligence or willful misconduct.', comment: 'Broad indemnification for own negligence may be void as against public policy.' },
+  'SC-004': { clause: 'Limitation of Liability', suggested_text: 'LIMITATION OF LIABILITY. Neither party shall be liable for indirect or consequential damages, except for gross negligence, willful misconduct, or breach of confidentiality.', comment: 'Limitations of liability must carve out gross negligence and willful misconduct.' },
+  'SC-005': { clause: 'Termination', suggested_text: 'TERMINATION. Either party may terminate this Agreement for convenience upon thirty (30) days written notice.', comment: 'Termination for convenience needs a reasonable notice period.' },
+  'PA-001': { clause: 'Profit and Loss Sharing', suggested_text: 'PROFITS AND LOSSES. Profits and losses of the Partnership shall be allocated among the Partners in proportion to their Capital Accounts or as set forth in Schedule A.', comment: 'Partnership agreements must specify profit and loss allocation.' },
+  'PA-002': { clause: 'Management and Authority', suggested_text: 'MANAGEMENT. The Partnership shall be managed by the Managing Partner, who shall have the authority to bind the Partnership in the ordinary course of business; major decisions require a majority vote.', comment: 'Partnership agreements need clear management and authority terms.' },
+  'PA-003': { clause: 'Dissociation / Withdrawal', suggested_text: 'DISSOCIATION. A Partner may dissociate from the Partnership upon written notice. Upon dissociation, the withdrawing Partner shall be entitled to a buyout of their Capital Account.', comment: 'Partnerships need dissociation and buyout provisions.' },
+  'PA-004': { clause: 'Dissolution and Winding Up', suggested_text: 'DISSOLUTION. The Partnership shall dissolve upon the occurrence of [event]. Upon dissolution, the affairs of the Partnership shall be wound up and assets distributed according to Capital Accounts.', comment: 'Partnerships need dissolution and winding-up provisions.' },
+  'CO-001': { clause: 'Registered Agent', suggested_text: 'REGISTERED AGENT. The registered agent of the Corporation shall be [Name], located at [Address].', comment: 'Corporations must name a registered agent (Va. Code § 13.1-624).' },
+  'CO-002': { clause: 'Authorized Shares', suggested_text: 'AUTHORIZED SHARES. The Corporation is authorized to issue [NUMBER] shares of common stock.', comment: 'Articles must specify authorized shares (Va. Code § 13.1-626).' },
+  'CO-003': { clause: 'Purpose Clause', suggested_text: 'PURPOSE. The Corporation is organized to engage in any lawful act or activity for which corporations may be organized under the Virginia Stock Corporation Act.', comment: 'Articles must state a purpose (Va. Code § 13.1-604).' },
+  'CO-004': { clause: 'Board of Directors', suggested_text: 'DIRECTORS. The affairs of the Corporation shall be managed by a Board of Directors consisting of [NUMBER] directors.', comment: 'Corporations need director provisions (Va. Code § 13.1-670).' },
+  'IC-001': { clause: 'Independent Contractor Status', suggested_text: 'INDEPENDENT CONTRACTOR. Contractor is an independent contractor and not an employee of Client. Contractor retains control over the means and methods of performing the Services.', comment: 'Avoid employee-like control language to preserve independent-contractor classification (Va. Code § 60.2-230).' },
+  'IC-002': { clause: 'Intellectual Property Ownership', suggested_text: 'INTELLECTUAL PROPERTY. All work product created by Contractor, including deliverables, shall be owned by Client as a work made for hire; otherwise, Contractor grants Client a perpetual, irrevocable license.', comment: 'Independent contractor agreements need explicit IP assignment (work for hire).' },
+  'IC-003': { clause: 'Insurance Requirements', suggested_text: 'INSURANCE. Contractor shall maintain commercial general liability insurance and workers compensation insurance as required by law.', comment: 'Contractors should maintain their own insurance (Va. Code § 60.2-230).' },
+  'ND-001': { clause: 'Confidential Information Definition', suggested_text: 'CONFIDENTIAL INFORMATION. Confidential Information means the proprietary information of Disclosing Party that is identified in writing as confidential at the time of disclosure.', comment: 'NDAs must define confidential information with reasonable specificity.' },
+  'ND-002': { clause: 'Confidentiality Term', suggested_text: 'CONFIDENTIALITY. The obligations of confidentiality shall survive termination of this Agreement for a period of [NUMBER] years.', comment: 'Confidentiality obligations need a reasonable time limit.' },
+  'ND-003': { clause: 'Exclusions from Confidentiality', suggested_text: 'CONFIDENTIALITY. Confidential Information does not include information that (i) is or becomes public knowledge, (ii) was independently developed, or (iii) was rightfully received from a third party.', comment: 'NDAs should include standard exclusions (public domain, independent development).' },
+  'EM-001': { clause: 'Non-Compete', suggested_text: 'NON-COMPETE. During employment and for [NUMBER] month(s) thereafter, Employee shall not compete with Employer within [GEOGRAPHIC AREA] in the business of [BUSINESS].', comment: 'Non-competes need reasonable geographic and temporal scope (Va. Code § 40.1-27.3).' },
+  'EM-002': { clause: 'At-Will Employment', suggested_text: 'AT-WILL. Employee is employed at will and may be terminated by Employer at any time with or without cause or notice.', comment: 'Virginia is an at-will employment state (Va. Code § 40.1-2).' },
+  'EM-003': { clause: 'Compensation', suggested_text: 'COMPENSATION. Employee shall be paid a salary of $[AMOUNT] per [year/month], payable in accordance with Employer regular payroll practices.', comment: 'Employment agreements must state compensation terms.' },
+  'EM-004': { clause: 'Non-Discrimination', suggested_text: 'NON-DISCRIMINATION. Employer shall not discriminate on the basis of race, color, religion, sex, national origin, age, or disability.', comment: 'Employment must comply with VA anti-discrimination law (Va. Code § 40.1-51.4:1).' },
+};
+
+// ── Helpers ─────────────────────────────────────────────────
+function getFullSentence(text, index) {
+  let start = text.lastIndexOf('.', index);
+  if (start === -1) start = 0;
+  else start = start + 2;
+  let end = text.indexOf('.', index);
+  if (end === -1) end = text.length;
+  else end = end + 1;
+  return text.substring(start, end).trim();
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+// ── State-aware rule resolution ──────────────────────────────────
+// The analyzer was originally Virginia-only. To expand to other states
+// without breaking VA, rule sets are keyed by [state][docType]. If a state
+// has no loaded rules for a docType, we fall back to the Virginia common-law
+// set so a non-VA doc still gets *some* coverage (labeled as such) rather
+// than analyzing with zero rules. See STATE_RULE_SETS below.
+function resolveRules(state, docType) {
+  const byState = STATE_RULE_SETS[state];
+  if (byState && byState[docType]) return byState[docType];
+  // Fall back to Virginia's rules for this docType
+  return RULE_REGISTRY[docType] || RULE_REGISTRY.commercial_lease;
+}
+
+function resolveStatutes(state, docType) {
+  const byState = STATE_STATUTES[state];
+  if (byState && byState[docType]) return byState[docType];
+  const si = STATUTE_REGISTRY[docType] || STATUTE_REGISTRY.commercial_lease;
+  return si.statutes;
+}
+
+// ── Main Analysis Function ───────────────────────────────────
+function analyzeDocument(documentText, metadata = {}) {
+  const docType = metadata.documentType || detectDocumentType(documentText);
+  // Detect jurisdiction FIRST so rule/statute selection is state-aware. Fall
+  // back to Virginia when none is detected (backwards-compatible default).
+  const detectedJurisdiction = detectJurisdiction(documentText);
+  const state = (detectedJurisdiction && detectedJurisdiction.code) || 'VA';
+  const isVA = state === 'VA' || state === 'NONE' || state === 'UNKNOWN';
+
+  const statuteInfo = STATUTE_REGISTRY[docType] || STATUTE_REGISTRY.commercial_lease;
+  const rules = resolveRules(state, docType);
+  const statutes = resolveStatutes(state, docType);
+  const jurisdictionLabel = isVA
+    ? statuteInfo.jurisdiction
+    : `${statuteInfo.jurisdiction} (document governs by ${detectedJurisdiction.state || 'another jurisdiction'})`;
+  const attorneyPrefs = metadata.attorneyPrefs || null; // { rule_id: edited_text }
+
+  const findings = [];
+  const warnings = [];
+
+  // ── Chunked rule scanning ──────────────────────────────────
+  // Several red-flag rules use bounded look-around windows (e.g.
+  // `[\s\S]{0,300}`). On long documents, a violation whose keywords are more
+  // than the window apart won't be caught by a single full-text pass. Scan
+  // overlapping chunks so every section is covered, then dedupe by rule id
+  // keeping the earliest (in document order) match.
+  const CHUNK_SIZE = 12000;   // chars per chunk
+  const CHUNK_OVERLAP = 2000; // overlap so clause spans are never split
+  const scanTargets = [];
+  if (documentText.length <= CHUNK_SIZE) {
+    scanTargets.push(documentText);
+  } else {
+    for (let i = 0; i < documentText.length; i += (CHUNK_SIZE - CHUNK_OVERLAP)) {
+      scanTargets.push(documentText.slice(i, i + CHUNK_SIZE));
+      if (i + CHUNK_SIZE >= documentText.length) break;
+    }
+  }
+  // Always also scan the full text so rules that need the whole doc still fire.
+  if (documentText.length > CHUNK_SIZE) scanTargets.unshift(documentText);
+
+  for (const rule of rules) {
+    let bestResult = null;
+    let bestIdx = -1;
+    for (const target of scanTargets) {
+      try {
+        const result = rule.check(target);
+        if (!result) continue;
+        // Score this match's position in the original document so we keep the
+        // earliest occurrence when the same rule fires in multiple chunks.
+        let idx = target.length + 1;
+        if (result.cite) {
+          idx = documentText.indexOf(result.cite);
+          if (idx === -1) {
+            const partial = String(result.cite).substring(0, 20);
+            idx = documentText.indexOf(partial);
+          }
+          if (idx === -1) idx = documentText.indexOf(String(result.finding || '').substring(0, 20));
+        }
+        if (idx === -1) idx = Number.MAX_SAFE_INTEGER;
+        if (bestResult === null || idx < bestIdx) {
+          bestResult = result;
+          bestIdx = idx;
+        }
+      } catch (e) {
+        // Only report a rule failure once (from the full-text pass).
+        if (target === documentText) warnings.push(`Rule ${rule.id} (${rule.title}) failed: ${e.message}`);
+      }
+    }
+    if (bestResult) {
+      findings.push({
+        id: rule.id,
+        title: rule.title,
+        statute: rule.statute,
+        severity: rule.severity,
+        finding: bestResult.finding,
+        citation: bestResult.cite,
+        statuteText: statutes[rule.statute]?.summary || '',
+      });
+    }
+  }
+
+  // Generate compliance score
+  const criticalCount = findings.filter(f => f.severity === 'critical').length;
+  const highCount = findings.filter(f => f.severity === 'high').length;
+  const mediumCount = findings.filter(f => f.severity === 'medium').length;
+  const suggestionCount = findings.filter(f => f.severity === 'suggestion').length;
+
+  const complianceScore = Math.max(0, Math.min(100,
+    100 - (criticalCount * 25) - (highCount * 10) - (mediumCount * 5) - (suggestionCount * 1)
+  ));
+
+  // ── Clause Extraction ────────────────────────────────────────
+  const EXPECTED_CLAUSES = {
+    commercial_lease: [
+      { id: 'parties', name: 'Parties and Premises', keywords: /parties?|premises|landlord|tenant/i },
+      { id: 'term', name: 'Lease Term', keywords: /term|commencement|expiration|initial term/i },
+      { id: 'baseRent', name: 'Base Rent', keywords: /base rent|annual rent|monthly rent|rent per square foot/i },
+      { id: 'securityDeposit', name: 'Security Deposit', keywords: /security deposit|damage deposit/i },
+      { id: 'lateFee', name: 'Late Payment Fee', keywords: /late fee|late payment|delinquent/i },
+      { id: 'cam', name: 'Common Area Maintenance', keywords: /common area maintenance|cam|operating expenses/i },
+      { id: 'use', name: 'Permitted Use', keywords: /permitted use|lawful use|use of premises|use of the premises|shall be used|used for|permitted purposes|allowed use|restricted to use|use only for/i },
+      { id: 'assignment', name: 'Assignment and Subletting', keywords: /assign|sublet|sublease/i },
+      { id: 'insurance', name: 'Insurance Requirements', keywords: /insurance|liability|additional insured/i },
+      { id: 'indemnification', name: 'Indemnification', keywords: /indemnif|hold harmless|defend/i },
+      { id: 'landlordEntry', name: 'Landlord Entry Rights', keywords: /landlord.*entry|entry.*right|inspect.*premises/i },
+      { id: 'alterations', name: 'Alterations and Improvements', keywords: /alteration|improvement|modification/i },
+      { id: 'defaultRemedies', name: 'Default and Remedies', keywords: /default|remedies|breach|cure/i },
+      { id: 'forceMajeure', name: 'Force Majeure', keywords: /force majeure|act of god|beyond.*control/i },
+      { id: 'environmental', name: 'Environmental Compliance', keywords: /environmental|hazardous|contamination/i },
+      { id: 'parking', name: 'Parking Rights', keywords: /parking|vehicle|automobile|garage/i },
+      { id: 'signage', name: 'Signage Rights', keywords: /signage|sign|directory/i },
+      { id: 'quietEnjoyment', name: 'Quiet Enjoyment', keywords: /quiet enjoyment|peaceably enjoy/i },
+      { id: 'attorneysFees', name: 'Attorneys\' Fees', keywords: /attorneys.*fee|legal fee|prevailing party/i },
+      { id: 'governingLaw', name: 'Governing Law', keywords: /governed by|governing law|choice of law|the laws of the state|the laws of the commonwealth/i },
+      { id: 'entireAgreement', name: 'Entire Agreement', keywords: /entire agreement|complete agreement|supersedes|entire understanding/i },
+      { id: 'renewalOption', name: 'Renewal Option', keywords: /renew|extension option|option to renew|right of first refusal/i },
+      { id: 'holdover', name: 'Holdover Tenancy', keywords: /holdover|month-to-month|overstay|hold-over/i },
+      { id: 'estoppel', name: 'Estoppel Certificate', keywords: /estoppel|certificate/i },
+      { id: 'notices', name: 'Notices', keywords: /notices?.*shall be|notice.*writing/i },
+      { id: 'waiver', name: 'Waiver', keywords: /waiver|waive|no waiver/i },
+      { id: 'subordination', name: 'Subordination', keywords: /subordination|attornment|non-disturbance/i },
+      { id: 'ADA', name: 'ADA Compliance', keywords: /ADA|disabilities|accessibility/i },
+      { id: 'snowRemoval', name: 'Snow Removal', keywords: /snow|ice removal/i },
+      { id: 'trashDisposal', name: 'Trash and Recycling', keywords: /trash|recycling|waste/i },
+    ],
+    residential_lease: [
+      { id: 'parties', name: 'Parties', keywords: /landlord|tenant|lessor|lessee/i },
+      { id: 'term', name: 'Lease Term', keywords: /term|commencement|expiration|monthly/i },
+      { id: 'rent', name: 'Rent', keywords: /rent|rental payment/i },
+      { id: 'securityDeposit', name: 'Security Deposit', keywords: /security deposit|damage deposit/i },
+      { id: 'lateFee', name: 'Late Fee', keywords: /late fee|late charge/i },
+      { id: 'use', name: 'Use of Premises', keywords: /use of premises|residential use/i },
+      { id: 'assignment', name: 'Assignment/Sublease', keywords: /assign|sublet|sublease/i },
+      { id: 'maintenance', name: 'Maintenance', keywords: /maintain|repair|upkeep/i },
+      { id: 'utilities', name: 'Utilities', keywords: /utilities|water|electric|gas/i },
+      { id: 'pets', name: 'Pets', keywords: /pets?|animals?/i },
+      { id: 'smoking', name: 'Smoking', keywords: /smok/i },
+      { id: 'landlordEntry', name: 'Landlord Entry', keywords: /entry|inspect|24-hour|notice/i },
+      { id: 'quietEnjoyment', name: 'Quiet Enjoyment', keywords: /quiet enjoyment/i },
+      { id: 'default', name: 'Default/Termination', keywords: /default|terminate|eviction|breach/i },
+    ],
+  };
+
+  function extractClauses(text, docTypeKey) {
+    const expected = EXPECTED_CLAUSES[docTypeKey] || EXPECTED_CLAUSES.commercial_lease;
+    const found = [];
+    const missing = [];
+    for (const clause of expected) {
+      const isPresent = clause.keywords.test(text);
+      if (isPresent) {
+        const matchText = text.match(clause.keywords)?.[0] || '';
+        found.push({
+          id: clause.id,
+          name: clause.name,
+          present: true,
+          matchedText: matchText,
+          confidence: 'high',
+        });
+      } else {
+        missing.push({
+          id: clause.id,
+          name: clause.name,
+          present: false,
+          confidence: 'high',
+        });
+      }
+    }
+    return { total: expected.length, found, missing, details: [...found, ...missing] };
+  }
+
+  const clauseResult = extractClauses(documentText, docType);
+
+  // (Jurisdiction detection now runs at the top of analyzeDocument — state-aware
+  // rule/statute selection and the jurisdiction label are resolved there.)
+
+  return {
+    status: 'complete',
+    analyzedAt: new Date().toISOString(),
+    documentInfo: {
+      type: docType,
+      name: metadata.documentName || 'unknown',
+      length: documentText.length,
+      rawText: documentText,
+      detectedType: docType,
+      jurisdiction: jurisdictionLabel,
+      jurisdictionDetected: detectedJurisdiction,
+    },
+    compliance: {
+      score: complianceScore,
+      grade: complianceScore >= 90 ? 'A' : complianceScore >= 75 ? 'B' : complianceScore >= 50 ? 'C' : 'D',
+      critical: criticalCount,
+      high: highCount,
+      medium: mediumCount,
+      suggestion: suggestionCount,
+    },
+    findings: findings,
+    warnings: warnings,
+    clauses: clauseResult,
+    summary: generateSummary(findings, docType, complianceScore),
+    redlines: findings.map(f => {
+      const correction = (STATE_CORRECTIONS[state] && STATE_CORRECTIONS[state][f.id]) || CORRECTIONS[f.id];
+      let exactText = f.citation || f.finding || '';
+      const docIdx = documentText.indexOf(exactText);
+      if (docIdx >= 0) {
+        exactText = getFullSentence(documentText, docIdx);
+      } else {
+        const partial = exactText.substring(0, 20);
+        const pIdx = documentText.indexOf(partial);
+        if (pIdx >= 0) exactText = getFullSentence(documentText, pIdx);
+      }
+      return {
+        id: f.id,
+        clause: correction?.clause || f.title,
+        severity: f.severity,
+        statute: f.statute,
+        original_text: exactText,
+        suggested_text: (attorneyPrefs && attorneyPrefs[f.id]) || correction?.suggested_text || '',
+        comment: correction?.comment || '',
+        type: 'deletion_insertion',
+        // Surface whether this suggestion came from the attorney's learned preference
+        ...(attorneyPrefs && attorneyPrefs[f.id] ? { preference_source: 'attorney_learned' } : {}),
+      };
+    }),
+    redlinedHtml: (() => {
+      let html = documentText;
+      const unplaced = []; // findings whose citation can't be anchored inline
+      for (const f of findings) {
+        const correction = (STATE_CORRECTIONS[state] && STATE_CORRECTIONS[state][f.id]) || CORRECTIONS[f.id];
+        if (!correction || !f.citation) continue;
+        const citation = f.citation;
+        const suggested = correction.suggested_text || '';
+        const comment = correction.comment || '';
+        const statute = f.statute || '';
+        const sevClass = f.severity || 'medium';
+        const isSuggestion = f.severity === 'suggestion';
+        let idx = html.indexOf(citation);
+        if (idx === -1) {
+          const partial = citation.substring(0, 20);
+          idx = html.indexOf(partial);
+          if (idx === -1) {
+            // No verbatim anchor — hold it to render as an appended block so it
+            // still shows as an edit instead of silently disappearing from the doc.
+            unplaced.push({ f, correction, suggested, comment, statute, sevClass, isSuggestion });
+            continue;
+          }
+          const endIdx = html.indexOf('.', idx);
+          const exactMatch = endIdx === -1 ? html.substring(idx) : html.substring(idx, endIdx + 1);
+          let diffHtml;
+          if (isSuggestion) {
+            diffHtml = `<span class="severity-mark suggestion"></span><mark class="suggestion-highlight" data-id="${f.id}">${escapeHtml(exactMatch)}</mark><span class="statute-ref">${statute}</span><span class="clause-controls"><button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Acknowledge</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Dismiss</button></span>${comment ? `<div class="margin-comment suggestion"><strong>💡 ${statute}:</strong> ${escapeHtml(comment)}</div>` : ''}`;
+          } else {
+            diffHtml = `<span class="severity-mark ${sevClass}"></span><del>${escapeHtml(exactMatch)}</del><ins>${escapeHtml(suggested)}</ins><span class="statute-ref">${statute}</span><span class="clause-controls"><button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Accept</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Reject</button><button class="edit-btn" data-action="edit" data-id="${f.id}">✎ Edit</button></span>${comment ? `<div class="margin-comment"><strong>⚠️ ${statute}:</strong> ${escapeHtml(comment)}</div>` : ''}`;
+          }
+          html = html.substring(0, idx) + diffHtml + html.substring(idx + exactMatch.length);
+        } else {
+          const exactMatch = html.substring(idx, idx + citation.length);
+          let diffHtml;
+          if (isSuggestion) {
+            diffHtml = `<span class="severity-mark suggestion"></span><mark class="suggestion-highlight" data-id="${f.id}">${escapeHtml(exactMatch)}</mark><span class="statute-ref">${statute}</span><span class="clause-controls"><button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Acknowledge</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Dismiss</button></span>${comment ? `<div class="margin-comment suggestion"><strong>💡 ${statute}:</strong> ${escapeHtml(comment)}</div>` : ''}`;
+          } else {
+            diffHtml = `<span class="severity-mark ${sevClass}"></span><del>${escapeHtml(exactMatch)}</del><ins>${escapeHtml(suggested)}</ins><span class="statute-ref">${statute}</span><span class="clause-controls"><button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Accept</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Reject</button><button class="edit-btn" data-action="edit" data-id="${f.id}">✎ Edit</button></span>${comment ? `<div class="margin-comment"><strong>⚠️ ${statute}:</strong> ${escapeHtml(comment)}</div>` : ''}`;
+          }
+          html = html.substring(0, idx) + diffHtml + html.substring(idx + citation.length);
+        }
+      }
+      // Append any findings that couldn't be anchored inline (e.g. a missing
+      // clause, like "No commencement date mechanism detected") as clearly
+      // labeled correction blocks, so every finding appears as a visible edit.
+      if (unplaced.length > 0) {
+        html += '\n\n' + unplaced.map(({ f, correction, suggested, comment, statute, sevClass, isSuggestion }) => {
+          const body = isSuggestion
+            ? `<mark class="suggestion-highlight" data-id="${f.id}">${escapeHtml(correction.clause || f.title)}</mark>`
+            : `<del>${escapeHtml(correction.clause || f.title)}</del><ins>${escapeHtml(suggested || correction.comment || f.finding)}</ins>`;
+          const controls = isSuggestion
+            ? `<button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Acknowledge</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Dismiss</button>`
+            : `<button class="accept-btn" data-action="accept" data-id="${f.id}">✓ Accept</button><button class="reject-btn" data-action="reject" data-id="${f.id}">✗ Reject</button><button class="edit-btn" data-action="edit" data-id="${f.id}">✎ Edit</button>`;
+          return `<div class="unplaced-finding"><span class="severity-mark ${sevClass}"></span><strong>${escapeHtml(f.title)}:</strong> ${body}<span class="statute-ref">${statute}</span><span class="clause-controls">${controls}</span>${comment ? `<div class="margin-comment${isSuggestion ? ' suggestion' : ''}"><strong>${isSuggestion ? '💡' : '⚠️'} ${statute}:</strong> ${escapeHtml(comment)}</div>` : ''}</div>`;
+        }).join('\n');
+      }
+      return html;
+    })(),
+  };
+}
+
+function generateSummary(findings, docType, score) {
+  const typeName = STATUTE_REGISTRY[docType]?.name || 'Document';
+  const parts = [];
+  if (findings.length === 0) {
+    parts.push(`No issues detected. ${typeName} appears compliant.`);
+  } else {
+    const critical = findings.filter(f => f.severity === 'critical');
+    const high = findings.filter(f => f.severity === 'high');
+    if (critical.length) parts.push(`⚠️ ${critical.length} critical violation(s) found.`);
+    if (high.length) parts.push(`⚠️ ${high.length} high-severity issue(s) found.`);
+    parts.push(`${findings.length} total finding(s).`);
+  }
+  parts.push(`Compliance score: ${score}/100 (Grade: ${score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : 'D'})`);
+  return parts.join(' ');
+}
+
+// ── PDF/DOCX Text Extraction ─────────────────────────────────
+// v0.4.0: Structured extraction — tables become typed objects with
+// column headers, and images/charts are preserved as base64 data URIs
+// instead of being dropped or stubbed. This enables column-aware
+// analysis (sum Total Due, validate CAM caps) and keeps floor plans /
+// building photos / utility trend charts in the redline + export.
+
+// Parse mammoth's HTML table output into structured objects.
+// mammoth emits `<table><tr><td><p>text</p></td>...</tr></table>`.
+function parseHtmlTables(html) {
+  const tables = [];
+  const tableRe = /<table>([\s\S]*?)<\/table>/gi;
+  let tm;
+  while ((tm = tableRe.exec(html)) !== null) {
+    const rows = [];
+    const rowRe = /<tr>([\s\S]*?)<\/tr>/gi;
+    let rm;
+    while ((rm = rowRe.exec(tm[1])) !== null) {
+      const cells = [];
+      const cellRe = /<t[dh]>([\s\S]*?)<\/t[dh]>/gi;
+      let cm;
+      while ((cm = cellRe.exec(rm[1])) !== null) {
+        // Strip tags, collapse whitespace
+        const text = cm[1]
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        cells.push(text);
+      }
+      if (cells.length > 0) rows.push(cells);
+    }
+    if (rows.length > 0) {
+      const headers = rows[0];
+      const dataRows = rows.slice(1).map(cells => {
+        const row = {};
+        headers.forEach((h, i) => { row[h || `col${i + 1}`] = cells[i] ?? ''; });
+        return row;
+      });
+      tables.push({ headers, rows: dataRows, rawRows: rows });
+    }
+  }
+  return tables;
+}
+
+// Extract base64 images from mammoth HTML output.
+function extractImagesFromHtml(html) {
+  const images = [];
+  const imgRe = /<img[^>]*src="data:([^;]+);base64,([^"]+)"[^>]*>/gi;
+  let m;
+  while ((m = imgRe.exec(html)) !== null) {
+    const rawMime = m[1] || '';
+    // mammoth sometimes emits "data:null;base64" — default to image/png
+    const mimeType = (rawMime && rawMime !== 'null') ? rawMime : 'image/png';
+    images.push({ mimeType, base64: m[2], dataUrl: `data:${mimeType};base64,${m[2]}` });
+  }
+  return images;
+}
+
+// ── python-docx structured extraction ─────────────────────────
+// Uses the Hermes venv python (python-docx 1.2.0 + Pillow) to parse a
+// DOCX buffer into structured tables (typed objects with column headers)
+// and base64 images. This is the ROBUST path — it reads the real DOCX
+// bytes directly, bypassing the Deno proxy file-forwarding bug that
+// corrupts/truncates fileContent payloads.
+async function extractDocxWithPython(buffer) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileAsync = promisify(execFile);
+  const pyPath = 'C:\\Users\\PureTrek\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe';
+
+  // Write the DOCX to a temp file, then run a python script that reads it.
+  const { writeFileSync, unlinkSync, mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'lease-docx-'));
+  const docxPath = join(dir, 'input.docx');
+  const scriptPath = join(dir, 'parse.py');
+  writeFileSync(docxPath, buffer);
+
+  const script = `
+import io, json, base64, sys
+from docx import Document
+
+path = ${JSON.stringify(docxPath)}
+doc = Document(path)
+
+# Full text — paragraphs joined with double newline for paragraph separation
+paras = [p.text for p in doc.paragraphs]
+text = "\\n\\n".join(paras)
+
+# Structured tables
+tables = []
+for t in doc.tables:
+    rows = []
+    for r in t.rows:
+        rows.append([c.text.strip() for c in r.cells])
+    if rows:
+        headers = rows[0]
+        data_rows = []
+        for cells in rows[1:]:
+            row = {}
+            for i, h in enumerate(headers):
+                row[h or ("col" + str(i+1))] = cells[i] if i < len(cells) else ""
+            data_rows.append(row)
+        tables.append({"headers": headers, "rows": data_rows, "rawRows": rows})
+
+# Images (base64)
+images = []
+for rel in doc.part.rels.values():
+    if "image" in rel.reltype:
+        img = rel.target_part
+        b64 = base64.b64encode(img.blob).decode("ascii")
+        mime = img.content_type or "image/png"
+        images.append({"mimeType": mime, "base64": b64, "dataUrl": "data:" + mime + ";base64," + b64, "name": rel.target_ref})
+
+print(json.dumps({"text": text, "tables": tables, "images": images}))
+`;
+  writeFileSync(scriptPath, script, 'utf8');
+
+  try {
+    const { stdout } = await execFileAsync(pyPath, [scriptPath], {
+      timeout: 60000,
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(stdout);
+    return {
+      text: parsed.text || '',
+      tables: parsed.tables || [],
+      images: parsed.images || [],
+      info: { parser: 'python-docx' },
+    };
+  } finally {
+    try { unlinkSync(docxPath); } catch {}
+    try { unlinkSync(scriptPath); } catch {}
+    try { (await import('node:fs')).rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function extractTextFromBuffer(buffer, mimeType, fileName) {
+  const ext = (fileName || '').split('.').pop()?.toLowerCase();
+  if (ext === 'pdf' || mimeType === 'application/pdf') {
+    try {
+      const { PDFParse } = await import('pdf-parse');
+      const parser = new PDFParse({ data: buffer });
+      await parser.load();
+      const result = await parser.getText();
+      const text = result.text || (result.pages || []).map(p => p.text).join('\n\n');
+
+      // Structured: extract tables + images from the PDF
+      let tables = [];
+      let images = [];
+      try {
+        const tableRes = await parser.getTable();
+        if (tableRes?.pages) {
+          for (const page of tableRes.pages) {
+            for (const t of (page.tables || [])) {
+              if (Array.isArray(t) && t.length > 0) {
+                const headers = t[0].map(c => String(c).trim());
+                const dataRows = t.slice(1).map(cells => {
+                  const row = {};
+                  headers.forEach((h, i) => { row[h || `col${i + 1}`] = String(cells[i] ?? '').trim(); });
+                  return row;
+                });
+                tables.push({ headers, rows: dataRows, rawRows: t });
+              }
+            }
+          }
+        }
+      } catch (te) { /* table extraction best-effort */ }
+
+      try {
+        const imgRes = await parser.getImage();
+        if (imgRes?.pages) {
+          for (const page of imgRes.pages) {
+            for (const img of (page.images || [])) {
+              if (img?.dataUrl) {
+                images.push({ mimeType: 'image/png', base64: img.dataUrl.split(',')[1] || '', dataUrl: img.dataUrl, name: img.name, width: img.width, height: img.height });
+              }
+            }
+          }
+        }
+      } catch (ie) { /* image extraction best-effort */ }
+
+      parser.destroy();
+      return { text, pages: result.total || result.pages?.length || 0, tables, images };
+    } catch (e) {
+      return { text: null, error: `PDF parse failed: ${e.message}` };
+    }
+  }
+  if (ext === 'docx' || mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    // PRIMARY: use python-docx (Hermes venv) for robust structured table +
+    // image extraction. This bypasses the Deno proxy file-forwarding bug
+    // and reliably parses real DOCX bytes (python-docx 1.2.0 + Pillow).
+    try {
+      const pyResult = await extractDocxWithPython(buffer);
+      if (pyResult && pyResult.text) {
+        return pyResult;
+      }
+    } catch (pe) {
+      // fall through to mammoth if python path fails
+    }
+    try {
+      const mammoth = (await import('mammoth')).default || (await import('mammoth'));
+      // Use convertToHtml to preserve tables + images (data URIs)
+      const htmlResult = await mammoth.convertToHtml({ buffer, convertImage: mammoth.images.dataUri });
+      const html = htmlResult.value;
+      // Also get raw text for the analyzer's regex-based rules
+      const rawResult = await mammoth.extractRawText({ buffer });
+      const tables = parseHtmlTables(html);
+      const images = extractImagesFromHtml(html);
+      return { text: rawResult.value, html, tables, images, info: { messages: htmlResult.messages?.length || 0 } };
+    } catch (e) {
+      return { text: null, error: `DOCX parse failed: ${e.message}` };
+    }
+  }
+  if (Buffer.isBuffer(buffer)) return { text: buffer.toString('utf8'), tables: [], images: [] };
+  return { text: null, error: 'Unknown file type. Supported: PDF, DOCX, TXT.' };
+}
+
+// ── Preference-aware learning loop ──────────────────────────
+// Load the attorney's most-accepted edited text per rule from the AI-Learnings
+// feedback table, so future redlines reflect the firm's actual preferences.
+async function loadAttorneyPreferences(attorneyId) {
+  try {
+    const pg = (await import('pg')).default;
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/xmrt_suite' });
+    await c.connect();
+    try {
+      // For each rule the attorney accepted, take their most common edited_text
+      const r = await c.query(
+        `SELECT playbook_rule_id AS rule_id, edited_text, count(*) AS n
+           FROM public.elze_redline_feedback
+          WHERE attorney_id = $1 AND action IN ('accept','edit') AND edited_text IS NOT NULL
+          GROUP BY playbook_rule_id, edited_text
+          ORDER BY playbook_rule_id, n DESC`, [attorneyId]
+      );
+      const prefs = {};
+      for (const row of r.rows) {
+        if (!(row.rule_id in prefs)) prefs[row.rule_id] = row.edited_text;
+      }
+      return prefs;
+    } finally { await c.end(); }
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── Handler ─────────────────────────────────────────────────
+export const meta = META;
+
+export async function handler(reqOrArgs, res) {
+  let args;
+  if (res) {
+    try { args = reqOrArgs.body || {}; } catch { args = {}; }
+  } else {
+    args = reqOrArgs || {};
+  }
+
+  const { document: documentText, documentType, documentName, fileContent, fileName, mimeType, attorney, attorney_id, attorney_name } = args;
+
+  // ── Preference-aware learning loop ─────────────────────────
+  // If an attorney identity is supplied, load their accepted-rule preferences
+  // so future redlines reflect the firm's actual preferences (Mixus moat).
+  let attorneyPrefs = null; // { rule_id: accepted_edited_text }
+  const attorneyId = attorney || attorney_id || attorney_name || null;
+  if (attorneyId) {
+    try {
+      const p = await loadAttorneyPreferences(attorneyId);
+      if (p) attorneyPrefs = p;
+    } catch { /* non-fatal */ }
+  }
+  let textToAnalyze = documentText;
+  let extractionInfo = null;
+
+  if (!textToAnalyze && fileContent) {
+    try {
+      const buffer = Buffer.from(fileContent, 'base64');
+      const extracted = await extractTextFromBuffer(buffer, mimeType, fileName);
+      if (extracted.text) {
+        textToAnalyze = extracted.text;
+        extractionInfo = {
+          fileName, mimeType: mimeType || 'detected',
+          pages: extracted.pages,
+          chars: extracted.text.length,
+          tables: extracted.tables || [],
+          images: extracted.images || [],
+          html: extracted.html || null,
+          parser: extracted.info?.parser || null,
+        };
+      } else {
+        const err = { success: false, error: extracted.error || 'Failed to extract text from file.', meta: META };
+        if (res) return res.status(400).json(err);
+        return err;
+      }
+    } catch (e) {
+      const err = { success: false, error: `File processing error: ${e.message}`, meta: META };
+      if (res) return res.status(400).json(err);
+      return err;
+    }
+  }
+
+  if (!textToAnalyze || typeof textToAnalyze !== 'string') {
+    const err = { success: false, error: 'Document text or file content is required.', meta: META };
+    if (res) return res.status(400).json(err);
+    return err;
+  }
+
+  if (textToAnalyze.length < 50) {
+    const err = { success: false, error: 'Document text too short (minimum 50 characters).', meta: META };
+    if (res) return res.status(400).json(err);
+    return err;
+  }
+
+  const result = analyzeDocument(textToAnalyze, { documentType, documentName: documentName || fileName, attorneyPrefs });
+  const response = { success: true, ...result, meta: META };
+
+  if (extractionInfo) response.documentInfo.extraction = extractionInfo;
+
+  if (res) return res.json(response);
+  return response;
+}
+
+// ── Direct CLI execution ─────────────────────────────────────
+if (process.argv[1] && (process.argv[1].includes('lease-analyzer') || process.argv[1].includes('contract-analyzer') || process.argv[1].includes('_local_shim'))) {
+  const args = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    if (process.argv[i].startsWith('--')) {
+      const key = process.argv[i].slice(2);
+      const val = process.argv[i + 1];
+      if (val && !val.startsWith('--')) { args[key] = val; i++; }
+      else { args[key] = true; }
+    }
+  }
+  handler(args).then(r => {
+    console.log(JSON.stringify(r, null, 2));
+    process.exit(r.success ? 0 : 1);
+  });
+}

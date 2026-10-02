@@ -4,8 +4,8 @@
  * Runs on a schedule (every 15 minutes via cron engine) to:
  *   1. Advance tasks through pipeline stages ONLY when artifacts are provided
  *   2. Calculate trust score deltas from completed tasks with verified artifacts
- *   3. Update app.cuttlefish_agents.trust_score via cuttlefishclaws MCP (graduated scoring)
- *   4. Log trust events to app.cuttlefish_trust_events
+ *   3. Update public.registry_agents.trust_score via cuttlefishclaws MCP (graduated scoring)
+ *   4. Log trust events to public.trust_events
  *
  * CRITICAL DESIGN RULE: Tasks advance by VERIFIED OUTPUT, not by elapsed time.
  * The VERIFY stage requires an artifact (screenshot, test result, commit hash, URL).
@@ -162,13 +162,13 @@ export async function runWorkflowEngine() {
             } catch (e) {
               log(`  MCP call failed for ${did}, fallback direct: ${e.message}`);
               await pool.query(
-                `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, reference, note)
-                 VALUES ($1, $2, $3, (SELECT trust_score + $3 FROM app.cuttlefish_agents WHERE did = $1), $4, $5)`,
+                `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, reference, note)
+                 VALUES ($1, $2, $3, (SELECT trust_score + $3 FROM public.registry_agents WHERE did = $1), $4, $5)`,
                 [did, 'task_completed_with_artifact', delta, task.id,
                  `Completed "${(task.title||'').slice(0,40)}" with verified artifact (priority=${task.priority}, category=${task.category||'default'})`]
               );
               await pool.query(
-                `UPDATE app.cuttlefish_agents SET trust_score = GREATEST(5, LEAST(100, trust_score + $1)), trust_score_updated_at = NOW() WHERE did = $2`,
+                `UPDATE public.registry_agents SET trust_score = GREATEST(5, LEAST(100, trust_score + $1)), trust_score_updated_at = NOW() WHERE did = $2`,
                 [delta, did]
               );
               results.trustEvents++;
@@ -213,7 +213,7 @@ export async function runWorkflowEngine() {
     // ── Phase 3: Recalculate trust bands ──
     try {
       await pool.query(`
-        UPDATE app.cuttlefish_agents 
+        UPDATE public.registry_agents 
         SET trust_band = CASE
           WHEN trust_score >= 80 THEN 'Trusted'
           WHEN trust_score >= 50 THEN 'Standard'

@@ -1,0 +1,20 @@
+(node:11380) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/PureTrek/Desktop/xmrtdao/relay/server.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\PureTrek\Desktop\xmrtdao\relay\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///C:/Users/PureTrek/Desktop/xmrtdao/relay/tools/ollama-chat.mjs:44
+    await fetch(`http://127.0.0.1:${port}/api/token-usage/log', {
+
+SyntaxError: missing ) after argument list
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:89:18)
+    at #translate (node:internal/modules/esm/loader:434:20)
+    at afterLoad (node:internal/modules/esm/loader:502:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:507:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:560:36)
+    at afterResolve (node:internal/modules/esm/loader:607:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:613:12)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:163:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:253:17)
+
+Node.js v24.18.0

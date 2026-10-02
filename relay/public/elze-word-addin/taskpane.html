@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Elze Contract AI</title>
+  <!-- Office.js is served from the standard CDN -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root { --gold:#6366f1; --bg:#0a0a14; --card:#12121f; --text:#e4e4ef; --dim:#8b8ba0; --critical:#ef4444; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:'Segoe UI',Inter,sans-serif; font-size:14px; }
+    .wrap { padding:16px; }
+    h2.logo { font-family:Georgia,serif; color:var(--gold); margin:0 0 4px; font-size:20px; }
+    p.sub { color:var(--dim); margin:0 0 14px; font-size:12px; }
+    .card { background:var(--card); border:1px solid rgba(201,169,110,.15); border-radius:8px; padding:12px; margin-bottom:12px; }
+    label { display:block; font-size:12px; color:var(--dim); margin:6px 0 4px; }
+    input[type=password], input[type=text] { width:100%; background:#0e0e1c; border:1px solid #2a2a3a; color:var(--text); border-radius:6px; padding:8px; font-size:13px; }
+    .btn { width:100%; background:var(--gold); color:#0a0a14; border:0; border-radius:6px; padding:10px; font-weight:600; font-size:14px; cursor:pointer; margin-top:8px; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn.ghost { background:transparent; border:1px solid var(--gold); color:var(--gold); }
+    .status { font-size:12px; color:var(--dim); margin-top:8px; min-height:18px; white-space:pre-wrap; }
+    .ok { color:#22c55e; } .err { color:var(--critical); }
+    .hint { font-size:11px; color:var(--dim); margin-top:4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2 class="logo">Elze Contract AI</h2>
+    <p class="sub">Analyze the open lease → merge native tracked changes attributed to each playbook rule + VA statute.</p>
+
+    <div class="card">
+      <label for="apiKey">Relay API key</label>
+      <input type="password" id="apiKey" placeholder="Backend x-api-key (not the publishable key)" autocomplete="off">
+      <div class="hint">Only the backend key authorizes /api/v1/functions/* through the public tunnel.</div>
+    </div>
+
+    <div class="card">
+      <button class="btn" id="btnReadDoc">1 · Read current Word doc</button>
+      <button class="btn" id="btnAnalyze" style="background:#0a0a14;border:1px solid var(--gold);color:#6366f1;margin-top:8px">2 · Analyze &amp; build attributed redline</button>
+      <button class="btn" id="btnExport" disabled>3 · Export attributed .docx</button>
+      <button class="btn ghost" id="btnGetBody" style="margin-top:8px">Merge redline as tracked changes into doc</button>
+      <div class="status" id="status">Ready.</div>
+    </div>
+  </div>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>

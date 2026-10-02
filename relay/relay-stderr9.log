@@ -1,0 +1,12 @@
+(node:14036) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/PureTrek/Desktop/xmrtdao/relay/server.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\PureTrek\Desktop\xmrtdao\relay\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[Mesh] Failed to start: Some configured addresses failed to be listened on, you may need to remove one or more listen addresses from your configuration or set `transportManager.faultTolerance` to NO_FATAL:
+
+  /ip4/0.0.0.0/tcp/9000: Error: listen EADDRINUSE: address already in use 0.0.0.0:9000
+      at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+      at listenInCluster (node:net:2066:12)
+      at node:net:2275:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+

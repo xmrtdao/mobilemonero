@@ -1,0 +1,75 @@
+[Relay] Loaded .env (overwrite mode) from C:\Users\PureTrek\Desktop\xmrtdao\relay\.env
+  Suite SPA: C:\Users\PureTrek\Desktop\xmrtdao\suite\dist
+  HottieHouse SPA: C:\Users\PureTrek\Desktop\xmrtdao\hottiehouse\app\dist
+  CuttlefishClaws SPA: C:\Users\PureTrek\Desktop\xmrtdao\cuttlefishclaws\dist
+  CashDApp SPA: NOT FOUND at C:\Users\PureTrek\Desktop\xmrtdao\cashdapp\dist — skipping
+  PFP Intake SPA: C:\Users\PureTrek\Desktop\xmrtdao\intake\dist
+  PFP Bookings SPA: C:\Users\PureTrek\Desktop\xmrtdao\partyfavorphoto\bookings\dist
+  Elze Contract Suite (landing): C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-landing
+  Elze Contract Analyzer: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-analyzer
+  Elze Contract Writer: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-writer
+  Elze Word Add-in: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-word-addin
+  Elze AI Learnings: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-learnings
+  Agency Dashboard: C:\Users\PureTrek\Desktop\xmrtdao\31harbor-agency-dashboard\dist (harbor/party/xmrt)
+[realtime] WebSocket upgrade proxy registered for /realtime/v1 -> 127.0.0.1:54321
+[CuttlefishClaws] Registered engine routes: trust-score, trust-history, trust-event, recompute, standing, standing-event, gate-evaluate, gate-thresholds, activity-event, agents, rate-card, engine-health
+[RUM] Registering /api/rum-quota route...
+[CuttlefishClaws] Registered university bridge routes: onboard, cert-holders, status, teach
+[runtime] Registered local function: agent-workflow-engine
+[runtime] Registered local function: code-monitor-daemon
+[runtime] Registered local function: court-lookup
+[runtime] Registered local function: docx-redline
+[runtime] Registered local function: elze-learnings
+[runtime] Registered local function: elze-templates
+[runtime] Registered local function: lease-analyzer
+[runtime] Registered local function: lease-builder
+[runtime] Registered local function: lease-writer
+[runtime] Registered local function: warm-pool-lease-manager
+[runtime] Discovered 10 local functions
+  Relay listening on http://0.0.0.0:8080
+
+╔══════════════════════════════════════════════════════╗
+║         MobileMonero Relay Server - Eliza-Dev v5        ║
+╠══════════════════════════════════════════════════════╣
+║  Webhook:  http://0.0.0.0:8080 /webhook/task     ║
+║  Tools:    http://0.0.0.0:8080 /tools            ║
+║  Run Tool: http://0.0.0.0:8080 /tools/run        ║
+║  Register: http://0.0.0.0:8080 /tools/register-agent ║
+║  Agents:   http://0.0.0.0:8080 /tools/agents     ║
+║  Web Srch: http://0.0.0.0:8080 /web-search       ║
+║  Scrape:   http://0.0.0.0:8080 /scrape            ║
+║  Ollama:   http://0.0.0.0:8080 /ollama/chat       ║
+║  Monitor:  http://0.0.0.0:8080 /monitor           ║
+║  State:    http://0.0.0.0:8080 /state/<key>       ║
+║  Dispatch: http://0.0.0.0:8080 /dispatch          ║
+║  Health:   http://0.0.0.0:8080 /health            ║
+║  Cron:     http://0.0.0.0:8080 /cron/status       ║
+║  PFP Inbox: http://0.0.0.0:8080 /resend/inbox     ║
+║  MM Inbox:  http://0.0.0.0:8080 /resend/mobilemonero/inbox ║
+║  31HB Inbox: http://0.0.0.0:8080 /resend/31harbor/inbox ║
+╚══════════════════════════════════════════════════════╝
+
+  Tools: 118 registered
+  Handlers: 7 task handlers
+  State keys: 12
+
+[19:51:00] system | - | STARTUP | Relay v2 listening on port 8080
+[consolidate] cuttlefishclaws-mcp: 33 tools registered via JSON-RPC proxy
+[consolidate] xmrtdao-suite-mcp: 15 tools registered via JSON-RPC proxy
+[consolidate] Registered 48 MCP tools via HTTP proxy
+[consolidate] 48 MCP tools registered via JSON-RPC proxy
+[AUTH] Loaded 17 agent API keys
+[fleet-db] Loaded 500 messages from DB (500 total)
+[services] 2026-09-02T19:51:02.272Z ===== starting managed services =====
+[services] 2026-09-02T19:51:02.272Z managed services initial spawn complete
+[19:51:03] system | - | CRON | Local cron engine disabled (SKIP_CRON=1)
+[Mesh] Initializing gossipsub node "vex-relay" on port 9000...
+[Mesh] Loaded saved private key
+[Mesh] Init failed: Some configured addresses failed to be listened on, you may need to remove one or more listen addresses from your configuration or set `transportManager.faultTolerance` to NO_FATAL:
+
+  /ip4/0.0.0.0/tcp/9000: Error: listen EADDRINUSE: address already in use 0.0.0.0:9000
+      at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+      at listenInCluster (node:net:2066:12)
+      at node:net:2275:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ (publishes will use HTTP fallback)

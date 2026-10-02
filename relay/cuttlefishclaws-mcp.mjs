@@ -53,13 +53,44 @@ const LOCAL_DB_URL = process.env.LOCAL_DATABASE_URL || 'postgres://postgres@127.
 
 // ── DB Connection (pg) ───────────────────────────────────────
 import pg from 'pg';
+import { POOL_CONFIG } from './lib/pool-config.mjs';
+
+// TrustGraph scoring lives in exactly one place: lib/trustgraph-engine.mjs.
+//
+// This file used to carry its own inline copy of the engine - TG_PARAMS,
+// TIER_FLOORS, RUBRIC, computeScore, getBand, getLifecycleTransition,
+// deltaForActivity - and the two had drifted into different vocabularies and
+// different arithmetic. There were 3 tiers here (explorer 0, builder 60, anchor
+// 80) against 5 there (explorer 20, developer 30, studio 40, enterprise 55,
+// anchor 70), and since no stored credential used the name "builder", the
+// `TIER_FLOORS[tier] || 0` lookup silently returned 0 for every tier except
+// anchor - so 19 of 21 agents were reported as having no floor at all.
+//
+// The arithmetic differed too. This copy started every agent at 50 with decay
+// disabled, so the single onboard event worth +50 pushed it to the 100 ceiling
+// and it stayed there: every agent in the estate displayed as 100/Trusted. The
+// live engine seeds at the tier floor and decays 2 points per week, which is why
+// the same agents now score across a real 52-96 range.
+//
+// What changes when you read these numbers: agent scores fall, band names follow
+// the live vocabulary the front end already uses (Standard, Cautious, SUSPENDED,
+// REVOKED), and tier_floor becomes a real number instead of 0. Nothing about any
+// agent's actual conduct changed - the previous display was the part that was
+// wrong.
+import {
+  computeScore,
+  getBand,
+  getDelta,
+  getLifecycleTransition,
+  getTierFloor,
+  deltaForActivity,
+  PARAMS,
+} from './lib/trustgraph-engine.mjs';
 const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: LOCAL_DB_URL,
-  max: 5,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  ...POOL_CONFIG.mcp,
 });
 
 // Prevent crash on pool-level errors (ECONNRESET, PG restart, etc.)
@@ -70,93 +101,6 @@ pool.on('error', (err) => {
 async function query(sql, params = []) {
   const res = await pool.query(sql, params);
   return res.rows;
-}
-
-// ── TrustGraph scoring (lightweight inline implementation) ─
-const TG_PARAMS = {
-  CEIL: 100,       // Max score
-  FLOOR: 0,        // Min score
-  START: 50,       // Initial score
-  ATTEN: 1.0,      // Attenuation factor (no attenuation in cloud mirror)
-  DECAY: 0.0,      // No decay in cloud mirror
-  CAP: 10,         // Max delta per event
-};
-
-const TIER_FLOORS = {
-  explorer: 0,
-  builder: 60,
-  anchor: 80,
-};
-
-const RUBRIC = {
-  VALIDATION_COMPLETED:  2,
-  GOVERNANCE_VOTE:       1,
-  CODE_REVIEW:           3,
-  PROPOSAL_DRAFTED:      4,
-  SECURITY_AUDIT:        8,
-  DOCUMENTATION_WRITTEN: 1,
-  SLASH_APPLIED:        -10,
-  DISPUTE_LOST:         -5,
-  DISPUTE_WON:           3,
-  PEER_REVIEW_POSITIVE:  2,
-  PEER_REVIEW_NEGATIVE: -2,
-  MILESTONE_DELIVERED:   5,
-  SELF_CORRECTED:        2,  // Agent acknowledged and corrected an error — positive delta
-};
-
-function computeScore(events, tier = 'explorer') {
-  let score = TG_PARAMS.START;
-  let prevTime = null;
-
-  for (const ev of events) {
-    const delta = Number(ev.delta) || 0;
-    // Apply decay if configured and we have a previous timestamp
-    if (TG_PARAMS.DECAY > 0 && prevTime && ev.created_at) {
-      const daysSince = (new Date(ev.created_at) - new Date(prevTime)) / 86_400_000;
-      const decay = Math.pow(1 - TG_PARAMS.DECAY, daysSince);
-      score = score * decay;
-    }
-    score += delta;
-    // Clamp
-    score = Math.max(TG_PARAMS.FLOOR, Math.min(TG_PARAMS.CEIL, score));
-    prevTime = ev.created_at;
-  }
-
-  const floor = TIER_FLOORS[tier] || 0;
-  const band = score >= 80 ? 'Trusted' : score >= 60 ? 'Verified' : score >= 40 ? 'Monitored' : 'Probationary';
-  const lifecycleStatus = score >= 80 ? 'active' : score >= 60 ? 'active' : score >= 40 ? 'probationary' : 'suspended';
-
-  return {
-    score: Math.round(score * 100) / 100,
-    band,
-    tier_floor: floor,
-    below_floor: score < floor,
-    status: lifecycleStatus,
-    record_version: events.length,
-  };
-}
-
-function deltaForActivity(activityType, workUnit = {}) {
-  const base = RUBRIC[activityType] || 0;
-  if (workUnit.quality_score !== undefined) {
-    const qMult = Math.max(0.5, Math.min(2.0, Number(workUnit.quality_score) / 50));
-    return Math.round(base * qMult * 100) / 100;
-  }
-  return base;
-}
-
-function getBand(score) {
-  if (score >= 80) return 'Trusted';
-  if (score >= 60) return 'Verified';
-  if (score >= 40) return 'Monitored';
-  return 'Probationary';
-}
-
-function getLifecycleTransition(score, currentStatus) {
-  if (score >= 80 && currentStatus !== 'active') return { from: currentStatus, to: 'active', reason: 'score >= 80' };
-  if (score < 40 && currentStatus !== 'suspended') return { from: currentStatus, to: 'suspended', reason: 'score < 40' };
-  if (score >= 40 && score < 80 && currentStatus === 'suspended') return { from: currentStatus, to: 'probationary', reason: 'score recovery' };
-  return null;
 }
 
 // ── Standing engine (lightweight) ──────────────────────────
@@ -306,16 +250,16 @@ const TOOLS = {
                 a.stewardship_ladder, a.created_at, a.color, a.operator_did,
                 c.tier AS cac_tier_name, c.status AS cac_status,
                 c.usdc_prepaid, c.token_balance
-         FROM app.cuttlefish_agents a
-         LEFT JOIN app.cuttlefish_cac_credentials c
+         FROM public.registry_agents a
+         LEFT JOIN public.cac_credentials c
            ON c.agent_did = a.did AND c.id = (
-             SELECT MAX(id) FROM app.cuttlefish_cac_credentials WHERE agent_did = a.did
+             SELECT MAX(id) FROM public.cac_credentials WHERE agent_did = a.did
            )
          ORDER BY a.id`
       );
       const allEvents = await query(
         `SELECT agent_did, event_type, delta, score_after, created_at, note, reference, domain
-         FROM app.cuttlefish_trust_events ORDER BY created_at ASC`
+         FROM public.trust_events ORDER BY created_at ASC`
       );
       const eventsByDid = {};
       for (const ev of allEvents || []) {
@@ -379,7 +323,7 @@ const TOOLS = {
       const { did, name, role, agent_type, agent_subtype, operator_did,
               description, greeting, color, metadata } = args;
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_agents
+        `INSERT INTO public.registry_agents
          (did, name, role, agent_type, agent_subtype, operator_did, description, greeting, color, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id, did, name, created_at`,
@@ -419,7 +363,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, event_type, delta, reference, note, domain, evidence_hash } = args;
       const agent = await query(
-        `SELECT cac_tier, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1`, [agent_did]
+        `SELECT cac_tier, lifecycle_status FROM public.registry_agents WHERE did = $1`, [agent_did]
       );
       if (!agent.length) return { error: 'Agent not found' };
       const tier = agent[0].cac_tier || 'explorer';
@@ -427,13 +371,13 @@ const TOOLS = {
       // ── Graduated scoring for negative events ──
       // Instead of applying the full rubric delta immediately, use an escalation
       // ladder: warn first, then scale penalties, and reward self-correction.
-      let deltaVal = delta !== undefined ? Number(delta) : (RUBRIC[event_type] || 0);
+      let deltaVal = delta !== undefined ? Number(delta) : (getDelta(event_type) ?? 0);
       let appliedNote = note || '';
 
       if (deltaVal < 0 && event_type !== 'SLASH_APPLIED' && event_type !== 'CONSTITUTIONAL_VIOLATION_MAJOR' && event_type !== 'PROMPT_INJECTION_DETECTED') {
         // Count prior negative events of this type for this agent
         const priorNegatives = await query(
-          `SELECT count(*)::int AS c FROM app.cuttlefish_trust_events
+          `SELECT count(*)::int AS c FROM public.trust_events
            WHERE agent_did = $1 AND event_type = $2 AND delta < 0`,
           [agent_did, event_type]
         );
@@ -441,7 +385,7 @@ const TOOLS = {
 
         // Check if agent has recently self-corrected (acknowledged the issue in fleet chat)
         const recentCorrection = await query(
-          `SELECT count(*)::int AS c FROM app.cuttlefish_trust_events
+          `SELECT count(*)::int AS c FROM public.trust_events
            WHERE agent_did = $1 AND event_type = 'SELF_CORRECTED' AND created_at > NOW() - INTERVAL '1 hour'`,
           [agent_did]
         );
@@ -475,18 +419,22 @@ const TOOLS = {
       // Get all events to compute score after
       const allEvents = await query(
         `SELECT event_type, delta, score_after, created_at
-         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         FROM public.trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [agent_did]
       );
       const computed = computeScore(allEvents, tier);
       const scoreAfter = computed.score + deltaVal;
-      const clampedScore = Math.max(TG_PARAMS.FLOOR, Math.min(TG_PARAMS.CEIL, scoreAfter));
-      const band = getBand(clampedScore);
+      const clampedScore = Math.max(PARAMS.MIN_SCORE, Math.min(PARAMS.MAX_SCORE, scoreAfter));
+      // The shared engine's getBand returns {min, max, name, status}; the removed
+      // inline copy returned a bare string. Taking the name here keeps trust_band
+      // (a text column) and this endpoint's JSON response the same shape they were
+      // before, instead of writing an object into both.
+      const band = getBand(clampedScore).name;
       const transition = getLifecycleTransition(clampedScore, agent[0].lifecycle_status);
 
       // Insert event
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_trust_events
+        `INSERT INTO public.trust_events
          (agent_did, event_type, delta, score_after, reference, note, domain, evidence_hash)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, event_id, created_at`,
@@ -496,7 +444,7 @@ const TOOLS = {
 
       // Update agent's trust score
       await query(
-        `UPDATE app.cuttlefish_agents
+        `UPDATE public.registry_agents
          SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW(),
              lifecycle_status = COALESCE($3, lifecycle_status),
              updated_at = NOW()
@@ -539,11 +487,11 @@ const TOOLS = {
       const { did } = args;
       const events = await query(
         `SELECT event_id, event_type, delta, score_after, reference, note, domain, created_at
-         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         FROM public.trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [did]
       );
       const agent = await query(
-        `SELECT cac_tier FROM app.cuttlefish_agents WHERE did = $1`, [did]
+        `SELECT cac_tier FROM public.registry_agents WHERE did = $1`, [did]
       );
       const tier = agent[0]?.cac_tier || 'explorer';
       const result = computeScore(events || [], tier);
@@ -584,18 +532,18 @@ const TOOLS = {
       const agent = await query(
         `SELECT did, name, cac_tier, trust_score, trust_band, lifecycle_status,
                 agent_type, agent_subtype, created_at
-         FROM app.cuttlefish_agents WHERE did = $1`, [did]
+         FROM public.registry_agents WHERE did = $1`, [did]
       );
       if (!agent.length) return { error: 'Agent not found' };
       const events = await query(
         `SELECT event_type, delta, score_after, note, created_at
-         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         FROM public.trust_events WHERE agent_did = $1
          ORDER BY created_at DESC LIMIT 10`, [did]
       );
       const tier = agent[0].cac_tier || 'explorer';
       const allEvents = await query(
         `SELECT event_type, delta, created_at
-         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         FROM public.trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [did]
       );
       const result = computeScore(allEvents, tier);
@@ -646,7 +594,7 @@ const TOOLS = {
       // Get existing events for this agent/domain
       const existingEvents = await query(
         `SELECT quality_score, delta, standing_after, created_at
-         FROM app.cuttlefish_standing_events
+         FROM public.standing_events
          WHERE agent_did = $1 AND domain = $2
          ORDER BY created_at ASC`, [did, domain]
       );
@@ -660,7 +608,7 @@ const TOOLS = {
 
       // Insert event
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_standing_events
+        `INSERT INTO public.standing_events
          (agent_did, domain, event_type, quality_score, delta, standing_after, reference, note)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, event_id, created_at`,
@@ -669,7 +617,7 @@ const TOOLS = {
 
       // Upsert standing record
       await query(
-        `INSERT INTO app.cuttlefish_stewardship_standing
+        `INSERT INTO public.stewardship_standing
          (agent_did, domain, standing_value, ladder_tier, last_event_at, updated_at)
          VALUES ($1, $2, $3, $4, NOW(), NOW())
          ON CONFLICT (id) DO UPDATE
@@ -714,13 +662,13 @@ const TOOLS = {
         // Specific domain
         const events = await query(
           `SELECT event_type, quality_score, delta, standing_after, note, created_at
-           FROM app.cuttlefish_standing_events
+           FROM public.standing_events
            WHERE agent_did = $1 AND domain = $2
            ORDER BY created_at DESC LIMIT 10`, [did, domain]
         );
         const allEvents = await query(
           `SELECT quality_score, delta, created_at
-           FROM app.cuttlefish_standing_events
+           FROM public.standing_events
            WHERE agent_did = $1 AND domain = $2
            ORDER BY created_at ASC`, [did, domain]
         );
@@ -747,7 +695,7 @@ const TOOLS = {
       // All domains
       const domains = await query(
         `SELECT domain, standing_value, ladder_tier, last_event_at, updated_at
-         FROM app.cuttlefish_stewardship_standing
+         FROM public.stewardship_standing
          WHERE agent_did = $1
          ORDER BY domain`, [did]
       );
@@ -755,7 +703,7 @@ const TOOLS = {
       if (!domains.length) {
         const domainEvents = await query(
           `SELECT domain, quality_score, delta, created_at
-           FROM app.cuttlefish_standing_events
+           FROM public.standing_events
            WHERE agent_did = $1
            ORDER BY created_at ASC`, [did]
         );
@@ -817,7 +765,7 @@ const TOOLS = {
 
       // Fetch agent data
       const agent = await query(
-        `SELECT cac_tier, ial, lifecycle_status, trust_band FROM app.cuttlefish_agents WHERE did = $1`,
+        `SELECT cac_tier, ial, lifecycle_status, trust_band FROM public.registry_agents WHERE did = $1`,
         [agent_did]
       );
       if (!agent.length) {
@@ -826,14 +774,14 @@ const TOOLS = {
 
       // Compute trust score
       const trustEvents = await query(
-        `SELECT event_type, delta, created_at FROM app.cuttlefish_trust_events
+        `SELECT event_type, delta, created_at FROM public.trust_events
          WHERE agent_did = $1 ORDER BY created_at ASC`, [agent_did]
       );
       const tgScore = computeScore(trustEvents, agent[0].cac_tier || 'explorer');
 
       // Compute standing
       const standingEvents = await query(
-        `SELECT quality_score, delta, created_at FROM app.cuttlefish_standing_events
+        `SELECT quality_score, delta, created_at FROM public.standing_events
          WHERE agent_did = $1 AND domain = $2 ORDER BY created_at ASC`, [agent_did, domain]
       );
       const standing = computeStanding(standingEvents);
@@ -885,7 +833,7 @@ const TOOLS = {
 
       // Audit log
       await query(
-        `INSERT INTO app.cuttlefish_gate_decisions
+        `INSERT INTO public.gate_decisions
          (agent_did, activity_type, domain, cac_tier, ial, allowed,
           trustgraph_score, trustgraph_status, standing_value, standing_ladder,
           reasons, purpose)
@@ -955,7 +903,7 @@ const TOOLS = {
               work_unit, section_404_category, reward_eligibility, signature } = args;
 
       const lastEvent = await query(
-        `SELECT current_hash FROM app.cuttlefish_activity_registry
+        `SELECT current_hash FROM public.activity_registry
          WHERE agent_did = $1 ORDER BY id DESC LIMIT 1`, [agent_did]
       );
       const previousHash = lastEvent[0]?.current_hash || null;
@@ -964,7 +912,7 @@ const TOOLS = {
       const currentHash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_activity_registry
+        `INSERT INTO public.activity_registry
          (actor_kya_id, agent_did, activity_type, domain, work_unit, evidence_hash,
           section_404_category, reward_eligibility, signature, previous_hash, current_hash)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -980,18 +928,18 @@ const TOOLS = {
       let trustResult = null;
       if (tgDelta !== 0) {
         const agent = await query(
-          `SELECT cac_tier, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1`, [agent_did]
+          `SELECT cac_tier, lifecycle_status FROM public.registry_agents WHERE did = $1`, [agent_did]
         );
         if (agent.length) {
           const tier = agent[0].cac_tier || 'explorer';
           const allEvents = await query(
-            `SELECT event_type, delta, created_at FROM app.cuttlefish_trust_events
+            `SELECT event_type, delta, created_at FROM public.trust_events
              WHERE agent_did = $1 ORDER BY created_at ASC`, [agent_did]
           );
           const computed = computeScore(allEvents, tier);
-          const scoreAfter = Math.max(TG_PARAMS.FLOOR, Math.min(TG_PARAMS.CEIL, computed.score + tgDelta));
+          const scoreAfter = Math.max(PARAMS.MIN_SCORE, Math.min(PARAMS.MAX_SCORE, computed.score + tgDelta));
           await query(
-            `INSERT INTO app.cuttlefish_trust_events
+            `INSERT INTO public.trust_events
              (agent_did, event_type, delta, score_after, reference, note, domain, evidence_hash, ar_event_ref)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
             [agent_did, activity_type, tgDelta, scoreAfter,
@@ -999,10 +947,14 @@ const TOOLS = {
              domain || null, evidence_hash, inserted.event_id]
           );
           await query(
-            `UPDATE app.cuttlefish_agents
+            `UPDATE public.registry_agents
              SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW(), updated_at = NOW()
              WHERE did = $3`,
-            [scoreAfter, getBand(scoreAfter), agent_did]
+          // getBand returns {min, max, name, status} from the shared engine; the
+          // removed inline copy returned a bare string. trust_band is a text
+          // column, so writing the object itself would have stored
+          // "[object Object]" as every agent's band. Take the name.
+            [scoreAfter, getBand(scoreAfter).name, agent_did]
           );
           trustResult = { delta: tgDelta, scoreAfter };
         }
@@ -1036,7 +988,7 @@ const TOOLS = {
         `SELECT version, activity_type, base_rate, min_amount, per_event_cap,
                 quality_multiplier_default, section_404_category, effective_from,
                 effective_until, is_active
-         FROM app.cuttlefish_rate_card
+         FROM public.rate_card
          WHERE is_active = true
          ORDER BY activity_type`
       );
@@ -1071,9 +1023,8 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did } = args;
       let sql = `SELECT id, agent_did, tier, usdc_prepaid, token_balance, status,
-                        issued_at, expires_at, created_at, chain_tx_hash,
-                        cac_address, operator_address, rollover_expires_at, last_topup_at
-                 FROM app.cuttlefish_cac_credentials`;
+                        issued_at, expires_at, created_at
+                 FROM public.cac_credentials`;
       const params = [];
       if (agent_did) {
         sql += ` WHERE agent_did = $1 ORDER BY id DESC`;
@@ -1093,9 +1044,6 @@ const TOOLS = {
           issuedAt: c.issued_at,
           expiresAt: c.expires_at,
           createdAt: c.created_at,
-          chainTxHash: c.chain_tx_hash,
-          cacAddress: c.cac_address,
-          operatorAddress: c.operator_address,
         })),
         total: (creds || []).length,
       };
@@ -1121,7 +1069,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, tier, usdc_prepaid, token_balance } = args;
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_cac_credentials
+        `INSERT INTO public.cac_credentials
          (agent_did, tier, usdc_prepaid, token_balance, status)
          VALUES ($1, $2, $3, $4, 'active')
          RETURNING id, agent_did, tier, usdc_prepaid, token_balance, status, issued_at`,
@@ -1130,7 +1078,7 @@ const TOOLS = {
 
       // Update agent's cac_tier
       await query(
-        `UPDATE app.cuttlefish_agents SET cac_tier = $1, updated_at = NOW() WHERE did = $2`,
+        `UPDATE public.registry_agents SET cac_tier = $1, updated_at = NOW() WHERE did = $2`,
         [tier || 'explorer', agent_did]
       );
 
@@ -1165,7 +1113,7 @@ const TOOLS = {
       let sql = `SELECT id, title, description, category, submitter_did, version,
                         parent_id, status, ipfs_cid, chain_anchor_tx, combined_hash,
                         routed_to, metadata, created_at, trust_score_delta, arweave_tx, updated_at
-                 FROM app.cuttlefish_proposals`;
+                 FROM public.submitted_proposals`;
       const conditions = [];
       const params = [];
       if (status) { params.push(status); conditions.push(`status = $${params.length}`); }
@@ -1209,7 +1157,7 @@ const TOOLS = {
     handler: async (args) => {
       const { title, description, category, submitter_did } = args;
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_proposals
+        `INSERT INTO public.submitted_proposals
          (title, description, category, submitter_did, status)
          VALUES ($1, $2, $3, $4, 'submitted')
          RETURNING id, title, status, created_at`,
@@ -1239,8 +1187,8 @@ const TOOLS = {
       const members = await query(
         `SELECT c.id, c.member_did, c.role, c.domain, c.seated_at, c.term_expires_at,
                 c.status, c.metadata, a.name, a.agent_type
-         FROM app.cuttlefish_council c
-         LEFT JOIN app.cuttlefish_agents a ON a.did = c.member_did
+         FROM public.council c
+         LEFT JOIN public.registry_agents a ON a.did = c.member_did
          WHERE c.status = 'seated'
          ORDER BY c.seated_at DESC`
       );
@@ -1279,7 +1227,7 @@ const TOOLS = {
       let sql = `SELECT id, agent_did, platform, content_en, content_native, language,
                         hashtags, is_milestone, constitutional_score, flags,
                         operator_approved, trib_approved, status, posted_at, post_url, created_at
-                 FROM app.cuttlefish_social_posts`;
+                 FROM public.social_posts`;
       const conditions = [];
       const params = [];
       if (agent_did) { params.push(agent_did); conditions.push(`agent_did = $${params.length}`); }
@@ -1330,7 +1278,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_did, platform, content_en, content_native, language, hashtags, is_milestone } = args;
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_social_posts
+        `INSERT INTO public.social_posts
          (agent_did, platform, content_en, content_native, language, hashtags, is_milestone, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft')
          RETURNING id, status, created_at`,
@@ -1361,7 +1309,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_id } = args;
       let sql = `SELECT id, agent_id, conversation_id, user_message, agent_response, simulated, created_at
-                 FROM app.cuttlefish_chat_messages`;
+                 FROM public.chat_transcripts`;
       const params = [];
       if (agent_id) {
         sql += ` WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 100`;
@@ -1405,7 +1353,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_id, conversation_id, user_message, agent_response, simulated } = args;
       const [inserted] = await query(
-        `INSERT INTO app.cuttlefish_chat_messages
+        `INSERT INTO public.chat_transcripts
          (agent_id, conversation_id, user_message, agent_response, simulated)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, created_at`,
@@ -1435,7 +1383,7 @@ const TOOLS = {
         `SELECT layer_key, name, sub_label, amount_m, pct_of_total, color,
                 seniority, yield_score, coverage, description, details,
                 display_order, is_active, is_open
-         FROM app.cuttlefish_capital_stack
+         FROM public.capital_stack
          WHERE is_active = 1
          ORDER BY display_order, seniority`
       );
@@ -1476,7 +1424,7 @@ const TOOLS = {
                 headline, amount_range, rate_or_credit, term_years,
                 eligibility, application_url, contact, notes,
                 display_order, is_active
-         FROM app.cuttlefish_financing_programs
+         FROM public.financing_programs
          WHERE is_active = 1
          ORDER BY display_order`
       );
@@ -1518,7 +1466,7 @@ const TOOLS = {
       const { tier } = args;
       let sql = `SELECT id, tier, name, subtitle, multiple, multiple_color,
                         featured, metrics, display_order, created_at
-                 FROM app.cuttlefish_scenarios`;
+                 FROM public.scenarios`;
       const params = [];
       if (tier) {
         sql += ` WHERE tier = $1`;
@@ -1585,7 +1533,7 @@ const TOOLS = {
         status: reachable ? 'ok' : 'degraded',
         localDb: 'postgres@127.0.0.1:5432/xmrt_suite',
         engines: {
-          trustgraph: { spec: 'TG-001 v1.0', version: '1.0.0', params: { CEIL: TG_PARAMS.CEIL, DECAY: TG_PARAMS.DECAY, CAP: TG_PARAMS.CAP } },
+          trustgraph: { spec: 'TG-001 v1.0', version: '1.0.0', params: { CEIL: PARAMS.CEIL, DECAY: PARAMS.DECAY, CAP: PARAMS.CAP } },
           standing: { spec: 'SS-001 v1.0', version: '1.0.0', params: { ALPHA: SS_PARAMS.ALPHA, CAP: SS_PARAMS.CAP_DEFAULT } },
           gate: { spec: 'SGQ-001 v1.0', version: '1.0.0', activityTypes: Object.keys(ACTIVITY_REQUIREMENTS).length - 1 },
           activityRegistry: { spec: 'AR-001', version: '1.0.0' },
@@ -1611,9 +1559,9 @@ const TOOLS = {
       const [agents, allEvents] = await Promise.all([
         query(`SELECT did, name, role, agent_type, status, cac_tier, trust_band,
                       lifecycle_status, created_at
-               FROM app.cuttlefish_agents ORDER BY id`),
+               FROM public.registry_agents ORDER BY id`),
         query(`SELECT agent_did, event_type, delta, score_after, reference, note, domain, created_at
-               FROM app.cuttlefish_trust_events ORDER BY created_at ASC`),
+               FROM public.trust_events ORDER BY created_at ASC`),
       ]);
 
       const eventsByDid = {};
@@ -1666,18 +1614,18 @@ const TOOLS = {
     handler: async (args) => {
       const { did } = args;
       const agent = await query(
-        `SELECT cac_tier FROM app.cuttlefish_agents WHERE did = $1`, [did]
+        `SELECT cac_tier FROM public.registry_agents WHERE did = $1`, [did]
       );
       if (!agent.length) return { error: 'Agent not found' };
       const tier = agent[0].cac_tier || 'explorer';
       const events = await query(
         `SELECT event_type, delta, score_after, created_at, note, reference, domain
-         FROM app.cuttlefish_trust_events WHERE agent_did = $1
+         FROM public.trust_events WHERE agent_did = $1
          ORDER BY created_at ASC`, [did]
       );
       const result = computeScore(events || [], tier);
       await query(
-        `UPDATE app.cuttlefish_agents
+        `UPDATE public.registry_agents
          SET trust_score = $1, trust_band = $2, trust_score_updated_at = NOW()
          WHERE did = $3`,
         [result.score, result.band, did]
@@ -1710,14 +1658,14 @@ const TOOLS = {
       const { did, domain } = args;
       const allEvents = await query(
         `SELECT quality_score, delta, created_at
-         FROM app.cuttlefish_standing_events
+         FROM public.standing_events
          WHERE agent_did = $1 AND domain = $2
          ORDER BY created_at ASC`, [did, domain]
       );
       const computed = computeStanding(allEvents || []);
       const events = await query(
         `SELECT event_type, quality_score, delta, standing_after, note, created_at
-         FROM app.cuttlefish_standing_events
+         FROM public.standing_events
          WHERE agent_did = $1 AND domain = $2
          ORDER BY created_at DESC LIMIT 10`, [did, domain]
       );

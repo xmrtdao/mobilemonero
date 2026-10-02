@@ -1,0 +1,4 @@
+(node:16168) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[runtime] proxy error to http://127.0.0.1:54321/functions/v1/xmrt-university: fetch failed
+[runtime] proxy error to http://127.0.0.1:54321/functions/v1/xmrt-university: fetch failed

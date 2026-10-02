@@ -74,7 +74,7 @@ for (const a of agents) {
   // id is SERIAL — omit from INSERT
   const vals = a.slice(1); // skip the string id
   await client.query(
-    `INSERT INTO app.cuttlefish_agents (did, name, role, agent_type, agent_subtype, status, version, trust_score, cac_id, color, description, greeting, responses, created_at, updated_at)
+    `INSERT INTO public.registry_agents (did, name, role, agent_type, agent_subtype, status, version, trust_score, cac_id, color, description, greeting, responses, created_at, updated_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
      ON CONFLICT (did) DO UPDATE SET name=EXCLUDED.name, role=EXCLUDED.role, status=EXCLUDED.status, version=EXCLUDED.version, trust_score=EXCLUDED.trust_score, color=EXCLUDED.color, description=EXCLUDED.description, greeting=EXCLUDED.greeting, responses=EXCLUDED.responses, updated_at=NOW()`,
     vals
@@ -92,7 +92,7 @@ const cacCredentials = [
 ];
 for (const c of cacCredentials) {
   await client.query(
-    `INSERT INTO app.cuttlefish_cac_credentials (agent_did, tier, usdc_prepaid, token_balance, status, expires_at, created_at)
+    `INSERT INTO public.cac_credentials (agent_did, tier, usdc_prepaid, token_balance, status, expires_at, created_at)
      VALUES ($1,$2,$3,$4,$5,$6,NOW()) ON CONFLICT DO NOTHING`,
     c
   );
@@ -113,7 +113,7 @@ const trustEvents = [
 ];
 for (const e of trustEvents) {
   await client.query(
-    `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, reference, note, created_at)
+    `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, reference, note, created_at)
      VALUES ($1,$2,$3,$4,$5,$6,NOW() - interval '1 day' * floor(random() * 30)::int)`,
     e
   );
@@ -141,7 +141,7 @@ const stackLayers = [
 ];
 for (const l of stackLayers) {
   await client.query(
-    `INSERT INTO app.cuttlefish_capital_stack (layer_key, name, sub_label, amount_m, pct_of_total, color, seniority, yield_score, coverage, description, details, display_order, is_active, is_open)
+    `INSERT INTO public.capital_stack (layer_key, name, sub_label, amount_m, pct_of_total, color, seniority, yield_score, coverage, description, details, display_order, is_active, is_open)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (layer_key) DO UPDATE SET name=EXCLUDED.name, amount_m=EXCLUDED.amount_m, pct_of_total=EXCLUDED.pct_of_total, is_open=EXCLUDED.is_open`,
     l
@@ -166,7 +166,7 @@ const programs = [
 ];
 for (const p of programs) {
   await client.query(
-    `INSERT INTO app.cuttlefish_financing_programs (program_key, name, category, administering_entity, applies_to, headline, amount_range, rate_or_credit, term_years, eligibility, application_url, contact, notes, display_order, is_active)
+    `INSERT INTO public.financing_programs (program_key, name, category, administering_entity, applies_to, headline, amount_range, rate_or_credit, term_years, eligibility, application_url, contact, notes, display_order, is_active)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1)
      ON CONFLICT (program_key) DO UPDATE SET name=EXCLUDED.name, headline=EXCLUDED.headline, is_active=1`,
     p
@@ -187,7 +187,7 @@ const contracts = [
 ];
 for (const c of contracts) {
   await client.query(
-    `INSERT INTO app.cuttlefish_contracts (name, address, description, status, created_at)
+    `INSERT INTO public.agreements (name, address, description, status, created_at)
      VALUES ($1,$2,$3,$4,NOW()) ON CONFLICT DO NOTHING`,
     c
   );
@@ -220,7 +220,7 @@ const scenarios = [
 ];
 for (const s of scenarios) {
   await client.query(
-    `INSERT INTO app.cuttlefish_scenarios (tier, name, subtitle, multiple, multiple_color, featured, metrics, display_order, created_at)
+    `INSERT INTO public.scenarios (tier, name, subtitle, multiple, multiple_color, featured, metrics, display_order, created_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT DO NOTHING`,
     s
   );

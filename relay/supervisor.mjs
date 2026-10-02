@@ -21,7 +21,7 @@
  */
 
 import { spawn, execSync, execFileSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, createWriteStream, statSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
@@ -44,9 +44,11 @@ function sanitizeText(text) {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const DATA_DIR = join(ROOT, 'relay-data');
+const LOGS_DIR = join(DATA_DIR, 'logs');
 const STATE_FILE = join(DATA_DIR, 'supervisor-state.json');
 const LOG_FILE = join(ROOT, 'relay-data', 'supervisor.log');
 mkdirSync(DATA_DIR, { recursive: true });
+mkdirSync(LOGS_DIR, { recursive: true });
 
 // ── Config ──────────────────────────────────────────────────
 const CHECK_INTERVAL_MS = 30_000;             // 30s health loop
@@ -55,7 +57,7 @@ const CAMPAIGN_DAEMON_STARTUP_GRACE_MS = 3_000;
 const PG_STARTUP_GRACE_MS    = 18_000;        // pg_ctl start can be slow
 const LOCAL_SB_STARTUP_GRACE_MS = 6_000;      // deno cold start
 const TUNNEL_STARTUP_GRACE_MS    = 12_000;    // cloudflared handshake
-const VITE_STARTUP_GRACE_MS      = 15_000;    // Vite cold start
+const VITE_STARTUP_GRACE_MS      = 45_000;    // Vite cold start (~38s: dep pre-bundling on heavy suite SPA)
 const ALERT_COOLDOWN_MS = 30 * 60_000;        // 30min between repeat alerts
 const TASK_CHECK_INTERVAL_MS = 15 * 60_000;   // check scheduled tasks every 15min
 const TASK_MAX_AGE_MS = 24 * 60 * 60_000;     // alert if no run in 24h
@@ -85,16 +87,7 @@ const SERVICES = [
     maxRestartsPerHour: 4,
     paused: false, // Unpaused 2026-07-09: Resend Pro account active
   },
-  {
-    name: '31harbor-scheduler',
-    cmd: 'node',
-    args: ['relay/tools/31harbor-scheduler.mjs', '--daemon'],
-    cwd: ROOT,
-    healthCheck: () => checkProcessByScript('31harbor-scheduler.mjs'),
-    startupGrace: 3_000,
-    maxRestartsPerHour: 4,
-  },
-  {
+    {
     name: 'pg',
     cmd: 'node',
     args: ['relay/start-pg.mjs'],
@@ -114,12 +107,66 @@ const SERVICES = [
     maxRestartsPerHour: 4,
   },
   {
+    // The Vite dev server for the suite SPA, on :5173 with base '/suite/'.
+    //
+    // This used to be `relay/start-vite-detached.mjs suite`. That launcher is gone
+    // from the tree, so the entry could never have started anything: on a
+    // supervisor restart it would have spawned node with a missing script, seen it
+    // exit, and then restart-looped on a service that was in fact healthy - because
+    // the health check probes the port, not the launcher.
+    //
+    // That is the specific failure this shape invites: a health check that
+    // answers for a process the supervisor cannot itself start. The dev server is
+    // a long-lived foreground process, so it is spawned directly here and does not
+    // need wrapperExits.
     name: 'vite',
     cmd: 'node',
-    args: ['relay/start-vite-detached.mjs', 'suite'],
-    cwd: ROOT,
+    args: ['node_modules/vite/bin/vite.js', '--port', '5173', '--host', '127.0.0.1'],
+    cwd: join(ROOT, 'suite'),
     healthCheck: () => checkHttp('http://127.0.0.1:5173/', 2000),
     startupGrace: VITE_STARTUP_GRACE_MS,
+    maxRestartsPerHour: 3,
+  },
+  {
+    // The relay can wedge behind synchronous work, and this is the one endpoint
+    // that stays answerable when it does - which is what makes an external liveness
+    // probe possible at all. Small, static, no dependencies on the relay.
+    name: 'health-server',
+    cmd: 'node',
+    args: ['relay/health-server.mjs'],
+    cwd: ROOT,
+    healthCheck: () => checkHttp('http://127.0.0.1:8088/', 2000),
+    startupGrace: 3_000,
+    maxRestartsPerHour: 4,
+  },
+  {
+    // The resume/PDF renderer behind Jobby's download link. Lives in its own
+    // project directory, so cwd is that directory and the script path is relative
+    // to it - the reason this cannot use the relay-relative form the others do.
+    name: 'resume-server',
+    cmd: 'py',
+    args: ['resume_server.py', '--host', '127.0.0.1', '--port', '5175'],
+    cwd: join(ROOT, 'jobby-mcjobberson'),
+    healthCheck: () => checkHttp('http://127.0.0.1:5175/', 2000),
+    startupGrace: 8_000,
+    maxRestartsPerHour: 3,
+    // The Windows `py` shim spawns the real python.exe as a child and exits, so a
+    // clean exit here is the launcher detaching, not the service dying.
+    wrapperExits: true,
+  },
+  {
+    // The page-agent MCP hub. It lives outside this repository entirely
+    // (Desktop\page-agent), so cwd is an absolute path and the supervisor is the
+    // only thing in the tree that knows where it is.
+    name: 'page-agent-mcp',
+    cmd: 'node',
+    args: ['relay-data/pa-mcp-launch.cjs'],
+    cwd: ROOT,
+    // A detached launcher, so the child is tracked through the health check
+    // rather than the wrapper's exit code. The entry point is matched by name
+    // because the hub binds no port to poll.
+    healthCheck: () => checkProcessByScript('page-agent') || checkProcessByScript('packages/mcp'),
+    startupGrace: 10_000,
     maxRestartsPerHour: 3,
     wrapperExits: true,
   },
@@ -133,16 +180,17 @@ const SERVICES = [
     maxRestartsPerHour: 3,
     wrapperExits: true,
   },
-  {
-    name: 'zero-claw',
-    cmd: 'node',
-    args: ['relay/start-vite-detached.mjs', 'zero-claw'],
-    cwd: ROOT,
-    healthCheck: () => checkHttp('http://127.0.0.1:5174/', 2000),
-    startupGrace: 15_000,
-    maxRestartsPerHour: 3,
-    wrapperExits: true,
-  },
+  // Removed: python-exec, miner, zero-claw.
+  //
+  // All three named entry points that are not in the tree (python-exec-service.mjs,
+  // xmrig-service.mjs, start-vite-detached.mjs) and none of the three was running
+  // either. They were keeping the count honest rather than describing anything:
+  // the dashboard derives its service list from this array, so a service that can
+  // never start still appeared as supervised.
+  //
+  // The ports they claimed (8070, 5174) answer nothing, so there was no live
+  // process for their health checks to be answering on. Restored from git history
+  // if any of them is ever wanted again.
   {
     name: 'alice',
     cmd: 'node',
@@ -172,13 +220,38 @@ const SERVICES = [
     maxRestartsPerHour: 4,
   },
   {
-    name: 'suite-mcp',
+    // The suite MCP server.
+    //
+    // Two corrections to what was here. The name was 'suite-mcp' while every
+    // consumer - supervisor-state.json, the dashboard tile, relay-data/suite-mcp-
+    // launch.cjs - calls it 'xmrtdao-suite-mcp', so the on-disk name did not match
+    // the running one. And the port was 3200 when the server actually listens on
+    // 3121 (3120 belongs to cuttlefishclaws-mcp): 3200 answers nothing, so this
+    // health check would have failed forever against a perfectly healthy server.
+    name: 'xmrtdao-suite-mcp',
     cmd: 'node',
-    args: ['relay/xmrtdao-suite-mcp.mjs', '--http', '--port', '3200'],
+    args: ['relay/xmrtdao-suite-mcp.mjs', '--http', '--port', '3121'],
     cwd: ROOT,
-    healthCheck: () => checkHttp('http://127.0.0.1:3200/health', 2000),
+    healthCheck: () => checkHttp('http://127.0.0.1:3121/health', 2000),
     startupGrace: 5_000,
     maxRestartsPerHour: 4,
+  },
+  {
+    // DeepSeek Harness web UI (Builder's workspace + watchable harness on :3080).
+    // Runs via the detached .cjs launcher which sets DEEPSEEK_BASE_URL/API_KEY in
+    // the process env and writes the one-time auth-token URL to dsh/dsh-web-harness.log
+    // (that's the file dsh-open reads to open an authenticated window). wrapperExits:
+    // the launcher detaches the real node child, so health is a process check for
+    // the running harness bin, not a bare-URL HTTP probe (the bare URL returns 401
+    // auth-wall, which is the healthy state). Matches the vite/tunnel pattern.
+    name: 'dsh',
+    cmd: 'node',
+    args: ['dsh/dsh-web-launch.cjs'],
+    cwd: ROOT,
+    healthCheck: () => checkProcessByScript('apps/cli/src/bin.ts --profile web'),
+    wrapperExits: true,
+    startupGrace: 30_000,
+    maxRestartsPerHour: 3,
   },
 ];
 
@@ -206,7 +279,7 @@ function loadEnv() {
   return out;
 }
 const ENV = loadEnv();
-const RESEND_KEY = ENV.RESEND_31HARBOR_API_KEY || ENV.RESEND_XMRT_API_KEY || ENV.RESEND_API_KEY;
+const RESEND_KEY = ENV.RESEND_XMRT_API_KEY || ENV.RESEND_API_KEY;
 const ALERT_EMAILS = ['xmrtsolutions@gmail.com', 'xmrtnet@gmail.com'];
 // Disabled 2026-07-09: Resend 403 on mobilemonero.com domain verification.
 // Supervisor still runs and restarts services — just no email alerts.
@@ -268,7 +341,7 @@ function checkHttp(url, timeoutMs, skipAuth = false) {
     };
     // Add API key for relay health check to bypass Cloudflare Access
     if (skipAuth) {
-      options.headers['x-api-key'] = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
+      options.headers['x-api-key'] = '0de4fe0de4c4723baeb812bb378f95e852a39379b117795da00095481ff14043';
     }
     const req = http.request(options, (res) => {
       res.resume();
@@ -362,7 +435,6 @@ const KNOWN_SCRIPTS = [
   'alice.mjs',           // Alice daemon
   'campaign-scheduler.mjs',
   'cron-engine-v2.mjs',
-  '31harbor-scheduler.mjs',
   'cuttlefishclaws-mcp.mjs',
   'cuttlefish-mcp.mjs',
   'xmrtdao-suite-mcp.mjs',
@@ -394,8 +466,8 @@ function deduplicateRuntimes() {
       }
       if (pids.length <= 1) continue;
 
-      // Keep the lowest PID (oldest process), kill the rest
-      pids.sort((a, b) => a - b);
+      // Keep the highest PID (newest process), kill the rest
+      pids.sort((a, b) => b - a);
       const keepPid = pids[0];
       const killPids = pids.slice(1).filter(pid => pid !== process.pid); // never kill ourselves
 
@@ -437,37 +509,128 @@ function startService(svc) {
 
   log('INFO', `Starting ${svc.name}: ${svc.cmd} ${svc.args.join(' ')}`);
   try {
+    // Set up log rotation for this service
+    const logBase = join(LOGS_DIR, svc.name);
+    const logPath = `${logBase}.log`;
+    
+    // Rotate if > 10MB
+    try {
+      const stats = statSync(logPath);
+      if (stats.size > 10 * 1024 * 1024) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        renameSync(logPath, `${logBase}-${timestamp}.log`);
+      }
+    } catch {}
+    
+    const logStream = createWriteStream(logPath, { flags: 'a' });
     const child = spawn(svc.cmd, svc.args, {
       cwd: svc.cwd,
-      stdio: 'ignore',
-      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, ...ENV },
     });
+    child.stdout.pipe(logStream);
+    child.stderr.pipe(logStream);
     child.unref();
     child.on('exit', (code, signal) => {
       // For wrapperExits services, a clean exit (code=0) just means the launcher
       // detached its real child. The health check will catch a real outage.
       if (svc.wrapperExits && code === 0) {
         log('INFO', `${svc.name} wrapper detached (real child tracked via health check)`);
-      } else {
-        log('WARN', `${svc.name} exited (code=${code} signal=${signal})`);
+        // Don't nullify childPid for wrappers — the health check handles it
+        return;
       }
+      const reason = code !== null ? `exit_code_${code}` : `signal_${signal}`;
+      log('WARN', `${svc.name} exited (code=${code} signal=${signal})`);
       svcState.childPid = null;
+      svcState.restartReason = reason;
       saveState(state);
     });
     svcState.childPid = child.pid;
     svcState.startedAt = Date.now();
     svcState.restartTimestamps.push(Date.now());
     saveState(state);
+    log('INFO', `${svc.name} started with PID ${child.pid}, logging to ${logPath}`);
   } catch (e) {
     log('ERROR', `Failed to start ${svc.name}: ${e.message}`);
   }
 }
 
+let _dedupDone = false;
+
 async function superviseLoop() {
-  // Deduplicate runtimes on every health check cycle
-  deduplicateRuntimes();
+  // Deduplicate runtimes only once on the first cycle, not every 30s
+  if (!_dedupDone) {
+    deduplicateRuntimes();
+    _dedupDone = true;
+  }
+
+  // ── Process agent-queued service actions ──
+  // The relay's `service_control` tool writes actions here; supervisor executes them.
+  try {
+    const { readFileSync, writeFileSync } = await import('fs');
+    const { join } = await import('path');
+    const queueFile = join(DATA_DIR, 'service-actions.json');
+    if (existsSync(queueFile)) {
+      const queue = JSON.parse(readFileSync(queueFile, 'utf8'));
+      if (Array.isArray(queue) && queue.length > 0) {
+        const pending = queue.filter(a => !a.processedAt);
+        for (const action of pending) {
+          const svc = SERVICES.find(s => s.name === action.service);
+          if (!svc) {
+            log('WARN', `service_control: unknown service "${action.service}"`);
+            action.processedAt = Date.now();
+            action.result = 'unknown_service';
+            continue;
+          }
+          if (svc.paused) {
+            log('WARN', `service_control: service "${action.service}" is paused (manual-only)`);
+            action.processedAt = Date.now();
+            action.result = 'paused';
+            continue;
+          }
+          const svcState = state.services[svc.name];
+          if (action.action === 'restart') {
+            log('INFO', `service_control: restarting ${svc.name} (requested by ${action.requestedBy || 'unknown'})`);
+            if (svcState.childPid) {
+              try { execSync(`taskkill /F /PID ${svcState.childPid} 2>nul`, { stdio: 'ignore' }); } catch {}
+            }
+            startService(svc);
+            action.processedAt = Date.now();
+            action.result = 'restarted';
+          } else if (action.action === 'start') {
+            const healthy = await svc.healthCheck();
+            if (!healthy) {
+              log('INFO', `service_control: starting ${svc.name} (requested by ${action.requestedBy || 'unknown'})`);
+              startService(svc);
+              action.processedAt = Date.now();
+              action.result = 'started';
+            } else {
+              log('INFO', `service_control: ${svc.name} already healthy, skipping start`);
+              action.processedAt = Date.now();
+              action.result = 'already_healthy';
+            }
+          } else if (action.action === 'stop') {
+            log('INFO', `service_control: stopping ${svc.name} (requested by ${action.requestedBy || 'unknown'})`);
+            if (svcState.childPid) {
+              try { execSync(`taskkill /F /PID ${svcState.childPid} 2>nul`, { stdio: 'ignore' }); } catch {}
+            }
+            svcState.childPid = null;
+            action.processedAt = Date.now();
+            action.result = 'stopped';
+          } else if (action.action === 'status') {
+            // status is handled inline by the relay tool, not queued
+            action.processedAt = Date.now();
+            action.result = 'status_inline';
+          }
+        }
+        // Save back with processed markers
+        writeFileSync(queueFile, JSON.stringify(queue, null, 2));
+      }
+    }
+  } catch (e) {
+    log('WARN', `service_control queue processing error: ${e.message}`);
+  }
 
   for (const svc of SERVICES) {
     // Skip paused services
@@ -480,12 +643,14 @@ async function superviseLoop() {
       const wasRunning = svcState.childPid;
       if (wasRunning) {
         log('WARN', `${svc.name} health check failed (pid ${wasRunning}). Restarting.`);
+        svcState.restartReason = 'health_check_failed';
         // Best-effort kill (don't await; we don't want to block on dead process)
         try { execSync(`taskkill /F /PID ${wasRunning} 2>nul`, { stdio: 'ignore' }); } catch {}
-      } else if (!svc.wrapperExits) {
-        // For non-wrappers, childPid=null means we never started it. For wrappers,
-        // childPid=null is the normal post-detach state — silent.
-        log('WARN', `${svc.name} not running. Starting.`);
+      } else {
+        // For wrappers, childPid=null is the normal post-detach state.
+        // But if the health check fails, we still need to restart.
+        log('WARN', `${svc.name} health check failed (no tracked pid). Restarting.`);
+        svcState.restartReason = 'health_check_failed_no_pid';
       }
       // Debounce: if we already alerted in last 30min, skip email
       const alertKey = `${svc.name}-down`;

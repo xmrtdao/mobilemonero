@@ -9,7 +9,7 @@
  * Started by supervisor.mjs as the 'pg' service.
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync, openSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -17,6 +17,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const PG_BIN = join(ROOT, 'pg', 'bin', 'postgres.exe');
 const PG_DATA = join(ROOT, 'pg', 'data');
+const LOG_DIR = join(ROOT, 'logs');
+const PG_STDERR_LOG = join(LOG_DIR, 'pg-stderr.log');
 
 if (!existsSync(PG_BIN)) {
   console.error(`[start-pg] FATAL: postgres binary not found at ${PG_BIN}`);
@@ -52,9 +54,26 @@ if (existsSync(PID_FILE)) {
   }
 }
 
+// Ensure logs dir exists
+try { mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+
+// Open pg stderr log (truncate if >5MB, else append) so postgres crash/fatal
+// messages that appear before logging_collector is initialized are preserved.
+let stderrFd = null;
+try {
+  if (existsSync(PG_STDERR_LOG)) {
+    const st = statSync(PG_STDERR_LOG);
+    stderrFd = openSync(PG_STDERR_LOG, st.size > 5 * 1024 * 1024 ? 'w' : 'a');
+  } else {
+    stderrFd = openSync(PG_STDERR_LOG, 'w');
+  }
+} catch (e) {
+  console.error(`[start-pg] could not open pg-stderr.log: ${e.message}`);
+}
+
 const child = spawn(PG_BIN, ['-D', PG_DATA, '-p', '5432'], {
   cwd: ROOT,
-  stdio: ['ignore', 'ignore', 'ignore'],
+  stdio: ['ignore', stderrFd || 'ignore', stderrFd || 'ignore'],
   windowsHide: true,
   detached: false,
 });

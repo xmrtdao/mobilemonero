@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@libp2p/plaintext": "^3.0.26",
+    "docx": "^9.7.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5"
+  }
+}

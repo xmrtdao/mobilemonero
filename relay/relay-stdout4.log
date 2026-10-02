@@ -1,0 +1,17 @@
+[Relay] Loaded .env (overwrite mode) from C:\Users\PureTrek\Desktop\xmrtdao\relay\.env
+  Suite SPA: C:\Users\PureTrek\Desktop\xmrtdao\suite\dist
+  HottieHouse SPA: C:\Users\PureTrek\Desktop\xmrtdao\hottiehouse\app\dist
+  CuttlefishClaws SPA: C:\Users\PureTrek\Desktop\xmrtdao\cuttlefishclaws\dist
+  CashDApp SPA: NOT FOUND at C:\Users\PureTrek\Desktop\xmrtdao\cashdapp\dist — skipping
+  Agency Dashboard: C:\Users\PureTrek\Desktop\xmrtdao\31harbor-agency-dashboard\dist (harbor/party/xmrt)
+[CuttlefishClaws] Registered engine routes: trust-score, trust-history, trust-event, recompute, standing, standing-event, gate-evaluate, gate-thresholds, activity-event, agents, rate-card, engine-health
+[RUM] Registering /api/rum-quota route...
+[CuttlefishClaws] Registered university bridge routes: onboard, cert-holders, status, teach
+[runtime] Registered local function: agent-workflow-engine
+[consolidate] cuttlefishclaws-mcp: 25 tools
+[consolidate] xmrtdao-suite-mcp: 15 tools
+[runtime] Registered local function: code-monitor-daemon
+[runtime] Discovered 2 local functions
+[consolidate] cuttlefish-mcp: 19 tools
+[consolidate] Registered 59 MCP tools in-process
+[consolidate] 59 MCP tools registered in-process

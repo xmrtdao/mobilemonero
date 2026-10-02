@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:xlink="http://www.w3.org/1999/xlink"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>1C9E4F2E-3E14-4A2F-9B1D-E2F0A94C7B41</Id>
+  <Version>1.0.0</Version>
+  <ProviderName>Cuttlefish Labs</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Elze Contract AI"/>
+  <Description DefaultValue="Elze Contract Suite — analyze a lease and merge rule-attributed tracked changes into Word."/>
+  <IconUrl DefaultValue="https://relay.mobilemonero.com/elze/word-addin/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://relay.mobilemonero.com/elze/word-addin/assets/icon-80.png"/>
+  <SupportUrl DefaultValue="https://relay.mobilemonero.com/elze"/>
+
+  <AppDomains>
+    <AppDomain>relay.mobilemonero.com</AppDomain>
+    <AppDomain>localhost</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document"/>
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://relay.mobilemonero.com/elze/word-addin/taskpane.html"/>
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="GetStarted.LearnMore"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Contoso.AddinGroup">
+                <Label resid="Commands.GroupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="Contoso.tpicon_16x16"/>
+                  <bt:Image size="32" resid="Contoso.tpicon_32x32"/>
+                  <bt:Image size="80" resid="Contoso.tpicon_80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="ElzeAnalysisButton">
+                  <Label resid="Commands.AnalyzeButton.Label"/>
+                  <Supertip>
+                    <Title resid="Commands.AnalyzeButton.Label"/>
+                    <Description resid="Commands.AnalyzeButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Contoso.tpicon_16x16"/>
+                    <bt:Image size="32" resid="Contoso.tpicon_32x32"/>
+                    <bt:Image size="80" resid="Contoso.tpicon_80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>ButtonId1</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Contoso.tpicon_16x16" DefaultValue="https://relay.mobilemonero.com/elze/word-addin/assets/icon-16.png"/>
+        <bt:Image id="Contoso.tpicon_32x32" DefaultValue="https://relay.mobilemonero.com/elze/word-addin/assets/icon-32.png"/>
+        <bt:Image id="Contoso.tpicon_80x80" DefaultValue="https://relay.mobilemonero.com/elze/word-addin/assets/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://relay.mobilemonero.com/elze/word-addin/taskpane.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://relay.mobilemonero.com/elze/word-addin/commands.js"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="Elze Contract AI loaded"/>
+        <bt:String id="Commands.GroupLabel" DefaultValue="Elze Contract"/>
+        <bt:String id="Commands.AnalyzeButton.Label" DefaultValue="Analyze Lease"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Elze analyzes the open lease for Virginia compliance and returns native tracked changes attributed to each playbook rule and statute."/>
+        <bt:String id="GetStarted.LearnMore" DefaultValue="https://relay.mobilemonero.com/elze"/>
+        <bt:String id="Commands.AnalyzeButton.Tooltip" DefaultValue="Click to open the Elze analysis pane for the current document."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

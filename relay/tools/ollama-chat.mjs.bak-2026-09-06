@@ -1,0 +1,472 @@
+/**
+ * relay/tools/ollama-chat.mjs — Local LLM chat via Ollama with cloud fallback chain
+ *
+ * Primary:   Ollama Pro Cloud (api.ollama.com/v1/chat/completions) via
+ *            OLLAMA_API_KEY or OLLAMA_XMRT_API_KEY or OLLAMA_3RD_API_KEY
+ * Fallback:  OpenRouter (openrouter.ai/api/v1/chat/completions) via
+ *            OPENROUTER_API_KEY with minimax-m3 model (vision) or
+ *            nvidia/nemotron-3.5-lightning:free (text-only, longer rate limits)
+ *
+ * Cascade order:
+ *   1) Ollama Pro Cloud — gemma4:31b on each of 3 keys (primary daily driver)
+ *   2) Ollama Pro Cloud — minimax/minimax-m3:free (vision + tool use, falls back within Ollama)
+ *   3) OpenRouter — minimax/minimax-m3:free (vision-only; text goes to nemotron-3.5-lightning)
+ *   4) OpenRouter — nvidia/nemotron-3.5-lightning:free (text-only daily driver, longer rate limits)
+ *
+ * Tracks which agent/source made each request for token-usage logging.
+ */
+
+const OLLAMA_HOST       = process.env.OLLAMA_HOST       || 'http://localhost:11434';
+const DEFAULT_MODEL     = process.env.OLLAMA_MODEL       || 'minimax/minimax-m3:free';
+// All API keys are read lazily to avoid a module-load-order bug:
+// server.js imports ollama-chat.mjs BEFORE calling loadEnv(), so env
+// vars set in relay/.env are not yet available at import time.
+function getOllamaKey()    { return process.env.OLLAMA_API_KEY    || ''; }
+function getOllamaXmrtKey() { return process.env.OLLAMA_XMRT_API_KEY || ''; }
+function getOllama3rdKey() { return process.env.OLLAMA_3RD_API_KEY  || ''; }
+function getOpenRouterKey() { return process.env.OPENROUTER_API_KEY || ''; }
+
+// ASCII emoticons that small LLMs emit as chatty sign-offs.
+const EMOJI_SIGNOFFS = ['o7', 'O7', '👋', '😊', '🎉', '✨', '👍', '🙏', '😄', '😁'];
+const EMOJI_SIGNOFF_RE = new RegExp(
+  '(?:\\s*(?:' + EMOJI_SIGNOFFS.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '))+\\s*$',
+);
+
+function stripEmojiSignOff(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text.replace(EMOJI_SIGNOFF_RE, '').replace(/\s+$/, '');
+}
+
+// ── Token usage tracking ────────────────────────────────────
+async function logTokenUsage(agent, source, model, promptTokens, outputTokens, costUsd) {
+  try {
+    const port = process.env.RELAY_PORT || process.env.PORT || 8080;
+    await fetch(`http://127.0.0.1:${port}/api/token-usage/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project: 'xmrt-dao',
+        agent: agent || 'unknown',
+        model: model || DEFAULT_MODEL,
+        provider: source || 'ollama',
+        input_tokens: promptTokens || 0,
+        output_tokens: outputTokens || 0,
+        estimated_cost_usd: costUsd || 0,
+      }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // Non-fatal — token usage logging is best-effort
+  }
+}
+
+// ── Provider cascade configuration ─────────────────────────────────────
+// Model priority order for the fallback chain:
+// 1) Ollama Pro Cloud — gemma4:31b on each of 3 keys (primary daily driver)
+// 2) Ollama Pro Cloud — minimax/minimax-m3:free (vision + tool use, falls back within Ollama)
+// 3) OpenRouter — minimax/minimax-m3:free (vision-only; text goes to nemotron-3.5-lightning)
+// 4) OpenRouter — nvidia/nemotron-3.5-lightning:free (text-only daily driver, longer rate limits)
+
+// OpenRouter-only models (suffix '/' or ':free') skip Ollama Cloud entirely — it 404s.
+function isOpenRouterOnly(model) {
+  return typeof model === 'string' && (model.includes('/') || model.endsWith(':free'));
+}
+
+/** Try Ollama Pro Cloud cascade:
+ *  1st attempt: gemma4:31b on primary key (primary daily driver)
+ *  2nd attempt: gemma4:31b on XMRT key
+ *  3rd attempt: gemma4:31b on 3rd key
+ *  4th attempt: minimax/minimax-m3:free on primary key (vision/tools within Ollama)
+ *  5th attempt: minimax/minimax-m3:free on XMRT key
+ *  6th attempt: minimax/minimax-m3:free on 3rd key
+ * Returns on first success, throws if all fail.
+ */
+async function tryOllamaCloud(messages, model, signal) {
+  const keys = [
+    { key: getOllamaKey(), label: 'primary' },
+    { key: getOllamaXmrtKey(), label: 'xmrt' },
+    { key: getOllama3rdKey(), label: '3rd' },
+  ].filter(k => k.key);
+
+  if (keys.length === 0) throw new Error('No OLLAMA_API_KEY configured');
+
+  // Determine model categories
+  const isGemma = model.includes('gemma4:31b') || model.includes('gemma4');
+  const isMinimax = model.includes('minimax') || model.endsWith(':free');
+
+  let lastError = null;
+
+  // Phase 1: Try gemma4:31b on each of the 3 keys (primary daily driver)
+  if (isGemma) {
+    for (const { key, label } of keys) {
+      try {
+        const body = JSON.stringify({
+          model: 'gemma4:31b',
+          messages,
+          stream: false,
+          max_tokens: 4096,
+        });
+        const res = await fetch('https://ollama.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body,
+          signal,
+        });
+        if (!res.ok) throw new Error(`Ollama Cloud HTTP ${res.status} (${label}): ${(await res.text()).slice(0, 150)}`);
+        return res.json();
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+  }
+
+  // Phase 2: Try minimax/minimax-m3:free on each of the 3 keys (vision/tools within Ollama)
+  // Skip if model is OpenRouter-only (has '/' suffix or ':free' suffix)
+  if (!isOpenRouterOnly(model) && (isMinimax || !isGemma)) {
+    for (const { key, label } of keys) {
+      try {
+        // For vision/image requests, keep the native Ollama format (images: [base64])
+        // which the Ollama Cloud API accepts natively. For text-only, use OpenAI format.
+        const hasImages = messages.some(m => m.images && m.images.length > 0);
+        const body = hasImages
+          ? JSON.stringify({
+              model: model.replace(':cloud', ''),
+              messages,  // messages have images field; Ollama cloud accepts this natively
+              stream: false,
+              max_tokens: 4096,
+            })
+          : JSON.stringify({
+              model: model.replace(':cloud', ''),
+              messages: imagesToOpenAI(messages),
+              stream: false,
+              max_tokens: 4096,
+            });
+        const res = await fetch('https://ollama.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body,
+          signal,
+        });
+        if (!res.ok) throw new Error(`Ollama Cloud HTTP ${res.status} (${label}): ${(await res.text()).slice(0, 150)}`);
+        return res.json();
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('All Ollama Cloud keys failed');
+}
+
+// ── Provider functions ─────────────────────────────────────
+
+/** Convert Ollama-style messages (with images: [base64] on the user msg)
+ * to OpenAI-compatible format (content: [{type:'text'}, {type:'image_url',...}]).
+ * The Ollama local API uses the `images` field; OpenAI/OpenRouter/Ollama Cloud
+ * use the content-array format with data URLs.
+ */
+function imagesToOpenAI(messages) {
+  return messages.map(msg => {
+    if (!msg.images || msg.images.length === 0) return msg;
+    const imgContent = msg.images.map(b64 => ({
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${b64}` },
+    }));
+    const textContent = msg.content
+      ? [{ type: 'text', text: msg.content }]
+      : [];
+    return {
+      role: msg.role,
+      content: [...textContent, ...imgContent],
+    };
+  });
+}
+async function tryOpenRouter(messages, signal, requestedModel = 'minimax/minimax-m3:free') {
+  const key = getOpenRouterKey();
+  if (!key) throw new Error('No OPENROUTER_API_KEY configured');
+  // Vision-capable on OpenRouter: minimax/minimax-m3 supports text+image+video→text.
+  // Text-only: same model — tool-calling support is the priority over cheap/fast.
+  const hasImages = messages.some(m => m.images && m.images.length > 0);
+  const model = hasImages ? 'minimax/minimax-m3:free' : requestedModel;
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+      'HTTP-Referer': 'https://relay.mobilemonero.com',
+    },
+    body: JSON.stringify({
+      model,
+      messages: imagesToOpenAI(messages),
+      stream: false,
+      max_tokens: 4096,
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`OpenRouter HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+function normalizeResponse(data, model, provider) {
+  // Ollama /api/generate format (raw response string)
+  if (data.response && typeof data.response === 'string') {
+    const promptTokens = data.prompt_eval_count || 0;
+    const outputTokens = data.eval_count || 0;
+    const costUsd = (promptTokens * 0.15 + outputTokens * 0.60) / 1_000_000;
+    return {
+      response: stripEmojiSignOff(data.response),
+      model: data.model || model,
+      provider: provider || 'ollama-local',
+      done: data.done || false,
+      evalCount: outputTokens,
+      promptEvalCount: promptTokens,
+      costUsd: parseFloat(costUsd.toFixed(8)),
+    };
+  }
+  // Ollama /api/chat local format (message object)
+  if (data.message?.content) {
+    const content = data.message.content || data.message.thinking || '';
+    const promptTokens = data.prompt_eval_count || 0;
+    const outputTokens = data.eval_count || 0;
+    const costUsd = (promptTokens * 0.15 + outputTokens * 0.60) / 1_000_000;
+    return {
+      response: stripEmojiSignOff(content),
+      model: data.model || model,
+      provider: provider || 'ollama-local',
+      done: data.done || false,
+      evalCount: outputTokens,
+      promptEvalCount: promptTokens,
+      costUsd: parseFloat(costUsd.toFixed(8)),
+    };
+  }
+  // OpenAI-compatible format (Ollama Cloud, OpenRouter)
+  if (data.choices?.[0]?.message) {
+    const msg = data.choices[0].message;
+    const content = msg.content || msg.reasoning || '';
+    if (!content) throw new Error('Empty content and reasoning from provider');
+    const usage = data.usage || {};
+    const promptTokens = usage.prompt_tokens || 0;
+    const outputTokens = usage.completion_tokens || 0;
+    const costUsd = (promptTokens * 0.15 + outputTokens * 0.60) / 1_000_000;
+    return {
+      response: stripEmojiSignOff(content),
+      model: data.model || model,
+      provider: provider,
+      done: true,
+      evalCount: outputTokens,
+      promptEvalCount: promptTokens,
+      costUsd: parseFloat(costUsd.toFixed(8)),
+    };
+  }
+  throw new Error('Unrecognized response format');
+}
+
+/**
+ * Send a chat message with fallback chain:
+ *   Ollama Pro Cloud → OpenRouter (minimax-m3) → Ollama Local
+ *
+ * @param {string} message
+ * @param {object} options
+ * @param {string} options.agent    — Agent name making the request
+ * @param {string} options.source   — Source of the request
+ * @param {string} options.model    — Override model
+ * @param {string} options.system   — Override system prompt
+ * @param {number} options.temperature
+ * @param {number} options.maxTokens
+ * @param {number} options.timeout
+ * @param {boolean} options.stream
+ */
+export async function ollamaChat(message, options = {}) {
+  const {
+    agent = 'eliza-dev',
+    source = 'relay',
+    model = DEFAULT_MODEL,
+    tools = [],
+    images = [],          // base64-encoded image data (no data URL prefix)
+    system = 'You are Eliza-Dev, a helpful AI assistant for the XMRT DAO ecosystem.\n\n' +
+      'Tone rules:\n' +
+      '- Be concise, technical, and to the point. No marketing fluff.\n' +
+      '- Do not end with emoji-only sign-offs (no "👋", "😊", "🎉", "✨" alone or as the last token).\n' +
+      '- Do not emit the "o7" salute emoticon or similar ASCII emoticons as closings.\n' +
+      '- If a sign-off is appropriate, use plain English: "—Eliza", "Let me know if you need more.", or simply end with the answer.\n' +
+      '- Reply with a direct, user-facing answer. Do NOT narrate your own reasoning or analysis.',
+    temperature = 0.7,
+    maxTokens = 4096,
+    timeout = 60000,
+    stream = false,
+  } = options;
+
+  if (!message) {
+    return { error: 'Message is required' };
+  }
+
+  const userMsg = { role: 'user', content: message };
+  if (images.length > 0) userMsg.images = images;
+
+  const messages = [
+    { role: 'system', content: system },
+    userMsg,
+  ];
+
+  const ollamaPayload = {
+    model,
+    messages,
+    options: { temperature, num_predict: maxTokens },
+    stream,
+  };
+  if (tools && tools.length > 0) {
+    ollamaPayload.tools = tools;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  const errors = [];
+  let result = null;
+
+  // ── 1) Try Ollama Pro Cloud (primary) ─────────────────────
+  // SKIP for OpenRouter-only models (anything with '/' suffix or ':free' suffix)
+  // — Ollama Cloud 404s on those and wastes the timeout budget.
+  if (!isOpenRouterOnly(model) && (getOllamaKey() || getOllamaXmrtKey() || getOllama3rdKey())) {
+    try {
+      const data = await tryOllamaCloud(messages, model, controller.signal);
+      result = normalizeResponse(data, model, 'ollama-cloud');
+    } catch (err) {
+      errors.push(`OllamaCloud: ${err.message}`);
+    }
+  }
+
+  // ── 2) Fallback: OpenRouter ──────────────────────────────────
+  if (!result && getOpenRouterKey()) {
+    try {
+      const data = await tryOpenRouter(messages, controller.signal, model);
+      result = normalizeResponse(data, result?.model || model, 'openrouter');
+    } catch (err) {
+      errors.push(`OpenRouter: ${err.message}`);
+    }
+  }
+
+  // ── 3) No local fallback ─────────────────────────────────────
+    // This machine has no local models (6GB RAM, no room for inference).
+    // Cloud models (Ollama Cloud + OpenRouter) are the only pipeline.
+    // If both fail, surface the errors immediately.
+    clearTimeout(timer);
+  if (!result) {
+    return { error: `All cloud providers failed: ${errors.join('; ')}` };
+  }
+
+  // Log token usage with agent/source attribution
+  await logTokenUsage(agent, source, result.model, result.promptEvalCount, result.evalCount, result.costUsd);
+
+  return result;
+}
+
+/**
+ * List available models from local Ollama
+ */
+export async function listModels() {
+  try {
+    const res = await fetch(`${OLLAMA_HOST}/api/tags`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      models: (data.models || []).map(m => ({
+        name: m.name,
+        size: m.size,
+        modifiedAt: m.modified_at,
+      })),
+    };
+  } catch (err) {
+    return { error: `Failed to list models: ${err.message}` };
+  }
+}
+
+/**
+ * Check if local Ollama is running
+ */
+export async function checkOllamaHealth() {
+  try {
+    const res = await fetch(`${OLLAMA_HOST}/api/tags`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        status: 'ok',
+        models: (data.models || []).map(m => m.name),
+        host: OLLAMA_HOST,
+      };
+    }
+    return { status: 'error', message: `HTTP ${res.status}` };
+  } catch (err) {
+    return { status: 'unreachable', message: err.message, host: OLLAMA_HOST };
+  }
+}
+
+/**
+ * Generate text with fallback chain — same architecture as ollamaChat
+ * but uses /api/generate format (prompt string instead of messages array)
+ * for direct agent personas.
+ */
+export async function ollamaGenerate(prompt, options = {}) {
+  const {
+    model = DEFAULT_MODEL,
+    temperature = 0.5,
+    maxTokens = 4096,
+    timeout = 15000,
+  } = options;
+
+  if (!prompt) return { error: 'Prompt is required' };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  const errors = [];
+  let result = null;
+
+  // ── 1) Try Ollama Pro Cloud with the configured DEFAULT_MODEL ──
+  // All Ollama keys share one model (set via OLLAMA_MODEL in relay/.env).
+  // The previous cascade split keys across deepseek-v4-flash / gemma4:31b —
+  // neither supported tool calling, so we collapsed to a single free model
+  // (minimax/minimax-m3:free) that does.
+  // SKIP Ollama Cloud for OpenRouter-only models ('/' suffix or ':free' suffix)
+  // — Ollama Cloud 404s and burns the timeout budget.
+  if (!isOpenRouterOnly(DEFAULT_MODEL) && (getOllamaKey() || getOllamaXmrtKey() || getOllama3rdKey())) {
+    try {
+      const messages = [
+        { role: 'system', content: 'You are an AI agent. Be concise, helpful, and do not use emoji sign-offs.' },
+        { role: 'user', content: prompt },
+      ];
+      const data = await tryOllamaCloud(messages, DEFAULT_MODEL, controller.signal);
+      result = normalizeResponse(data, DEFAULT_MODEL, 'ollama-cloud');
+    } catch (err) {
+      errors.push(`OllamaCloud: ${err.message}`);
+    }
+  }
+
+  // ── 2) Fallback: OpenRouter (minimax/minimax-m3:free, supports tools) ──
+  if (!result && getOpenRouterKey()) {
+    try {
+      const messages = [
+        { role: 'system', content: 'You are an AI agent. Be concise, helpful, and do not use emoji sign-offs.' },
+        { role: 'user', content: prompt },
+      ];
+      const data = await tryOpenRouter(messages, controller.signal, 'minimax/minimax-m3:free');
+      result = normalizeResponse(data, 'minimax/minimax-m3:free', 'openrouter');
+    } catch (err) {
+      errors.push(`OpenRouter: ${err.message}`);
+    }
+  }
+
+  // ── 3) No local fallback ─────────────────────────────────────
+  // This machine has no local models (6GB RAM, no room for inference).
+  // Cloud models (Ollama Cloud + OpenRouter) are the only pipeline.
+  // If both fail, surface the errors immediately.
+  clearTimeout(timer);
+  if (!result) return { error: `All providers failed: ${errors.join('; ')}` };
+  return result;
+}
+
+export default { ollamaChat, ollamaGenerate, listModels, checkOllamaHealth };

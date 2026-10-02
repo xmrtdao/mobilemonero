@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elze Contract Suite — Contract Intelligence Platform</title>
+  <meta name="description" content="AI-powered contract compliance analysis and document building across 6 states. Commercial and residential lease analysis, service contracts, partnership agreements, NDAs, employment agreements.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/elze-design-system.css?v=2">
+      <style>
+    /* ── Landing-specific overrides ── */
+    .elze-landing { background: var(--elze-bg-deep); min-height: 100vh; }
+
+    /* Nav */
+    .elze-nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: 56px;
+      background: rgba(6,7,10,0.80);
+      backdrop-filter: blur(16px) saturate(1.2);
+      border-bottom: 1px solid var(--elze-border-subtle);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 var(--elze-space-6);
+    }
+    .elze-nav-brand {
+      display: flex; align-items: center; gap: var(--elze-space-3);
+      text-decoration: none; color: var(--elze-text-primary);
+      font-weight: 600; font-size: 0.9375rem; letter-spacing: -0.01em;
+    }
+    .elze-nav-brand svg { width: 24px; height: 24px; color: var(--elze-accent); }
+    .elze-nav-brand span { color: var(--elze-accent); }
+    .elze-nav-links { display: flex; align-items: center; gap: var(--elze-space-1); }
+    .elze-nav-link {
+      display: flex; align-items: center; gap: var(--elze-space-2);
+      padding: var(--elze-space-2) var(--elze-space-3);
+      border-radius: var(--elze-radius-md);
+      text-decoration: none; color: var(--elze-text-secondary);
+      font-size: 0.8125rem; font-weight: 500;
+      transition: all var(--elze-transition-fast);
+    }
+    .elze-nav-link:hover { background: var(--elze-bg-surface); color: var(--elze-text-primary); }
+    .elze-nav-link.active { background: var(--elze-accent-glow); color: var(--elze-accent); }
+    .elze-nav-link .elze-icon { color: currentColor; }
+
+    /* Hero */
+    .elze-hero {
+      padding: calc(56px + var(--elze-space-16)) var(--elze-space-6) var(--elze-space-12);
+      text-align: center; position: relative;
+      max-width: 720px; margin: 0 auto;
+    }
+    .elze-hero-glow {
+      position: absolute; top: -40px; left: 50%; transform: translateX(-50%);
+      width: 500px; height: 300px;
+      background: radial-gradient(ellipse at center, var(--elze-accent-glow) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .elze-hero-badge {
+      display: inline-flex; align-items: center; gap: var(--elze-space-2);
+      padding: var(--elze-space-1) var(--elze-space-3);
+      border: 1px solid var(--elze-border-accent);
+      border-radius: var(--elze-radius-pill);
+      font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--elze-accent);
+      background: var(--elze-accent-glow);
+      margin-bottom: var(--elze-space-5);
+    }
+    .elze-hero-badge-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--elze-success); box-shadow: 0 0 6px var(--elze-success);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+    .elze-hero h1 {
+      font-size: 3.25rem; font-weight: 600; line-height: 1.05;
+      letter-spacing: -0.03em; color: var(--elze-text-primary);
+      margin-bottom: var(--elze-space-4);
+    }
+    .elze-hero h1 span { color: var(--elze-accent); }
+    .elze-hero-desc {
+      font-size: 1.0625rem; font-weight: 400; line-height: 1.65;
+      color: var(--elze-text-secondary); max-width: 600px;
+      margin: 0 auto var(--elze-space-6);
+    }
+    .elze-hero-actions {
+      display: flex; align-items: center; justify-content: center; gap: var(--elze-space-3);
+      flex-wrap: wrap;
+    }
+
+    /* Stats */
+    .elze-stats {
+      display: flex; justify-content: center; gap: var(--elze-space-10);
+      padding: var(--elze-space-6) var(--elze-space-6);
+      border-top: 1px solid var(--elze-border-subtle);
+      border-bottom: 1px solid var(--elze-border-subtle);
+      margin: 0 auto var(--elze-space-12);
+      max-width: 900px;
+    }
+    .elze-stat { text-align: center; }
+    .elze-stat-value {
+      font-family: var(--elze-font-mono); font-size: 1.75rem; font-weight: 600;
+      color: var(--elze-text-primary); letter-spacing: -0.02em;
+    }
+    .elze-stat-label {
+      font-size: 0.6875rem; font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--elze-text-muted);
+      margin-top: var(--elze-space-1);
+    }
+
+    /* Tool Cards */
+    .elze-tools {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: var(--elze-space-5);
+      max-width: 1000px; margin: 0 auto;
+      padding: 0 var(--elze-space-6) var(--elze-space-16);
+    }
+    .elze-tool-card {
+      display: flex; flex-direction: column;
+      background: var(--elze-bg-surface);
+      border: 1px solid var(--elze-border-subtle);
+      border-radius: var(--elze-radius-xl);
+      padding: var(--elze-space-6);
+      text-decoration: none; color: inherit;
+      transition: all var(--elze-transition-base);
+      position: relative; overflow: hidden;
+    }
+    .elze-tool-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--elze-accent), transparent);
+      opacity: 0; transition: opacity var(--elze-transition-base);
+    }
+    .elze-tool-card:hover {
+      border-color: var(--elze-border-accent);
+      transform: translateY(-3px);
+      box-shadow: var(--elze-shadow-lg);
+    }
+    .elze-tool-card:hover::before { opacity: 1; }
+    .elze-tool-card-header {
+      display: flex; align-items: center; gap: var(--elze-space-3);
+      margin-bottom: var(--elze-space-4);
+    }
+    .elze-tool-card-icon {
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--elze-radius-lg);
+      background: var(--elze-accent-glow);
+      color: var(--elze-accent);
+    }
+    .elze-tool-card-icon svg { width: 20px; height: 20px; }
+    .elze-tool-card-title {
+      font-size: 1.25rem; font-weight: 600; color: var(--elze-text-primary);
+    }
+    .elze-tool-card-tag {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px; border-radius: var(--elze-radius-sm);
+      font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+      margin-bottom: var(--elze-space-3); width: fit-content;
+    }
+    .elze-tool-card-tag.analyzer { background: var(--elze-danger-bg); color: var(--elze-danger); }
+    .elze-tool-card-tag.writer { background: var(--elze-success-bg); color: var(--elze-success); }
+    .elze-tool-card-desc {
+      font-size: 0.875rem; line-height: 1.6; color: var(--elze-text-secondary);
+      margin-bottom: var(--elze-space-4); flex-grow: 1;
+    }
+    .elze-tool-card-features { list-style: none; margin-bottom: var(--elze-space-5); }
+    .elze-tool-card-features li {
+      display: flex; align-items: flex-start; gap: var(--elze-space-2);
+      padding: var(--elze-space-1) 0;
+      font-size: 0.8125rem; color: var(--elze-text-muted);
+    }
+    .elze-tool-card-features li .elze-icon {
+      color: var(--elze-accent); margin-top: 1px; flex-shrink: 0;
+    }
+    .elze-tool-card-cta {
+      display: inline-flex; align-items: center; gap: var(--elze-space-2);
+      margin-top: auto;
+      font-size: 0.875rem; font-weight: 500; color: var(--elze-accent);
+    }
+    .elze-tool-card-cta svg { transition: transform var(--elze-transition-fast); }
+    .elze-tool-card:hover .elze-tool-card-cta svg { transform: translateX(3px); }
+
+    /* Footer */
+    .elze-footer {
+      margin-top: auto;
+      padding: var(--elze-space-6);
+      text-align: center;
+      border-top: 1px solid var(--elze-border-subtle);
+    }
+    .elze-footer-brand {
+      font-size: 0.8125rem; color: var(--elze-text-secondary); margin-bottom: var(--elze-space-2);
+    }
+    .elze-footer-brand span { color: var(--elze-accent); }
+    .elze-footer-legal {
+      font-size: 0.75rem; color: var(--elze-text-disabled);
+    }
+    .elze-footer-links {
+      display: flex; justify-content: center; gap: var(--elze-space-4);
+      margin-top: var(--elze-space-3);
+    }
+    .elze-footer-links a {
+      color: var(--elze-text-disabled); text-decoration: none;
+      font-size: 0.8125rem; font-weight: 500;
+      transition: color var(--elze-transition-fast);
+    }
+    .elze-footer-links a:hover { color: var(--elze-accent); }
+
+    @media (max-width: 768px) {
+      .elze-nav { padding: 0 var(--elze-space-4); }
+      .elze-nav-link-text { display: none; }
+      .elze-hero { padding-top: calc(56px + var(--elze-space-10)); }
+      .elze-hero h1 { font-size: 2.25rem; }
+      .elze-hero-desc { font-size: 0.9375rem; }
+      .elze-tools { grid-template-columns: 1fr; padding: 0 var(--elze-space-4) var(--elze-space-10); }
+      .elze-stats { gap: var(--elze-space-6); flex-wrap: wrap; }
+      .elze-stat-value { font-size: 1.375rem; }
+    }
+  
+    /* Buttons */
+    .elze-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: var(--elze-space-2);
+      padding: var(--elze-space-2) var(--elze-space-4);
+      border-radius: var(--elze-radius-md);
+      font-size: 0.8125rem; font-weight: 500;
+      cursor: pointer; text-decoration: none;
+      transition: all var(--elze-transition-fast);
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .elze-btn-primary {
+      background: var(--elze-accent);
+      color: #0a0a14;
+      border-color: var(--elze-accent);
+    }
+    .elze-btn-primary:hover {
+      background: var(--elze-accent-hover);
+      border-color: var(--elze-accent-hover);
+    }
+    .elze-btn-secondary {
+      background: transparent;
+      color: var(--elze-text-primary);
+      border-color: var(--elze-border-subtle);
+    }
+    .elze-btn-secondary:hover {
+      background: var(--elze-bg-surface);
+      border-color: var(--elze-border-hover);
+    }
+    .elze-btn-lg { padding: var(--elze-space-3) var(--elze-space-5); font-size: 0.9375rem; }
+
+  </style>
+</head>
+<body class="elze-landing">
+
+  <!-- Nav -->
+  <nav class="elze-nav">
+    <a href="/elze" class="elze-nav-brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M8 12h8M12 8v8"/>
+      </svg>
+      <span>Elze</span> Contract Suite
+    </a>
+    <div class="elze-nav-links">
+      <a href="/elze" class="elze-nav-link active">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="elze-nav-link-text">Home</span>
+      </a>
+      <a href="/elze/analyzer" class="elze-nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
+        <span class="elze-nav-link-text">Analyzer</span>
+      </a>
+      <a href="/elze/writer" class="elze-nav-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <span class="elze-nav-link-text">Writer</span>
+      </a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- Hero -->
+    <section class="elze-hero">
+      <div class="elze-hero-glow"></div>
+      <div class="elze-hero-badge">
+        <span class="elze-hero-badge-dot"></span>
+        Phase 7 — AI-Learned Attorney Preferences
+      </div>
+      <h1>Contract intelligence for <span>modern law firms</span></h1>
+      <p class="elze-hero-desc">
+        Analyze, build, and redline contracts across six states. AI-powered compliance checking with verified statute citations, tracked-change export to Word, and per-attorney preference learning that improves with every review.
+      </p>
+      <div class="elze-hero-actions">
+        <a href="/elze/analyzer" class="elze-btn elze-btn-primary elze-btn-lg">
+          <span class="elze-icon elze-icon-md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg></span>
+          Analyze a Contract
+        </a>
+        <a href="/elze/writer" class="elze-btn elze-btn-secondary elze-btn-lg">
+          <span class="elze-icon elze-icon-md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>
+          Build a Lease
+        </a>
+      </div>
+    </section>
+
+    <!-- Stats -->
+    <div class="elze-stats">
+      <div class="elze-stat">
+        <div class="elze-stat-value">8</div>
+        <div class="elze-stat-label">Contract Types</div>
+      </div>
+      <div class="elze-stat">
+        <div class="elze-stat-value">6</div>
+        <div class="elze-stat-label">States</div>
+      </div>
+      <div class="elze-stat">
+        <div class="elze-stat-value">100+</div>
+        <div class="elze-stat-label">Rule Checks</div>
+      </div>
+      <div class="elze-stat">
+        <div class="elze-stat-value">5</div>
+        <div class="elze-stat-label">Templates</div>
+      </div>
+      <div class="elze-stat">
+        <div class="elze-stat-value">30K+</div>
+        <div class="elze-stat-label">Cases Indexed</div>
+      </div>
+    </div>
+
+    <!-- Tool Cards -->
+    <section class="elze-tools">
+      <a href="/elze/analyzer" class="elze-tool-card">
+        <div class="elze-tool-card-header">
+          <div class="elze-tool-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
+          </div>
+          <div class="elze-tool-card-title">Contract Analyzer</div>
+        </div>
+        <span class="elze-tool-card-tag analyzer">Analysis</span>
+        <p class="elze-tool-card-desc">
+          Upload or paste any contract and get instant compliance analysis against governing state law. Auto-detects document type and jurisdiction. Red-flag detection with cited statute evidence and CourtListener case law enrichment.
+        </p>
+        <ul class="elze-tool-card-features">
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> 8 contract types auto-detected from text</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> 6 states — commercial &amp; residential rules separate</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> 100+ deterministic statute checks</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Interactive redline — accept, reject, edit inline</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Export redlined .docx with tracked changes</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Per-attorney preference learning</li>
+        </ul>
+        <span class="elze-tool-card-cta">
+          Open Analyzer
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </span>
+      </a>
+
+      <a href="/elze/writer" class="elze-tool-card">
+        <div class="elze-tool-card-header">
+          <div class="elze-tool-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </div>
+          <div class="elze-tool-card-title">Contract Writer</div>
+        </div>
+        <span class="elze-tool-card-tag writer">Builder</span>
+        <p class="elze-tool-card-desc">
+          Build commercial real estate leases from structured input with state-compliant defaults. Five templates, clause library with inline editing, live compliance pre-check, and round-trip verification through the Analyzer.
+        </p>
+        <ul class="elze-tool-card-features">
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> 5 lease templates (Office, Warehouse, Retail, NNN, Ground)</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> 31 state-compliant clause definitions</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Live compliance pre-check as you type</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Export .txt, .md, .json, or .docx</li>
+          <li><span class="elze-icon elze-icon-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span> Round-trip "Analyze This Lease" integration</li>
+        </ul>
+        <span class="elze-tool-card-cta">
+          Open Writer
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </span>
+      </a>
+    </section>
+
+    <!-- Footer -->
+    <footer class="elze-footer">
+      <div class="elze-footer-brand">
+        <span>Elze Contract Suite</span> · Cuttlefish Labs · Multi-State Contract Intelligence
+      </div>
+      <div class="elze-footer-legal">
+        Covering VA, DE, MD, NY, PA, NJ · Commercial &amp; Residential · © 2026
+      </div>
+      <div class="elze-footer-links">
+        <a href="/elze">Home</a>
+        <a href="/elze/analyzer">Analyzer</a>
+        <a href="/elze/writer">Writer</a>
+      </div>
+    </footer>
+  </main>
+
+</body>
+</html>

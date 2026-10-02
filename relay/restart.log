@@ -1,0 +1,919 @@
+(node:8668) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/PureTrek/Desktop/xmrtdao/relay/server.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\PureTrek\Desktop\xmrtdao\relay\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[Relay] Loaded .env (overwrite mode) from C:\Users\PureTrek\Desktop\xmrtdao\relay\.env
+  Suite SPA: C:\Users\PureTrek\Desktop\xmrtdao\suite\dist
+  HottieHouse SPA: C:\Users\PureTrek\Desktop\xmrtdao\hottiehouse\app\dist
+  CuttlefishClaws SPA: C:\Users\PureTrek\Desktop\xmrtdao\cuttlefishclaws\dist
+  CashDApp SPA: NOT FOUND at C:\Users\PureTrek\Desktop\xmrtdao\cashdapp\dist — skipping
+  PFP Intake SPA: C:\Users\PureTrek\Desktop\xmrtdao\intake\dist
+  PFP Bookings SPA: C:\Users\PureTrek\Desktop\xmrtdao\partyfavorphoto\bookings\dist
+  Elze Contract Suite (landing): C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-landing
+  Elze Contract Analyzer: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-analyzer
+  Elze Contract Writer: C:\Users\PureTrek\Desktop\xmrtdao\relay\public\elze-writer
+  Agency Dashboard: C:\Users\PureTrek\Desktop\xmrtdao\31harbor-agency-dashboard\dist (harbor/party/xmrt)
+[CuttlefishClaws] Registered engine routes: trust-score, trust-history, trust-event, recompute, standing, standing-event, gate-evaluate, gate-thresholds, activity-event, agents, rate-card, engine-health
+[RUM] Registering /api/rum-quota route...
+[CuttlefishClaws] Registered university bridge routes: onboard, cert-holders, status, teach
+[runtime] Registered local function: agent-workflow-engine
+[runtime] Registered local function: code-monitor-daemon
+[runtime] Registered local function: court-lookup
+[runtime] Registered local function: docx-redline
+[runtime] Registered local function: lease-analyzer
+[runtime] Registered local function: lease-builder
+[runtime] Registered local function: lease-writer
+  Relay listening on http://0.0.0.0:8080
+
+╔══════════════════════════════════════════════════════╗
+║         MobileMonero Relay Server - Eliza-Dev v5        ║
+╠══════════════════════════════════════════════════════╣
+║  Webhook:  http://0.0.0.0:8080 /webhook/task     ║
+║  Tools:    http://0.0.0.0:8080 /tools            ║
+║  Run Tool: http://0.0.0.0:8080 /tools/run        ║
+║  Register: http://0.0.0.0:8080 /tools/register-agent ║
+║  Agents:   http://0.0.0.0:8080 /tools/agents     ║
+║  Web Srch: http://0.0.0.0:8080 /web-search       ║
+║  Scrape:   http://0.0.0.0:8080 /scrape            ║
+║  Ollama:   http://0.0.0.0:8080 /ollama/chat       ║
+║  Monitor:  http://0.0.0.0:8080 /monitor           ║
+║  State:    http://0.0.0.0:8080 /state/<key>       ║
+║  Dispatch: http://0.0.0.0:8080 /dispatch          ║
+║  Health:   http://0.0.0.0:8080 /health            ║
+║  Cron:     http://0.0.0.0:8080 /cron/status       ║
+║  PFP Inbox: http://0.0.0.0:8080 /resend/inbox     ║
+║  MM Inbox:  http://0.0.0.0:8080 /resend/mobilemonero/inbox ║
+║  31HB Inbox: http://0.0.0.0:8080 /resend/31harbor/inbox ║
+╚══════════════════════════════════════════════════════╝
+
+  Tools: 104 registered
+  Handlers: 7 task handlers
+  State keys: 19
+
+[18:11:33] system | - | STARTUP | Relay v2 listening on port 8080
+[consolidate] cuttlefishclaws-mcp: 25 tools registered via JSON-RPC proxy
+[consolidate] xmrtdao-suite-mcp: 15 tools registered via JSON-RPC proxy
+[consolidate] cuttlefish-mcp: 19 tools registered via JSON-RPC proxy
+[consolidate] Registered 59 MCP tools via HTTP proxy
+[consolidate] 59 MCP tools registered via JSON-RPC proxy
+[AUTH] Loaded 17 agent API keys
+Generated: test_redline.docx (10155 bytes)
+Magic bytes: 504b0304
+[runtime] Discovered 7 local functions
+[fleet-db] Loaded 500 messages from DB (500 total)
+[services] 2026-08-05T18:11:35.706Z ===== starting managed services =====
+[services] 2026-08-05T18:11:35.706Z managed services initial spawn complete
+[2026-08-05T18:11:36.699Z] [INFO] daemon starting (poll every 30s)
+[18:11:36] system | - | CRON | Local cron v2 engine started
+[2026-08-05T18:11:36.707Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] Initializing gossipsub node "vex-relay" on port 9000...
+[Mesh] Loaded saved private key
+[Mesh] Failed to start: Some configured addresses failed to be listened on, you may need to remove one or more listen addresses from your configuration or set `transportManager.faultTolerance` to NO_FATAL:
+
+  /ip4/0.0.0.0/tcp/9000: Error: listen EADDRINUSE: address already in use 0.0.0.0:9000
+      at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+      at listenInCluster (node:net:2066:12)
+      at node:net:2275:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+[Mesh] Init failed: Some configured addresses failed to be listened on, you may need to remove one or more listen addresses from your configuration or set `transportManager.faultTolerance` to NO_FATAL:
+
+  /ip4/0.0.0.0/tcp/9000: Error: listen EADDRINUSE: address already in use 0.0.0.0:9000
+      at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+      at listenInCluster (node:net:2066:12)
+      at node:net:2275:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ (publishes will use HTTP fallback)
+[seed] Skip (tables may not exist yet): null value in column "id" of relation "tasks" violates not-null constraint
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[inbox-db] Table app.inbox_emails ready
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[consolidate] Alice daemon started (cycle: 60min)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[consolidate] Alice tick returned HTTP 404
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:12:06.962Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:12:06.964Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:12:08.562Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:12:38.580Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:13:08.698Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:13:08.700Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:13:10.416Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:13:40.513Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:14:10.563Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:14:10.564Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:14:11.769Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:14:42.096Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:15:12.137Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:15:12.138Z] [INFO] [1] shell: sync-hermes-memory
+'python3' is not recognized as an internal or external command,
+operable program or batch file.
+[2026-08-05T18:15:12.786Z] [WARN] [1] FAIL: 'python3' is not recognized as an internal or external command,
+operable program or batch file.
+
+[2026-08-05T18:15:12.787Z] [INFO] [2] shell: pipeline-orchestrator
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:15:13.688Z] [WARN] [2] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal
+[2026-08-05T18:15:13.688Z] [INFO] [3] shell: agent-workflow-engine
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\agent_workflow_engine_cron.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntry[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:15:18.569Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":330,"messageCount":20,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:15:48.630Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":360,"messageCount":22,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:16:18.735Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:16:18.739Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:16:20.072Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":390,"messageCount":24,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":420,"messageCount":26,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:16:50.174Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":450,"messageCount":28,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:17:20.181Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:17:20.182Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:17:20.987Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":480,"messageCount":30,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:17:51.012Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":510,"messageCount":32,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:18:21.087Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:18:21.091Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:18:21.974Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":540,"messageCount":34,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:18:51.997Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":570,"messageCount":36,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:19:22.014Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:19:22.015Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:19:22.404Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[AUTH] Loaded 17 agent API keys
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":600,"messageCount":38,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:19:52.426Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":630,"messageCount":40,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:20:22.461Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:20:22.465Z] [INFO] [1] shell: sync-hermes-memory
+'python3' is not recognized as an internal or external command,
+operable program or batch file.
+[2026-08-05T18:20:22.570Z] [WARN] [1] FAIL: 'python3' is not recognized as an internal or external command,
+operable program or batch file.
+
+[2026-08-05T18:20:22.571Z] [INFO] [2] shell: pipeline-orchestrator
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+ node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'Mnode:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultRe(node:13796) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":660,"messageCount":42,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[2026-08-05T18:20:53.437Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":690,"messageCount":44,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agen[2026-08-05T18:21:23.578Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:21:23.582Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:21:24.284Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbo[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "[hermes-bridge] Error processing outbo[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "[AUTH] Loaded 17 agent API keys
+[herme[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid[herme[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid[herme[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid[herme[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid[2026-08-05T18:21:54.293Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:22:24.311Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:22:24.313Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:22:25.196Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:22:55.248Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:23:25.279Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:23:25.280Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:23:25.936Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unode:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: C[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:23:55.952Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+nexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":840,"messageCount":54,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:23:55.985Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":870,"messageCount":56,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:24:26.019Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:24:26.020Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:24:26.469Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[AUTH] Loaded 17 agent API keys
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":900,"messageCount":58,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:24:56.487Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[Mesh] agent-heartbeat <- local: {"agent":"vex-relay","status":"online","uptime":930,"messageCount":60,"errorCoun
+[Mesh] agent-heartbeat <- 12D3KooWBbfFvYYnsawbMoHVfkf2FN2DydvR5aUngjbgxuYQ9Vkv: {"topic":"agent-heartbeat","payload":{"agent":"vex-relay","status":"online","upt
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[2026-08-05T18:25:26.510Z] [INFO] loaded 12 jobs (0 sql, 0 edge)
+[2026-08-05T18:25:26.512Z] [INFO] [1] shell: sync-hermes-memory
+'python3' is not recognized as an internal or external command,
+operable program or batch file.
+[2026-08-05T18:25:28.363Z] [WARN] [1] FAIL: 'python3' is not recognized as an internal or external command,
+operable program or batch file.
+
+[2026-08-05T18:25:28.373Z] [INFO] [2] shell: pipeline-orchestrator
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:25:29.707Z] [WARN] [2] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\pipeline-orchestrator.mjs'
+    at Module._resolveFilename (node:internal
+[2026-08-05T18:25:29.709Z] [INFO] [12] shell: hermes-comms
+node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1517:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1122:12)
+    at Module._load (node:internal/modules/cjs/loader:1294:5)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v24.18.0
+[2026-08-05T18:25:31.060Z] [WARN] [12] FAIL: node:internal/modules/cjs/loader:1520
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\hermes-comms.mjs'
+    at Module._resolveFilename (node:internal/modules/
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON
+[hermes-bridge] Error processing outbox fleet-report-1785464924.json: Unexpected token '$', ...",
+  "ts": $(date +%s"... is not valid JSON

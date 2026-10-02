@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <base href="/elze/analyzer/">
+  <title>Elze Contract Analyzer™ — Multi-Contract Compliance Intelligence</title>
+  <meta name="description" content="AI-powered contract compliance analysis against Virginia statutes. Supports commercial leases, residential leases, service contracts, partnership agreements, articles of incorporation, NDAs, employment agreements, and independent contractor agreements. Auto-detects document type.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/elze-design-system.css?v=2">
+  <link rel="stylesheet" href="styles.css?v=7">
+</head>
+<body>
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <path d="M16 2L4 8v8c0 7.2 5.1 13.8 12 16 6.9-2.2 12-8.8 12-16V8L16 2z" stroke="#6366f1" stroke-width="1.5" fill="rgba(99,102,241,0.08)"/>
+          <path d="M16 10v12M10 16h12" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="16" cy="16" r="3" stroke="#6366f1" stroke-width="1" fill="none"/>
+        </svg>
+      </div>
+      <div class="sidebar-name">
+        <span class="brand-primary">Elze</span><span class="brand-accent"> Contract</span><br>
+        <span class="brand-subtitle">Analyzer<sup>™</sup></span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Upload Lease Document</div>
+      <label class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".pdf,.txt,.docx" hidden>
+        <div class="upload-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div>
+        <div class="upload-text">Drop lease or click to browse</div>
+        <div class="upload-hint">PDF, TXT, DOCX · Max 10 MB</div>
+      </label>
+      <div class="file-info" id="fileInfo" style="display:none">
+        <span class="file-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+        <div class="file-meta">
+          <span class="file-name" id="fileName"></span>
+          <span class="file-size" id="fileSize"></span>
+        </div>
+        <button class="file-remove" id="fileRemove" title="Remove"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </div>
+
+    <div class="sidebar-section paste-section">
+      <div class="sidebar-label">Or Paste Lease Text</div>
+      <textarea class="paste-input" id="pasteInput" placeholder="Paste lease text here..."></textarea>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn btn-primary btn-full" id="btnDemo">
+        <span class="btn-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Instant Demo
+      </button>
+      <button class="btn btn-accent btn-full" id="btnAnalyze" disabled>
+        <span class="btn-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg></span> Analyze Lease
+      </button>
+    </div>
+
+    <div class="sidebar-section" id="analysisStatus" style="display:none">
+      <div class="sidebar-label">Analysis Pipeline</div>
+      <div class="pipeline-progress">
+        <div class="pipeline-progress-track"><div class="pipeline-progress-fill" id="pipelineProgressFill" style="width:0%"></div></div>
+        <div class="pipeline-progress-meta"><span id="pipelineProgressPct">0%</span><span id="pipelineProgressStage">Starting…</span></div>
+      </div>
+      <div class="pipeline-list" id="pipelineList">
+        <div class="pipeline-row" data-step="extract">
+          <span class="pipeline-step">①</span>
+          <span class="pipeline-name">Clause Extraction</span>
+          <span class="pipeline-status pending"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        </div>
+        <div class="pipeline-row" data-step="statute">
+          <span class="pipeline-step">②</span>
+          <span class="pipeline-name">VA Statute Matching</span>
+          <span class="pipeline-status pending"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        </div>
+        <div class="pipeline-row" data-step="redflag">
+          <span class="pipeline-step">③</span>
+          <span class="pipeline-name">Red Flag Detection</span>
+          <span class="pipeline-status pending"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        </div>
+        <div class="pipeline-row" data-step="compliance">
+          <span class="pipeline-step">④</span>
+          <span class="pipeline-name">Compliance Scoring</span>
+          <span class="pipeline-status pending"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        </div>
+        <div class="pipeline-row" data-step="report">
+          <span class="pipeline-step">⑤</span>
+          <span class="pipeline-name">Report Generation</span>
+          <span class="pipeline-status pending"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="sidebarStats" style="display:none">
+      <div class="sidebar-label">Compliance Summary</div>
+      <div class="stat-grid" id="statGrid"></div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-label">Powered by</div>
+      <div class="powered-by">Cuttlefish Labs VILM™<br>VA Common Law · VRLTA · RUPA · Stock Corp Act · UTSA</div>
+      <div class="version-badge">v0.3 Multi-Contract</div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+  </aside>
+
+  <!-- ── Main Content ── -->
+  <main class="main" id="main">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-glow"></div>
+      <h1 class="header-title">Elze Contract Analyzer<sup>™</sup></h1>
+      <p class="header-tagline">Multi-Contract Compliance Intelligence — 6 States (VA, DE, MD, NY, PA, NJ)</p>
+      <p class="header-subtitle">Upload any contract. Auto-detects document type and jurisdiction (commercial lease, residential lease, service contract, partnership agreement, articles of incorporation, NDA, employment, independent contractor). AI-powered analysis checks every clause against the governing state's statutes and common law, flags red-flag provisions, and generates a compliance report with cited evidence.</p>
+      <div class="attorney-selector">
+        <label for="attorneySelect">Attorney</label>
+        <select id="attorneySelect">
+          <option value="">— Select attorney (for learned preferences) —</option>
+          <option value="joe">Joe (Elze Law PLLC)</option>
+          <option value="david">David</option>
+          <option value="unknown">Other</option>
+        </select>
+        <span class="attorney-hint">Personalizes redlines from each attorney's accepted feedback.</span>
+      </div>
+    </header>
+
+    <!-- Results Area (hidden until analyzed) -->
+    <div class="results" id="results" style="display:none">
+
+      <!-- Compliance Banner -->
+      <div class="compliance-banner" id="complianceBanner" style="display:none"></div>
+
+      <!-- Tab Navigation -->
+      <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="overview">
+          <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span> Overview
+        </button>
+        <button class="tab-btn" data-tab="findings">
+          <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></span> Red Flags
+        </button>
+        <button class="tab-btn" data-tab="clauses">
+          <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span> Clauses
+        </button>
+        <button class="tab-btn" data-tab="statutes">
+          <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><path d="m2.16 16 5.08-8 5.08 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>️</span> Statutes
+        </button>
+      </nav>
+
+      <!-- ───── TAB: Overview (with integrated redline) ───── -->
+      <section class="tab-content active" id="tab-overview">
+        <!-- Compact metrics bar -->
+        <div class="overview-metrics-bar">
+          <div class="metric-card metric-score" id="metricScore" style="flex:0 0 auto;">
+            <div class="metric-label">Score</div>
+            <div class="metric-value" id="scoreValue">—</div>
+            <div class="metric-grade" id="scoreGrade"></div>
+          </div>
+          <div class="metric-card chart-card" style="flex:1;">
+            <div class="metric-label">Severity Distribution</div>
+            <div class="severity-bars" id="severityBars"></div>
+          </div>
+          <div class="metric-card" id="metricClauses" style="flex:0 0 auto;">
+            <div class="metric-label">Clauses</div>
+            <div class="metric-value" id="clausesValue">—</div>
+            <div class="metric-sub" id="clausesSub"></div>
+          </div>
+        </div>
+
+        <div class="summary-banner" id="summaryBanner"></div>
+
+        <!-- Redline document — primary UX (white page style) -->
+        <div class="redline-header">
+          <div class="redline-header-left">
+            <h3 style="font-family:'Inter',serif;font-size:24px;font-weight:700;margin:0 0 4px 0;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>️ Redlined Document</h3>
+            <p style="color:var(--text-dim);font-size:14px;margin:0;"><span style="color:#dc2626;">Red strikethrough</span> = deleted. <span style="color:#2563eb;">Blue underline</span> = inserted. <span style="color:#dc2626;">Red bold</span> = comment. Click <strong>Edit</strong> to customize before accepting.</p>
+          </div>
+          <div class="redline-header-right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+            <button class="btn btn-secondary" id="btnRedlineToggle" style="font-size:13px;padding:6px 14px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>️ Show Final</button>
+            <button class="btn btn-secondary" id="btnApplyAll" style="font-size:13px;padding:6px 14px;">✓ Apply All</button>
+            <button class="btn btn-secondary" id="btnRejectAll" style="font-size:13px;padding:6px 14px;">✗ Reject All</button>
+            <button class="btn btn-secondary" id="btnExportRedlineDocx" style="font-size:13px;padding:6px 14px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Export Redline .docx</button>
+            <button class="btn btn-secondary" id="btnExportFinalDocx" style="font-size:13px;padding:6px 14px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Export Final .docx</button>
+            <button class="btn btn-secondary" id="btnExportRedlinePdf" style="font-size:13px;padding:6px 14px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Export .pdf</button>
+            <button class="btn btn-secondary" id="btnExportRedlineJson" style="font-size:13px;padding:6px 14px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export .json</button>
+          </div>
+        </div>
+        <div id="redlineList" class="redline-list"></div>
+        <div id="redlineEmpty" class="empty-state" style="display:none;text-align:center;padding:60px 20px;color:var(--text-dim);">
+          <div style="font-size:48px;margin-bottom:16px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+          <div style="font-size:18px;font-weight:600;margin-bottom:8px;">No Redlines Needed</div>
+          <div style="font-size:14px;">All detected clauses appear compliant with VA Chapter 54.1.</div>
+        </div>
+
+        <!-- Critical findings (below redline) -->
+        <div class="section-header" style="margin-top:2rem;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>️ Critical & High Severity Findings</div>
+        <div class="finding-list" id="topFindings"></div>
+
+        <div class="section-header"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Missing Required Clauses</div>
+        <div class="warning-list" id="missingClauses"></div>
+      </section>
+
+      <!-- ───── TAB: Findings ───── -->
+      <section class="tab-content" id="tab-findings">
+        <div class="filter-bar">
+          <span class="filter-label">Filter by severity:</span>
+          <label class="filter-chip" data-sev="CRITICAL"><input type="checkbox" checked><span class="chip-dot critical"></span>Critical</label>
+          <label class="filter-chip" data-sev="HIGH"><input type="checkbox" checked><span class="chip-dot high"></span>High</label>
+          <label class="filter-chip" data-sev="MEDIUM"><input type="checkbox" checked><span class="chip-dot medium"></span>Medium</label>
+        </div>
+        <div class="finding-list detailed" id="allFindings"></div>
+        <div class="empty-state" id="findingsEmpty" style="display:none">No findings match the selected filters.</div>
+      </section>
+
+      <!-- ───── TAB: Clauses ───── -->
+      <section class="tab-content" id="tab-clauses">
+        <div class="filter-bar">
+          <span class="filter-label">Show:</span>
+          <label class="filter-chip" data-clause="found"><input type="checkbox" checked><span class="chip-dot found"></span>Detected</label>
+          <label class="filter-chip" data-clause="missing"><input type="checkbox" checked><span class="chip-dot missing"></span>Missing</label>
+        </div>
+        <div class="clause-list" id="clauseList"></div>
+      </section>
+
+      <!-- ───── TAB: Statutes ───── -->
+      <section class="tab-content" id="tab-statutes">
+        <div class="section-caption">Virginia statutes and common law by contract type. Commercial leases → common law. Residential leases → VRLTA § 55.1-1200. Service contracts → common law + UCC. Partnerships → RUPA § 50-73.1. Corporations → Stock Corp Act § 13.1-601. NDAs → UTSA § 59.1-336. Employment → § 40.1-2. Independent contractors → § 60.2-230.</div>
+        <div class="statute-list" id="statuteList"></div>
+      </section>
+
+      <!-- Footer -->
+      <div class="results-footer">
+        <button class="btn btn-secondary" id="btnDownloadReport"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Report (.json)</button>
+        <button class="btn btn-secondary" id="btnDownloadMd"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Download Report (.md)</button>
+        <span class="footer-meta" id="footerMeta"></span>
+      </div>
+    </div>
+
+    <!-- Welcome state (shown before analysis) -->
+    <div class="welcome" id="welcome">
+      <div class="welcome-card">
+        <div class="welcome-hero">
+          <div class="welcome-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><path d="m2.16 16 5.08-8 5.08 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>️</div>
+          <h2>Lease Compliance, Automated.</h2>
+          <p>Upload a lease agreement and get an instant compliance analysis against Virginia's landlord-tenant statutes.</p>
+        </div>
+        <div class="welcome-features">
+          <div class="welcome-feature">
+            <span class="feature-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg></span>
+            <span class="feature-title">Clause Detection</span>
+            <span class="feature-desc">20+ lease clause types automatically identified</span>
+          </div>
+          <div class="welcome-feature">
+            <span class="feature-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></span>
+            <span class="feature-title">Red Flag Rules</span>
+            <span class="feature-desc">10 deterministic checks against VA § 55.1-1200 et seq.</span>
+          </div>
+          <div class="welcome-feature">
+            <span class="feature-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+            <span class="feature-title">Compliance Score</span>
+            <span class="feature-desc">Letter grade with cited evidence on every finding</span>
+          </div>
+          <div class="welcome-feature">
+            <span class="feature-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><path d="m2.16 16 5.08-8 5.08 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>️</span>
+            <span class="feature-title">Statute Citations</span>
+            <span class="feature-desc">Every finding cites the specific VA statute it violates</span>
+          </div>
+        </div>
+        <div class="welcome-steps">
+          <div class="welcome-step">
+            <span class="step-number">1</span>
+            <span class="step-text">Upload or paste your lease document</span>
+          </div>
+          <div class="welcome-step">
+            <span class="step-number">2</span>
+            <span class="step-text">AI extracts and classifies every clause</span>
+          </div>
+          <div class="welcome-step">
+            <span class="step-number">3</span>
+            <span class="step-text">Red-flag rules check VA statute compliance</span>
+          </div>
+          <div class="welcome-step">
+            <span class="step-number">4</span>
+            <span class="step-text">Review findings with cited evidence</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Page Footer ── -->
+    <footer class="page-footer">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <span class="footer-mark"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
+          <span>Elze Contract Analyzer<sup>™</sup></span>
+        </div>
+        <div class="footer-links">
+          <span>VA Code § 55.1-1200 et seq.</span>
+          <span>·</span>
+          <span>Phase 1 — Domain Kernel</span>
+          <span>·</span>
+          <span>Cuttlefish Labs VILM™</span>
+        </div>
+        <div class="footer-legal">
+          © 2026 Cuttlefish Labs. All rights reserved.
+        </div>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- ── Login Gate (Protects IP — requires valid relay API key) ── -->
+  <div id="loginGate" class="login-gate">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">
+          <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
+            <path d="M16 2L4 8v8c0 7.2 5.1 13.8 12 16 6.9-2.2 12-8.8 12-16V8L16 2z" stroke="#6366f1" stroke-width="1.5" fill="rgba(99,102,241,0.08)"/>
+            <path d="M16 10v12M10 16h12" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="16" cy="16" r="3" stroke="#6366f1" stroke-width="1" fill="none"/>
+          </svg>
+        </div>
+        <div class="login-title"><span class="brand-primary">Elze</span> Contract Analyzer<sup>™</sup></div>
+        <div class="login-subtitle">Intellectual Property — Authorized Access Only</div>
+      </div>
+
+      <div class="login-body">
+        <div class="login-field">
+          <label for="apiKeyInput">API Key</label>
+          <input type="password" id="apiKeyInput" placeholder="Enter your relay API key" autocomplete="off">
+          <div class="login-hint">Your key is validated against the relay and never stored on our servers.</div>
+        </div>
+        <button id="btnLogin" class="btn btn-accent btn-full">
+          <span class="btn-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Unlock Access
+        </button>
+      </div>
+
+      <div id="loginError" class="login-error" style="display:none"></div>
+
+      <div class="login-footer">
+        <p>© 2026 Cuttlefish Labs. All rights reserved.</p>
+        <p>VA Code § 55.1-1200 et seq. · Phase 1 — Domain Kernel</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=23"></script>
+</body>
+</html>

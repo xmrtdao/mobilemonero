@@ -3,9 +3,10 @@
  * 
  * Stores state in relay-data/state.json
  * Thread-safe for single-process relay
+ * Uses async writes with debounce to avoid event loop blocking.
  */
 
-import { readFileSync, writeFile, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFile, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -16,6 +17,7 @@ const STATE_FILE = join(DATA_DIR, 'state.json');
 let _cache = null;
 let _dirty = false;
 let _writing = false;
+let _saveTimer = null;
 
 function ensureDir() {
   mkdirSync(DATA_DIR, { recursive: true });
@@ -35,130 +37,143 @@ function load() {
   return _cache;
 }
 
-function save() {
+/**
+ * Trim ephemeral keys to keep state.json small and saves fast.
+ * Called before every write.
+ */
+function trimCache() {
+  if (!_cache) return;
+  // Keep fleet chat to last 2000 messages (was 50 — caused context loss on restart)
+  if (Array.isArray(_cache['fleet-chat-history'])) {
+    _cache['fleet-chat-history'] = _cache['fleet-chat-history'].slice(-2000);
+  }
+  // Trim activity log (was 50 — caused audit trail loss)
+  if (Array.isArray(_cache.activityLog)) {
+    _cache.activityLog = _cache.activityLog.slice(-500);
+  }
+  // Trim email inboxes — both flat arrays and nested object-of-arrays
+  for (const key of Object.keys(_cache)) {
+    if (key.includes('inbox') || key.includes('email')) {
+      if (Array.isArray(_cache[key])) {
+        // Flat array inbox: trim to 100, strip html to save space
+        _cache[key] = _cache[key].slice(-100).map(stripEmailHtml);
+      } else if (typeof _cache[key] === 'object' && _cache[key] !== null) {
+        // Object-type inbox (e.g. {pfp: [...], mobilemonero: [...], ...}):
+        // trim each sub-array to 100 items and strip html
+        // Also handle deeper nesting: {inbox: {pfp: [...], ...}}
+        const obj = _cache[key];
+        for (const subKey of Object.keys(obj)) {
+          if (Array.isArray(obj[subKey])) {
+            obj[subKey] = obj[subKey].slice(-50).map(stripEmailHtml);
+          } else if (typeof obj[subKey] === 'object' && obj[subKey] !== null) {
+            // One more level (e.g. email.inbox.pfp)
+            for (const subSubKey of Object.keys(obj[subKey])) {
+              if (Array.isArray(obj[subKey][subSubKey])) {
+                obj[subKey][subSubKey] = obj[subKey][subSubKey].slice(-50).map(stripEmailHtml);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  // Hard cap: if JSON.stringify exceeds 500KB, strip all inbox/email keys
+  const approxSize = JSON.stringify(_cache).length;
+  if (approxSize > 500000) {
+    for (const key of Object.keys(_cache)) {
+      if (key.includes('inbox') || key.includes('email') || key.includes('history')) {
+        delete _cache[key];
+      }
+    }
+  }
+}
+
+/** Strip html field from email entries — saves ~80% space, text is sufficient for agents */
+function stripEmailHtml(entry) {
+  if (entry && typeof entry === 'object') {
+    const { html, ...rest } = entry;
+    return rest;
+  }
+  return entry;
+}
+
+/**
+ * Debounced async save. Only one write at a time.
+ * Trims cache before writing to keep file small.
+ * Uses setImmediate to avoid blocking the event loop on JSON.stringify.
+ */
+async function save() {
   if (!_dirty || _writing) return;
   _writing = true;
   _dirty = false;
   ensureDir();
-  // Use compact JSON (no indentation) — much faster for 2.7MB
-  // Pretty-printing with null,2 was adding ~40ms to the stringify
-  let data;
-  try { data = JSON.stringify(_cache); } catch (e) { _writing = false; console.error(`[state] JSON.stringify error: ${e.message}`); return; }
-  const _writeTimer = setTimeout(() => { _writing = false; }, 5000);
-  writeFile(STATE_FILE, data, (err) => { clearTimeout(_writeTimer);
+  trimCache();
+  // Defer the heavy work to next tick so the current request can respond
+  await new Promise(resolve => setImmediate(resolve));
+  try {
+    const data = JSON.stringify(_cache);
+    await new Promise((resolve, reject) => {
+      writeFile(STATE_FILE, data, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  } catch (e) {
+    console.error(`[state] Error saving state: ${e.message}`);
+  } finally {
     _writing = false;
-    if (err) console.error(`[state] Error saving state: ${err.message}`);
-  });
+  }
 }
 
-// Auto-save every 30 seconds if dirty (was 5s — 2.7MB stringify was too frequent)
-setInterval(() => save(), 30000);
+// Debounced auto-save — coalesces rapid writes into one
+function scheduleSave() {
+  _dirty = true;
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => { _saveTimer = null; save(); }, 2000);
+}
+
+// Auto-save every 30s as fallback
+setInterval(() => { if (_dirty) save(); }, 30000);
 
 // Save on exit (sync — must complete before process exits)
 process.on('exit', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} });
 process.on('SIGINT', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} process.exit(0); });
 process.on('SIGTERM', () => { try { writeFileSync(STATE_FILE, JSON.stringify(_cache)); } catch {} process.exit(0); });
 
-/**
- * Get a value from state
- */
-export function get(key, defaultValue = undefined) {
-  const state = load();
-  const keys = key.split('.');
-  let current = state;
-  for (const k of keys) {
-    if (current === undefined || current === null) return defaultValue;
-    current = current[k];
-  }
-  return current !== undefined ? current : defaultValue;
+// ── Public API ──
+
+export function get(key, def = null) {
+  const c = load();
+  return c[key] !== undefined ? c[key] : def;
 }
 
-/**
- * Set a value in state (deep key support: "mining.lastHashRate")
- */
-export function set(key, value) {
-  const state = load();
-  const keys = key.split('.');
-  let current = state;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (!current[keys[i]] || typeof current[keys[i]] !== 'object') {
-      current[keys[i]] = {};
-    }
-    current = current[keys[i]];
-  }
-  current[keys[keys.length - 1]] = value;
-  _dirty = true;
+export function set(key, val) {
+  const c = load();
+  c[key] = val;
+  scheduleSave();
 }
 
-/**
- * Delete a key from state
- */
 export function del(key) {
-  const state = load();
-  const keys = key.split('.');
-  let current = state;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (!current[keys[i]]) return;
-    current = current[keys[i]];
-  }
-  delete current[keys[keys.length - 1]];
-  _dirty = true;
+  const c = load();
+  delete c[key];
+  scheduleSave();
 }
 
-/**
- * Check if a key exists
- */
-export function has(key) {
-  return get(key) !== undefined;
+export function push(key, val) {
+  const c = load();
+  if (!Array.isArray(c[key])) c[key] = [];
+  c[key].push(val);
+  scheduleSave();
 }
 
-/**
- * Get all keys (top-level)
- */
+export function getAll() {
+  return load();
+}
+
 export function keys() {
   return Object.keys(load());
 }
 
-/**
- * Get entire state snapshot
- */
-export function all() {
-  return { ...load() };
-}
-
-/**
- * Clear all state
- */
-export function clear() {
-  _cache = {};
-  _dirty = true;
-  save();
-}
-
-/**
- * Increment a numeric value
- */
-export function incr(key, by = 1) {
-  const current = get(key, 0);
-  set(key, (typeof current === 'number' ? current : 0) + by);
-  return get(key);
-}
-
-/**
- * Push to an array
- */
-export function push(key, value) {
-  const arr = get(key, []);
-  if (!Array.isArray(arr)) throw new Error(`Key "${key}" is not an array`);
-  arr.push(value);
-  set(key, arr);
-}
-
-/**
- * Force save to disk immediately
- */
 export function flush() {
-  save();
+  return save();
 }
-
-export default { get, set, del, has, keys, all, clear, incr, push, flush };

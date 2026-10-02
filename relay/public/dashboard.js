@@ -1,5 +1,5 @@
   // ── API helper: add x-api-key to bypass Cloudflare Access on tunnel ──
-  const API_KEY = '3a02d6eecc89f1c700c097f9034479c24a56787acfbc996c5d17086ecd364602';
+  const API_KEY = '${relayApiKey}';
   window.apiFetch = function(url, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
@@ -438,22 +438,26 @@
 
   setTimeout(function() { updateTrustTrajectory(); setInterval(updateTrustTrajectory, 30000); }, 200);
 
-  // ── Ship's Log (pirate-themed activity feed) ──
+  // ── Activity Log (centralized log viewer) ──
   function updateShipsLog() {
     var logEl = document.getElementById('qds-activity-log');
     if (!logEl) return;
-    apiFetch('/api/activity-log?limit=20', { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
+    var typeFilter = document.getElementById('log-filter-type') ? document.getElementById('log-filter-type').value : '';
+    var search = document.getElementById('log-search') ? document.getElementById('log-search').value.toLowerCase() : '';
+    var url = '/api/activity-log?limit=50';
+    if (typeFilter) url += '&activity_type=' + encodeURIComponent(typeFilter);
+    apiFetch(url, { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
           if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">No activity yet</span></div>'; return; }
           // Filter out the noise: dashboard polling every 3s drowns the log
           rows = rows.filter(function(a) {
             var title = (a.title || '').toLowerCase();
-            // Skip dashboard fleet-chat polling (every 3s)
             if (title === 'get /api/fleet-chat/messages' && a.agent_id === 'dashboard') return false;
+            if (search && !title.includes(search) && !(a.agent_id || '').toLowerCase().includes(search)) return false;
             return true;
-          }).slice(0, 20);
+          }).slice(0, 50);
           logEl.innerHTML = rows.map(function(a) {
         var type = a.activity_type || 'system';
-        var title = (a.title || a.description || type).slice(0, 60);
+        var title = (a.title || a.description || type).slice(0, 80);
         var status = a.status || 'info';
         var agent = a.agent_id || '';
         var time = a.created_at ? (function() { var d = new Date(a.created_at); var s = Math.floor((Date.now()-d)/1000); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; })() : '';
@@ -492,6 +496,7 @@
       if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Activity feed unavailable</span></div>';
     });
   }
+  function refreshLogViewer() { updateShipsLog(); }
   setTimeout(function() { updateShipsLog(); setInterval(updateShipsLog, 5000); }, 1000);
 
   // ── Mesh Peers ──
@@ -1101,126 +1106,78 @@ loadAgentExperienceCard();
   }
   setTimeout(function() { localMinerHeartbeat(); setInterval(localMinerHeartbeat, 60000); }, 5500);
 
-  // Party Favor Photo inbox refresh (brief — lightweight)
-  function loadPfpInbox() {
-    fetch('/resend/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('pfp-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      // Group by recipient
-      var groups = {};
-      emails.slice(0,20).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        var msgs = groups[addr];
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
-        html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + msgs.length + '</span>';
-        html += '</div>';
-        msgs.forEach(function(m){
-          count++;
-          if (count > 10) return;
-          html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,28) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,22) + '</span>';
-          html += '</div>';
-        });
-      });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('pfp-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
-    });
+// Incoming Mail tiles, one per registered mail domain.
+//
+// This was three near-identical loaders with the brief URL and the element id
+// written out each time, plus a setTimeout line per tile. A new domain got a tile
+// from the server and nothing on the dashboard: it sat on "Loading..." forever,
+// which reads as "no mail" and is not. The list now comes from /resend/domains,
+// which the server renders from the same registry the tile markup comes from, so
+// the two cannot drift apart.
+function renderInboxTile(cfg) {
+  var card = document.getElementById(cfg.tile);
+  if (!card) return;
+  var emails = cfg.data || [];
+  if (!emails.length) {
+    card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
+    return;
   }
-  setTimeout(function() { loadPfpInbox(); setInterval(loadPfpInbox, 15000); }, 6000);
+  // Grouped by recipient, because on a shared domain the question worth asking is
+  // "who is this addressed to", not just "what arrived".
+  var groups = {};
+  emails.slice(0, cfg.scan).forEach(function(e) {
+    var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
+    if (!groups[addr]) groups[addr] = [];
+    groups[addr].push(e);
+  });
+  var html = '';
+  var count = 0;
+  Object.keys(groups).forEach(function(addr) {
+    var msgs = groups[addr];
+    html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
+    html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
+    html += '<span class="value badge badge-info">' + msgs.length + '</span>';
+    html += '</div>';
+    msgs.forEach(function(m) {
+      count++;
+      if (count > cfg.list) return;
+      html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
+      html += '<span class="label">' + (m.from || '').substring(0, 28) + '</span>';
+      html += '<span class="value" style="color:#a0a0b0;">' + (m.subject || '').substring(0, 22) + '</span>';
+      html += '</div>';
+    });
+  });
+  if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
+  card.innerHTML = html;
+}
 
-  // MobileMonero inbox refresh (brief — lightweight)
-  function loadMmInbox() {
-    fetch('/resend/mobilemonero/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('mm-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      var groups = {};
-      emails.slice(0,15).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
-          count++;
-          if (count > 8) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
+function loadInboxTiles() {
+  fetch('/resend/domains').then(function(r) { return r.json(); }).then(function(list) {
+    (list || []).forEach(function(cfg) {
+      fetch(cfg.briefUrl).then(function(r) { return r.json(); }).then(function(data) {
+        renderInboxTile({
+          tile: cfg.tile,
+          scan: cfg.scan || 20,
+          list: cfg.list || 10,
+          data: data.emails || data.recent || [],
         });
+      }).catch(function() {
+        // Deliberately distinct from "no mail": this tile cannot reach its inbox,
+        // which is an operator problem rather than a quiet one.
+        var el = document.getElementById(cfg.tile);
+        if (el) el.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
       });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('mm-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
     });
-  }
-  setTimeout(function() { loadMmInbox(); setInterval(loadMmInbox, 15000); }, 6500);
+  }).catch(function() {
+    document.querySelectorAll('[id$="-inbox"]').forEach(function(el) {
+      el.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
+    });
+  });
+}
 
-  // 31 Harbor inbox refresh (brief — lightweight)
-  function loadHbInbox() {
-    fetch('/resend/31harbor/inbox/brief').then(function(r){return r.json();}).then(function(data){
-      var card = document.getElementById('hb-inbox');
-      if (!card) return;
-      var emails = data.emails || data.recent || [];
-      if (!emails.length) {
-        card.innerHTML = '<div class="stat"><span class="label">No emails yet</span></div>';
-        return;
-      }
-      var html = '';
-      var groups = {};
-      emails.slice(0,15).forEach(function(e){
-        var addr = Array.isArray(e.to) ? (e.to[0] || 'unknown') : (e.to || 'unknown');
-        if (!groups[addr]) groups[addr] = [];
-        groups[addr].push(e);
-      });
-      var count = 0;
-      Object.keys(groups).forEach(function(addr){
-        html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.3rem 0;">';
-        html += '<span class="label" style="font-size:0.75rem;color:#60a5fa;">' + addr + '</span>';
-        html += '<span class="value badge badge-info">' + groups[addr].length + '</span></div>';
-        groups[addr].forEach(function(m){
-          count++;
-          if (count > 8) return;
-          html += '<div class="stat" style="padding:0.15rem 0 0.15rem 0.4rem;font-size:0.7rem;">';
-          html += '<span class="label">' + (m.from||'').substring(0,25) + '</span>';
-          html += '<span class="value" style="color:#a0a0b0;">' + (m.subject||'').substring(0,20) + '</span></div>';
-        });
-      });
-      if (!html) html = '<div class="stat"><span class="label">No emails yet</span></div>';
-      card.innerHTML = html;
-    }).catch(function(){
-      var e = document.getElementById('hb-inbox');
-      if (e) e.innerHTML = '<div class="stat"><span class="label">Inbox unavailable</span></div>';
-    });
-  }
-  setTimeout(function() { loadHbInbox(); setInterval(loadHbInbox, 15000); }, 7000);
+// Staggered start, as before, so the dashboard does not fire every fetch at once
+// on load.
+setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); }, 6000);
 
   // XMRT DAO Health — dynamic data from Supabase
   function loadDaoHealth() {
@@ -1444,7 +1401,39 @@ loadAgentExperienceCard();
     const methodFilter = document.getElementById('methodFilter').value;
     const typeFilter = document.getElementById('typeFilter').value;
 
-    let filtered = functions.filter(f => {
+    // The catalog returns `description`, not `desc`, and carries no `methods` or
+    // `type` at all. This code read `f.desc` and called `f.methods.includes()`,
+    // so every search threw a TypeError on the first row and the table rendered
+    // empty - while the endpoint column, built from f.name, still worked. That
+    // asymmetry is what made it look like a truncated table rather than a
+    // mismatch: the names and URLs appeared, the descriptions did not.
+    //
+    // Derived here instead of in the API, because method and type are presentational
+    // and the catalog is also consumed by agents that should see the raw record.
+    // Normalising in one place means a future field rename is a one-line change
+    // rather than a hunt through the renderer.
+    const rows = functions.map(f => {
+      const cap = Array.isArray(f.capabilities) ? f.capabilities : [];
+      const desc = f.description || f.desc || '';
+      // A capability naming an HTTP verb is the only evidence of a method here.
+      // Absent that, POST is the honest default for an edge function that does
+      // work, and it matches what the rest of this renderer already assumed.
+      const methods = Array.isArray(f.methods) && f.methods.length
+        ? f.methods
+        : (cap.find(c => /^(GET|POST|PUT|PATCH|DELETE)$/i.test(c)) || ['POST']);
+      return {
+        name: f.name || '',
+        desc: desc,
+        // The catalog has no notion of this. "simple endpoint" is the truthful
+        // label: these are callable HTTP functions, not multi-action workflows.
+        // The type column previously showed 'simple' for everything, which was
+        // hardcoded rather than wrong, so this preserves that output.
+        type: f.type || 'simple endpoint',
+        methods: methods,
+      };
+    });
+
+    let filtered = rows.filter(f => {
       if (search && !f.name.toLowerCase().includes(search) && !f.desc.toLowerCase().includes(search)) return false;
       if (methodFilter && !f.methods.includes(methodFilter)) return false;
       if (typeFilter === 'simple' && f.type !== 'simple endpoint') return false;
@@ -1458,7 +1447,11 @@ loadAgentExperienceCard();
       return va < vb ? -sortDir : va > vb ? sortDir : 0;
     });
 
-    document.getElementById('resultCount').textContent = filtered.length + ' shown';
+    // A count that can disagree with the row count is worse than no count, so
+    // both come from the same array. Previously resultCount came from `filtered`
+    // while the body was built from a separately-normalised list, and the two
+    // could disagree with no indication of which was right.
+    document.getElementById('resultCount').textContent = filtered.length + ' of ' + rows.length + ' shown';
 
     document.getElementById('fnBody').innerHTML = filtered.map(f => {
       const methods = (f.methods || ['POST']).map(m =>
@@ -2211,6 +2204,10 @@ loadAgentExperienceCard();
   let effectRadial = false;  // off by default — concentric circular layout like cuttlefishclaws.com
   let effectFilter = false;  // off by default — hide low-trust / unconnected nodes
   let effectDb = true;       // on by default — show/hide DB table nodes
+  let effectMemory = true;   // on by default — show/hide fleet memory nodes
+  let effectSharedCtx = true; // on by default — show/hide shared-context nodes
+  let effectCatalog = true;  // on by default — show/hide semantic catalog nodes
+  let effectKnowledge = true; // on by default — show/hide knowledge-entity nodes
 
   window.toggleGraphEffect = function(name) {
     const btn = document.getElementById('b-' + name);
@@ -2226,6 +2223,10 @@ loadAgentExperienceCard();
     else if (name === 'radial') { effectRadial = !effectRadial; newState = effectRadial; }
     else if (name === 'filter') { effectFilter = !effectFilter; newState = effectFilter; }
     else if (name === 'db') { effectDb = !effectDb; newState = effectDb; }
+    else if (name === 'memory') { effectMemory = !effectMemory; newState = effectMemory; }
+    else if (name === 'sharedctx') { effectSharedCtx = !effectSharedCtx; newState = effectSharedCtx; }
+    else if (name === 'catalog') { effectCatalog = !effectCatalog; newState = effectCatalog; }
+    else if (name === 'knowledge') { effectKnowledge = !effectKnowledge; newState = effectKnowledge; }
     if (btn) {
       btn.classList.toggle('on', newState);
       var isDb = name === 'db';
@@ -2241,6 +2242,8 @@ loadAgentExperienceCard();
     db: '#34d399', mining: '#818cf8', cert: '#f472b6',
     cron: '#2dd4bf', 'edge-function': '#67e8f9', endpoint: '#93c5fd',
     github: '#c084fc', tunnel: '#fcd34d', campaign: '#fdba74',
+    memory: '#f472b6', 'shared-context': '#2dd4bf', catalog: '#fcd34d',
+    knowledge: '#a3e635',
     other: '#6b6b80'
   };
 
@@ -2669,6 +2672,10 @@ loadAgentExperienceCard();
 
       // DB toggle: hide DB table nodes when off (default: on, but user can toggle off to clean view)
       if (!effectDb && n.category === 'db') continue;
+      if (!effectMemory && n.category === 'memory') continue;
+      if (!effectSharedCtx && n.category === 'shared-context') continue;
+      if (!effectCatalog && n.category === 'catalog') continue;
+      if (!effectKnowledge && n.category === 'knowledge') continue;
 
       var color = CAT_COLORS[n.category] || '#6b6b80';
       var trustInfo = null;

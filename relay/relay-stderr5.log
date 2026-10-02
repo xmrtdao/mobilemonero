@@ -1,0 +1,20 @@
+[CuttlefishClaws MCP] Starting CuttlefishClaws Local Redundancy MCP Server v1.0.0
+[CuttlefishClaws MCP] Local Postgres: postgres@127.0.0.1:5432/xmrt_suite
+[CuttlefishClaws MCP] Engines: TG-001, SS-001, SGQ-001, AR-001
+[CuttlefishClaws MCP] Transport: stdio
+[CuttlefishClaws MCP] 25 tools registered
+[XMRT Suite MCP] Starting XMRT DAO Suite Local Redundancy MCP Server v1.0.0
+[XMRT Suite MCP] Local Postgres: postgres@127.0.0.1:5432/xmrt_suite
+[XMRT Suite MCP] Transport: stdio
+[XMRT Suite MCP] 15 tools registered
+[Cuttlefish MCP] Starting Cuttlefish Labs MCP Server v1.0.0
+[Cuttlefish MCP] Engines: TG-001, SS-001, SGQ-001, AR-001, KYA-002, VOCAB-001
+[Cuttlefish MCP] Transport: stdio
+[Cuttlefish MCP] 19 tools registered
+[Relay] UNCAUGHT EXCEPTION: listen EADDRINUSE: address already in use 0.0.0.0:8080
+Error: listen EADDRINUSE: address already in use 0.0.0.0:8080
+    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+    at listenInCluster (node:net:2066:12)
+    at node:net:2275:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+[db] Pool health check failed (1/3): sorry, too many clients already

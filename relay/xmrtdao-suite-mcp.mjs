@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 /**
- * xmrtdao-suite-mcp.mjs — XMRT DAO Suite Cloud Redundancy MCP Server
+ * xmrtdao-suite-mcp.mjs — XMRT DAO Suite Local Redundancy MCP Server
  *
- * Provides cloud backup access to the XMRT DAO stack via Supabase Postgres.
+ * Provides local Postgres access to the XMRT DAO stack.
  * Mirrors the local relay's database tables (port 5432 / Express 8080).
  *
- * Supabase project:  kpqtadxqxnhkpqbgelhf
- * Supabase URL:       https://kpqtadxqxnhkpqbgelhf.supabase.co
- * Connection string:  postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+ * Local Postgres: postgres@127.0.0.1:5432/xmrt_suite
  *
  * Usage:
  *   node xmrtdao-suite-mcp.mjs                    # stdio transport (default for MCP)
@@ -50,31 +48,24 @@ function loadEnv() {
 }
 loadEnv();
 
-// ── Supabase Configuration ──────────────────────────────────────
-const SUPABASE_URL     = 'https://kpqtadxqxnhkpqbgelhf.supabase.co';
-const SUPABASE_REF     = 'kpqtadxqxnhkpqbgelhf';
-const SUPABASE_REGION  = 'aws-0-us-east-1';
-const SUPABASE_DB_HOST = `${SUPABASE_REGION}.pooler.supabase.com`;
-const SUPABASE_DB_PORT = process.env.SUPABASE_DB_PORT || 6543;
-const SUPABASE_DB_USER = process.env.SUPABASE_DB_USER || `postgres.${SUPABASE_REF}`;
-const SUPABASE_DB_NAME = process.env.SUPABASE_DB_NAME || 'postgres';
-const SUPABASE_DB_PASS = process.env.SUPABASE_DB_PASS || '';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_aziEtQaD16O6l3W2Esl_YA_07LDlAMJ';
-
-const SUPABASE_DB_PASS_REAL = process.env.SUPABASE_DB_PASS_REAL || 'XmrtDao2026Suite!Redundancy';
-const CONNECTION_STRING = process.env.SUPABASE_DATABASE_URL ||
-  `postgresql://${SUPABASE_DB_USER}:${encodeURIComponent(SUPABASE_DB_PASS_REAL)}@${SUPABASE_DB_HOST}:${SUPABASE_DB_PORT}/${SUPABASE_DB_NAME}`;
+// ── Local Postgres Configuration ──────────────────────────────────────
+// Rewired from cloud Supabase to local Postgres (July 20, 2026)
+// All suite tables exist locally in the public schema.
+const LOCAL_DB_URL = process.env.LOCAL_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/xmrt_suite';
 
 // ── DB Connection (pg Pool) ─────────────────────────────────────
 import pg from 'pg';
+import { POOL_CONFIG } from './lib/pool-config.mjs';
 const { Pool } = pg;
 
 const pool = new Pool({
-  connectionString: CONNECTION_STRING,
-  max: 3,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
-  ssl: { rejectUnauthorized: false },
+  connectionString: LOCAL_DB_URL,
+  ...POOL_CONFIG.mcp,
+});
+
+// Prevent crash on pool-level errors (ECONNRESET, PG restart, etc.)
+pool.on('error', (err) => {
+  console.error('[XMRT Suite MCP] Pool error (non-fatal):', err.message);
 });
 
 async function dbQuery(sql, params = []) {
@@ -100,6 +91,7 @@ function mcpResult(id, result) {
 
 // ── Allowed suite tables for insert/update ─────────────────────
 const SUITE_TABLES = [
+  'agents',
   'suite_companies',
   'suite_leads',
   'suite_campaigns',
@@ -175,7 +167,7 @@ const TOOLS = {
       const cols = Object.keys(values);
       if (!cols.length) return { error: 'No columns provided' };
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      const sql = `INSERT INTO public.${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+      const sql = `INSERT INTO app.${table} (${cols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
       const params = cols.map(c => {
         const v = values[c];
         if (v !== null && typeof v === 'object') return JSON.stringify(v);
@@ -245,7 +237,7 @@ const TOOLS = {
       const { agent_id, agent_role = 'observer', memory_type, scope = 'fleet',
               title, body, payload = {}, confidence = 1.0, refs = [], ttl_at } = args;
       const rows = await dbQuery(
-        `INSERT INTO public.fleet_memory
+        `INSERT INTO app.fleet_memory
            (agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, ttl_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING id, agent_id, title, created_at`,
@@ -274,7 +266,7 @@ const TOOLS = {
     handler: async (args) => {
       const { agent_id, scope, memory_type, limit = 50 } = args;
       const rowLimit = Math.min(limit, 200);
-      let sql = 'SELECT id, agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at FROM public.fleet_memory WHERE 1=1';
+      let sql = 'SELECT id, agent_id, agent_role, memory_type, scope, title, body, payload, refs, confidence, created_at, updated_at FROM app.fleet_memory WHERE 1=1';
       const params = [];
       let idx = 1;
       if (agent_id)    { sql += ` AND agent_id = $${idx++}`;   params.push(agent_id); }
@@ -304,7 +296,7 @@ const TOOLS = {
     handler: async (args) => {
       const { channel, is_read, limit = 50 } = args;
       const rowLimit = Math.min(limit, 200);
-      let sql = 'SELECT * FROM public.inbox_messages WHERE 1=1';
+      let sql = 'SELECT * FROM app.inbox_messages WHERE 1=1';
       const params = [];
       let idx = 1;
       if (channel)  { sql += ` AND channel = $${idx++}`;  params.push(channel); }
@@ -369,7 +361,7 @@ const TOOLS = {
     handler: async (args) => {
       const { status, assignee, limit = 50 } = args;
       const rowLimit = Math.min(limit, 200);
-      let sql = 'SELECT id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, stage_started_at, progress_percentage, completed_checklist_items, created_at, updated_at FROM public.tasks WHERE 1=1';
+      let sql = 'SELECT id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, stage_started_at, progress_percentage, completed_checklist_items, created_at, updated_at FROM app.tasks WHERE 1=1';
       const params = [];
       let idx = 1;
       if (status)   { sql += ` AND status = $${idx++}`;         params.push(status); }
@@ -412,7 +404,7 @@ const TOOLS = {
       if (!cols.length) return { error: 'No fields to update' };
       cols.push(`updated_at = now()`);
       params.push(id);
-      const sql = `UPDATE public.tasks SET ${cols.join(', ')} WHERE id = $${params.length} RETURNING *`;
+      const sql = `UPDATE app.tasks SET ${cols.join(', ')} WHERE id = $${params.length} RETURNING *`;
       const rows = await dbQuery(sql, params);
       return { success: true, task: rows[0] || null };
     },
@@ -537,7 +529,7 @@ const TOOLS = {
       // list
       const { status, city, limit = 50 } = args;
       const rowLimit = Math.min(limit, 200);
-      let sql = 'SELECT * FROM public.hb_properties WHERE 1=1';
+      let sql = 'SELECT * FROM app.hb_properties WHERE 1=1';
       const params = [];
       let idx = 1;
       if (status) { sql += ` AND status = $${idx++}`; params.push(status); }
@@ -735,14 +727,14 @@ const TOOLS = {
           status: 'error',
           reachable: false,
           error: e.message,
-          supabaseUrl: SUPABASE_URL,
+          localDb: 'postgres@127.0.0.1:5432/xmrt_suite',
           timestamp: new Date().toISOString(),
         };
       }
 
       for (const table of TABLES) {
         try {
-          const res = await dbQuery(`SELECT COUNT(*) AS cnt FROM public.${table}`, []);
+          const res = await dbQuery(`SELECT COUNT(*) AS cnt FROM app.${table}`, []);
           counts[table] = Number(res[0]?.cnt || 0);
         } catch {
           counts[table] = 'table_not_found';
@@ -766,8 +758,7 @@ const TOOLS = {
       return {
         status: 'ok',
         reachable,
-        supabaseUrl: SUPABASE_URL,
-        supabaseRef: SUPABASE_REF,
+        localDb: 'postgres@127.0.0.1:5432/xmrt_suite',
         tableCounts: counts,
         tools: Object.values(TOOLS).map(t => t.name),
         toolCount: Object.keys(TOOLS).length,
@@ -893,7 +884,7 @@ h1{color:#34d399;border-bottom:1px solid #34d399;padding-bottom:8px}
 pre{background:#1a1a2e;padding:12px;border-radius:6px;overflow-x:auto}
 a{color:#60a5fa}</style></head><body>
 <h1>📡 XMRT DAO Suite MCP Server</h1>
-<p>Cloud Redundancy · Supabase: ${SUPABASE_REF}</p>
+<p>Local Redundancy · Postgres: 127.0.0.1:5432/xmrt_suite</p>
 <p>This is an MCP server. Connect via an MCP client.</p>
 <h2>Available Tools (${Object.keys(TOOLS).length})</h2>
 <pre>${Object.values(TOOLS).map(t => t.name).join('\n')}</pre>
@@ -915,18 +906,24 @@ const useHttp = process.argv.includes('--http');
 const portIdx = process.argv.indexOf('--port');
 const port = portIdx !== -1 ? parseInt(process.argv[portIdx + 1]) : 3200;
 
-console.error(`[XMRT Suite MCP] Starting XMRT DAO Suite Cloud Redundancy MCP Server v1.0.0`);
-console.error(`[XMRT Suite MCP] Supabase: ${SUPABASE_URL}`);
+console.error(`[XMRT Suite MCP] Starting XMRT DAO Suite Local Redundancy MCP Server v1.0.0`);
+console.error(`[XMRT Suite MCP] Local Postgres: postgres@127.0.0.1:5432/xmrt_suite`);
 console.error(`[XMRT Suite MCP] Transport: ${useHttp ? `HTTP on :${port}` : 'stdio'}`);
 console.error(`[XMRT Suite MCP] ${Object.keys(TOOLS).length} tools registered`);
+
+export { TOOLS };
 
 if (useHttp) {
   startHttp(port);
 } else {
   process.stdin.on('data', onStdioData);
-  process.stdin.on('end', () => {
-    pool.end().then(() => process.exit(0));
-  });
+  // Only auto-exit on stdin end when running standalone (not imported in-process)
+  const isMain = process.argv[1] && fileURLToPath(import.meta.url).replace(/\\/g, '/').endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());
+  if (isMain) {
+    process.stdin.on('end', () => {
+      pool.end().then(() => process.exit(0));
+    });
+  }
 }
 
 // Graceful shutdown

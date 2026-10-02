@@ -13,6 +13,7 @@
  */
 
 import pg from 'pg';
+import { POOL_CONFIG } from './pool-config.mjs';
 const { Pool } = pg;
 
 const DB_URL = process.env.LOCAL_DATABASE_URL
@@ -29,9 +30,16 @@ let _consecutiveFailures = 0;
 function createPool() {
   const p = new Pool({
     connectionString: DB_URL,
-    max: 10,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 2_000,
+    ...POOL_CONFIG.relay,
+  });
+
+  // Set statement timeout on every new connection to prevent hung queries
+  p.on('connect', async (client) => {
+    try {
+      await client.query('SET statement_timeout TO 10000');
+    } catch (e) {
+      // Non-fatal — connection still works without the timeout
+    }
   });
 
   p.on('error', (err) => {
@@ -62,14 +70,16 @@ export function getPool() {
 function startHealthCheck() {
   if (_healthTimer) clearInterval(_healthTimer);
   _healthTimer = setInterval(async () => {
-    let client = null;
     try {
-      client = await _pool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      _consecutiveFailures = 0;
+      const pool = getPool();
+      const c = await pool.connect();
+      try {
+        await c.query('SELECT 1');
+        _consecutiveFailures = 0;
+      } finally {
+        c.release();
+      }
     } catch (err) {
-      if (client) try { client.release(); } catch (_) {}
       _consecutiveFailures++;
       console.error(`[db] Pool health check failed (${_consecutiveFailures}/3):`, err.message);
       if (_consecutiveFailures >= 3) {
@@ -77,12 +87,10 @@ function startHealthCheck() {
         const oldPool = _pool;
         _pool = createPool();
         _consecutiveFailures = 0;
-        // Drain old pool in background — don't await, don't block
         oldPool.end().catch(() => {});
       }
     }
   }, 120_000);
-  // Don't let the timer keep the process alive
   if (_healthTimer && _healthTimer.unref) _healthTimer.unref();
 }
 

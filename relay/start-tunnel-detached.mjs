@@ -26,18 +26,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLOUDFLARED = join(__dirname, '..', 'cloudflared.exe');
 const CONFIG      = 'C:\\Users\\PureTrek\\.cloudflared\\config.yml';
 const TUNNEL_ID   = '61492f26-c8f8-45d2-be65-ffb7340683fa';
+// Full path — bare 'powershell.exe' breaks when this script is launched from
+// an environment whose PATH lacks System32 (e.g. stripped service contexts).
+const POWERSHELL  = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
 function log(m) { console.log(`[start-tunnel] ${m}`); }
 
 function isTunnelUp() {
   try {
     const out = execSync(
-      `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'cloudflared.exe'\\\" | Select-Object -First 1 -ExpandProperty ProcessId"`,
+      `"${POWERSHELL}" -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'cloudflared.exe'\\" | Select-Object -First 1 -ExpandProperty ProcessId"`,
       { encoding: 'utf8', timeout: 4000, windowsHide: true }
     ).trim();
     return /^\d+$/.test(out);
   } catch { return false; }
 }
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 if (!existsSync(CLOUDFLARED)) {
   log(`cloudflared.exe not found at ${CLOUDFLARED}`);
@@ -71,7 +76,7 @@ try {
 // Give cloudflared a moment, then verify
 const t0 = Date.now();
 while (Date.now() - t0 < 10000) {
-  execSync('powershell.exe -NoProfile -Command "Start-Sleep -Milliseconds 500"', { stdio: 'ignore', windowsHide: true });
+  await sleep(500);
   if (isTunnelUp()) {
     log(`Tunnel is up after ${Math.round((Date.now() - t0) / 1000)}s`);
     process.exit(0);

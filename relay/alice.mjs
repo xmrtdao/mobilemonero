@@ -762,3 +762,5 @@ async function main() {
 }
 
 main().catch(err => { console.error('Alice fatal:', err); process.exit(1); });
+
+export { daemonLoop, checkServices, printStatus };

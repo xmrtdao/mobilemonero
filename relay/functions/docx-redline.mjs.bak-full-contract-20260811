@@ -1,0 +1,394 @@
+#!/usr/bin/env node
+/**
+ * ef:docx-redline — Generate DOCX with tracked changes from redline data
+ *
+ * Takes the output from lease-analyzer (with redlines array) and produces
+ * a Word-compatible .docx file with revision marks.
+ *
+ * API:
+ *   POST /api/v1/functions/docx-redline
+ *   Body: { redlines: [...], metadata: { documentName, jurisdiction, grade } }
+ *   Returns: binary DOCX file
+ */
+
+const META = {
+  description: 'Generate DOCX files with Word-compatible tracked changes from redline data',
+  category: 'legal',
+  version: '0.1.0',
+};
+
+import {
+  Document, Paragraph, TextRun, DeletedTextRun, InsertedTextRun,
+  HeadingLevel, AlignmentType, Packer, Footer, PageNumber
+} from 'docx';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/**
+ /**
+  * Build a DOCX document with tracked changes from redline data.
+  * @param {Array} redlines - Array of redline objects from lease-analyzer
+  * @param {Object} metadata - Document metadata
+  * @returns {Promise<Buffer>} - DOCX file as Buffer
+  */
+ export async function generateDocxRedline(redlines, metadata = {}) {
+   const children = [];
+
+   // ── Header ──
+   children.push(
+     new Paragraph({
+       text: 'ELZE REDLINED LEASE',
+       heading: HeadingLevel.HEADING_1,
+       alignment: AlignmentType.CENTER,
+       spacing: { after: 200 },
+     }),
+     new Paragraph({
+       children: [
+         new TextRun({ text: `Document: `, bold: true }),
+         new TextRun({ text: metadata.documentName || 'Lease Document' }),
+       ],
+       spacing: { after: 100 },
+     }),
+     new Paragraph({
+       children: [
+         new TextRun({ text: `Jurisdiction: `, bold: true }),
+         new TextRun({ text: metadata.jurisdiction || 'Virginia' }),
+       ],
+       spacing: { after: 100 },
+     }),
+     new Paragraph({
+       children: [
+         new TextRun({ text: `Compliance Grade: `, bold: true }),
+         new TextRun({ text: metadata.grade || 'N/A' }),
+       ],
+       spacing: { after: 100 },
+     }),
+     new Paragraph({
+       children: [
+         new TextRun({ text: `Generated: `, bold: true }),
+         new TextRun({ text: new Date().toLocaleString() }),
+       ],
+       spacing: { after: 300 },
+     }),
+     new Paragraph({
+       text: `This document shows suggested corrections (green underlined text) and deletions (red strikethrough) based on Virginia Code Chapter 54.1. Each change is marked as a tracked revision in Microsoft Word.`,
+       spacing: { after: 400 },
+     }),
+   );
+
+   // ── Each Redline ──
+   for (let i = 0; i < redlines.length; i++) {
+     const r = redlines[i];
+     const num = i + 1;
+
+     // Section heading
+     children.push(
+       new Paragraph({
+         text: ``,
+         spacing: { before: 300, after: 0 },
+       }),
+       new Paragraph({
+         children: [
+           new TextRun({ text: `${num}. `, bold: true, color: 'C9A96E' }),
+           new TextRun({ text: r.clause || 'Unknown Clause', bold: true }),
+           new TextRun({ text: `    [${r.severity.toUpperCase()}]`, bold: true, color: severityColor(r.severity) }),
+         ],
+         heading: HeadingLevel.HEADING_2,
+         spacing: { after: 200 },
+       }),
+       new Paragraph({
+         children: [
+           new TextRun({ text: 'Statute: ', bold: true }),
+           new TextRun({ text: `VA § ${r.statute}`, font: 'Courier New' }),
+         ],
+         spacing: { after: 200 },
+       }),
+     );
+
+     // Original text (deleted)
+     children.push(
+       new Paragraph({
+         children: [
+           new TextRun({ text: '❌ ORIGINAL:', bold: true, color: 'EF4444', size: 22 }),
+         ],
+         spacing: { after: 100 },
+       }),
+       new Paragraph({
+         children: [
+           new DeletedTextRun({
+             text: r.original_text || '',
+             color: 'EF4444',
+             strike: true,
+           }),
+         ],
+         spacing: { after: 200 },
+       }),
+     );
+
+     // Suggested text (inserted)
+     children.push(
+       new Paragraph({
+         children: [
+           new TextRun({ text: '✅ SUGGESTED:', bold: true, color: '22C55E', size: 22 }),
+         ],
+         spacing: { after: 100 },
+       }),
+       new Paragraph({
+         children: [
+           new InsertedTextRun({
+             text: r.suggested_text || '',
+             color: '22C55E',
+             underline: { type: 'single' },
+           }),
+         ],
+         spacing: { after: 200 },
+       }),
+     );
+
+     // Comment / explanation
+     if (r.comment) {
+       children.push(
+         new Paragraph({
+           children: [
+             new TextRun({ text: '⚖️ ', bold: true, color: 'C9A96E' }),
+             new TextRun({ text: r.comment, italics: true, size: 20 }),
+           ],
+           spacing: { after: 300 },
+         }),
+       );
+     }
+
+     // Separator
+     children.push(
+       new Paragraph({
+         text: '',
+         spacing: { before: 100, after: 100 },
+       }),
+     );
+   }
+
+   // ── Footer ──
+   children.push(
+     new Paragraph({
+       text: '',
+       spacing: { before: 400 },
+     }),
+     new Paragraph({
+       text: '— END OF REDLINED DOCUMENT —',
+       alignment: AlignmentType.CENTER,
+       spacing: { after: 200 },
+     }),
+     new Paragraph({
+       text: `Generated by Elze Contract Suite · ${new Date().getFullYear()} · Elze Law PLLC`,
+       alignment: AlignmentType.CENTER,
+       size: 18,
+       color: '9CA3AF',
+     }),
+   );
+
+   // Build document
+   const doc = new Document({
+     sections: [{
+       properties: {
+         page: {
+           margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+         },
+       },
+       children,
+       footers: {
+         default: new Footer({
+           children: [
+             new Paragraph({
+               children: [
+                 new TextRun({ text: 'Elze Redlined Lease · ', size: 18, color: '9CA3AF' }),
+                 new TextRun({
+                   children: ['Page ', PageNumber.CURRENT],
+                   size: 18, color: '9CA3AF',
+                 }),
+               ],
+               alignment: AlignmentType.CENTER,
+             }),
+           ],
+         }),
+       },
+     }],
+   });
+
+   return await Packer.toBuffer(doc);
+ }
+
+ /**
+  * Generate a clean final DOCX document with all accepted changes applied.
+  * @param {string} fullText - The full document text with corrections applied
+  * @param {Object} metadata - Document metadata
+  * @returns {Promise<Buffer>} - DOCX file as Buffer
+  */
+ export async function generateFinalDocx(fullText, metadata = {}) {
+   const children = [];
+
+   // Title
+   const title = (fullText || '').split('\n')[0] || 'FINAL DOCUMENT';
+   children.push(
+     new Paragraph({
+       text: title,
+       heading: HeadingLevel.HEADING_1,
+       alignment: AlignmentType.CENTER,
+       spacing: { after: 200 },
+     }),
+     new Paragraph({
+       children: [
+         new TextRun({ text: `Final Version`, bold: true }),
+         new TextRun({ text: ` · ${metadata.acceptedCount || 0} of ${metadata.totalCount || 0} corrections applied` }),
+       ],
+       spacing: { after: 300 },
+     }),
+   );
+
+   // Document body — split by newlines and create paragraphs
+   const lines = (fullText || '').split('\n');
+   for (const line of lines) {
+     const trimmed = line.trim();
+     if (!trimmed) {
+       children.push(new Paragraph({ text: '', spacing: { after: 200 } }));
+       continue;
+     }
+     // Check if it looks like a heading (all caps, short)
+     if (trimmed === trimmed.toUpperCase() && trimmed.length < 100 && trimmed.length > 3) {
+       children.push(new Paragraph({
+         text: trimmed,
+         heading: HeadingLevel.HEADING_2,
+         spacing: { before: 300, after: 200 },
+       }));
+     } else {
+       children.push(new Paragraph({
+         children: [new TextRun({ text: trimmed })],
+         spacing: { after: 100 },
+       }));
+     }
+   }
+
+   const doc = new Document({
+     sections: [{
+       properties: {
+         page: {
+           margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+         },
+       },
+       children,
+       footers: {
+         default: new Footer({
+           children: [
+             new Paragraph({
+               children: [
+                 new TextRun({ text: 'Elze Contract Suite · ', size: 18, color: '9CA3AF' }),
+                 new TextRun({
+                   children: ['Page ', PageNumber.CURRENT],
+                   size: 18, color: '9CA3AF',
+                 }),
+               ],
+               alignment: AlignmentType.CENTER,
+             }),
+           ],
+         }),
+       },
+     }],
+   });
+
+   return await Packer.toBuffer(doc);
+ }
+
+function severityColor(sev) {
+  const map = { critical: 'EF4444', high: 'F97316', medium: 'EAB308', low: '3B82F6' };
+  return map[sev] || '6B7280';
+}
+
+function severityBg(sev) {
+  const map = { critical: 'FEF2F2', high: 'FFF7ED', medium: 'FEFCE8', low: 'EFF6FF' };
+  return map[sev] || 'F3F4F6';
+}
+
+// ── Direct Execution ──
+if (import.meta.url === `file://${process.argv[1]}`) {
+  // CLI test
+  const testRedlines = [
+    {
+      id: 'RF-001',
+      clause: 'Security Deposit',
+      severity: 'high',
+      statute: '55.1-1212',
+      original_text: 'Tenant shall deposit three months rent as security deposit. Said deposit shall be returned within ninety days after termination.',
+      suggested_text: 'Tenant shall deposit with Landlord the sum of [AMOUNT] ([N] months\' Base Rent) as security for the faithful performance of all terms, covenants, and conditions of this Lease. Said deposit shall be returned to Tenant within forty-five (45) days after the Expiration Date or earlier termination, less any sums applied to damages.',
+      comment: 'VA 55.1-1212 limits security deposits to 2 months\' rent and requires return within 45 days.',
+    },
+    {
+      id: 'RF-004',
+      clause: 'Default and Remedies',
+      severity: 'critical',
+      statute: '55.1-1248',
+      original_text: 'Upon default, Landlord may re-enter and take possession using self-help measures without obtaining a court order.',
+      suggested_text: 'In the event of any default by Tenant, Landlord may, upon thirty (30) days\' written notice, terminate this Lease and re-enter the Premises. Landlord shall have a duty to mitigate damages. Tenant shall have the right to cure any non-monetary default within the notice period.',
+      comment: 'VA 55.1-1248 prohibits self-help eviction. Landlord must obtain a court order and provide notice.',
+    },
+  ];
+
+  generateDocxRedline(testRedlines, {
+    documentName: 'Test Lease Agreement',
+    jurisdiction: 'Virginia',
+    grade: 'D',
+  }).then(buf => {
+    const out = path.join(process.cwd(), 'test_redline.docx');
+    fs.writeFileSync(out, buf);
+    console.log(`Generated: ${out} (${buf.length} bytes)`);
+  }).catch(e => {
+    console.error('Error:', e.message);
+    process.exit(1);
+  });
+}
+
+// ── Relay Edge Function Handler ──
+export async function handler(req, res) {
+  let redlines, metadata, action, fullText;
+
+  if (req.body) {
+    action = req.body.action || 'redline';
+    redlines = req.body.redlines || [];
+    metadata = req.body.metadata || {};
+    fullText = req.body.fullText || '';
+  } else if (typeof req === 'object' && req.redlines) {
+    action = req.action || 'redline';
+    redlines = req.redlines || [];
+    metadata = req.metadata || {};
+    fullText = req.fullText || '';
+  } else {
+    res.setHeader('Content-Type', 'application/json');
+    res.status(400).json({ error: 'Missing required fields. Send { action: "redline"|"final", redlines, metadata } or { action: "final", fullText, metadata }' });
+    return;
+  }
+
+  try {
+    let buf;
+    let filename;
+
+    if (action === 'final' && fullText) {
+      // Generate clean final document
+      buf = await generateFinalDocx(fullText, {
+        ...metadata,
+        acceptedCount: metadata.acceptedCount || 0,
+        totalCount: metadata.totalCount || 0,
+      });
+      filename = `${(metadata.documentName || 'final_document').replace(/[^a-zA-Z0-9_-]/g, '_')}_final.docx`;
+    } else {
+      // Generate redline document
+      buf = await generateDocxRedline(redlines, metadata);
+      filename = `${(metadata.documentName || 'redlined_lease').replace(/[^a-zA-Z0-9_-]/g, '_')}.docx`;
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buf.length);
+    res.status(200).send(buf);
+  } catch (e) {
+    res.setHeader('Content-Type', 'application/json');
+    res.status(500).json({ error: 'Failed to generate DOCX', message: e.message });
+  }
+}

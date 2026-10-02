@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbox — Party Favor Photo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{--bg:#0a0a10;--card:#12121a;--border:#2a2a3a;--text:#e0e0f0;--muted:#8b8ba0;--accent:#ff6b35;--green:#4ade80;--blue:#60a5fa;--purple:#a78bfa}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);padding:20px}
+h1{font-size:1.5rem;color:var(--accent);margin-bottom:4px;display:flex;align-items:center;gap:10px}
+.sub{color:var(--muted);font-size:0.85rem;margin-bottom:20px}
+.inbox{max-width:900px;margin:0 auto}
+.email{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;transition:.15s}
+.email:hover{border-color:var(--accent)}
+.email-header{padding:14px 16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start;background:var(--card)}
+.email.unread .email-header{border-left:3px solid var(--accent)}
+.email-from{font-weight:600;font-size:0.9rem;min-width:180px;color:var(--text)}
+.email-subject{color:var(--text);font-size:0.9rem;flex:1}
+.email-date{color:var(--muted);font-size:0.8rem;white-space:nowrap;min-width:100px;text-align:right}
+.email-body{display:none;padding:16px;border-top:1px solid var(--border);background:#0d0d15}
+.email-body.open{display:block}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600}
+.badge-unread{background:rgba(255,107,53,0.15);color:var(--accent)}
+.badge-pdf{background:rgba(74,222,128,0.12);color:var(--green);margin-left:6px;cursor:pointer}
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty h2{font-size:1.3rem;margin-bottom:8px;color:var(--text)}
+.loading{text-align:center;padding:40px;color:var(--muted)}
+.agent-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border-radius:8px;border:1px solid var(--border);align-items:center}
+.agent-bar label{color:var(--muted);font-size:0.8rem}
+.agent-bar input{padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:#0d0d15;color:var(--text);font-size:0.85rem;outline:none;flex:1;min-width:150px}
+.agent-bar input:focus{border-color:var(--accent)}
+.agent-bar button{padding:6px 16px;border-radius:6px;border:none;background:var(--accent);color:#000;font-weight:600;font-size:0.85rem;cursor:pointer}
+.agent-bar button:hover{filter:brightness(1.1)}
+.stats{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.stat-box{padding:12px 18px;background:var(--card);border:1px solid var(--border);border-radius:8px;text-align:center;flex:1;min-width:80px}
+.stat-box .num{font-size:1.5rem;font-weight:700;color:var(--accent)}
+.stat-box .label{font-size:0.75rem;color:var(--muted);margin-top:2px}
+pre.body-text{white-space:pre-wrap;font-family:inherit;font-size:0.85rem;margin:0;line-height:1.6;color:#c0c0d0}
+
+/* PDF Viewer */
+.pdf-viewer{display:none;margin-top:12px;padding:12px;background:#080810;border-radius:8px;border:1px solid var(--border)}
+.pdf-viewer.open{display:block}
+.pdf-toolbar{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+.pdf-toolbar button{padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:0.8rem}
+.pdf-toolbar button:hover{border-color:var(--accent)}
+.pdf-toolbar span{color:var(--muted);font-size:0.8rem}
+.pdf-canvas{max-width:100%;border-radius:4px;border:1px solid var(--border)}
+.pdf-loading{color:var(--muted);font-size:0.8rem;padding:8px}
+</style>
+</head>
+<body>
+<div class="inbox">
+  <h1>📬 Inbox</h1>
+  <div class="sub">Party Favor Photo — Agent Email</div>
+  
+  <div class="agent-bar">
+    <label>Agent ID:</label>
+    <input id="agent-id" type="text" value="vex" placeholder="vex / hermes / eliza">
+    <button onclick="loadInbox()">Open Inbox</button>
+  </div>
+  
+  <div class="stats" id="stats"></div>
+  <div id="email-list"><div class="loading">Loading inbox...</div></div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Which mail domain this page is showing.
+//
+// The relay serves one inbox page for every registered domain rather than a copy
+// of the file per domain, because the copies were the problem: inbox-xmrt.html
+// and inbox-31harbor.html were referenced by the routing table and never created,
+// so those two branches returned an error rather than an inbox. The domain comes
+// from ?domain= first, then the hostname, and falls back to PFP.
+//
+// PFP keeps its original pathless route (/resend/inbox), so the base is built
+// rather than assumed.
+const DOMAIN = (new URLSearchParams(location.search).get('domain') || '').toLowerCase()
+  || (location.hostname.includes('jobbymcjobberson') ? 'jobby'
+    : location.hostname.includes('31harbor') ? '31harbor'
+    : location.hostname.includes('mobilemonero') ? 'mobilemonero'
+    : 'pfp');
+const API = DOMAIN === 'pfp' ? '/resend/inbox' : '/resend/' + DOMAIN + '/inbox';
+
+async function loadInbox() {
+  const agent = document.getElementById('agent-id').value.trim() || 'vex';
+  const list = document.getElementById('email-list');
+  const stats = document.getElementById('stats');
+  list.innerHTML = '<div class="loading">Loading...</div>';
+  
+  try {
+    const r = await fetch(`${API}?agent=${agent}`);
+    const data = await r.json();
+    
+    stats.innerHTML = `
+      <div class="stat-box"><div class="num">${data.total}</div><div class="label">Total</div></div>
+      <div class="stat-box"><div class="num">${data.unread}</div><div class="label">Unread</div></div>
+    `;
+    
+    if (!data.emails || data.emails.length === 0) {
+      list.innerHTML = '<div class="empty"><h2>📭 No emails yet</h2><p>Inbound emails appear here when they arrive.</p></div>';
+      return;
+    }
+    
+    list.innerHTML = data.emails.map(e => {
+      const unreadClass = !e.read ? 'unread' : '';
+      const pdfBadge = e.hasPdf ? `<span class="badge badge-pdf" onclick="event.stopPropagation();viewPdf('${e.id}', 0, 'pdf-${e.id}')">📄 ${e.attachments.filter(a=>a.filename.endsWith('.pdf')).length} PDF</span>` : '';
+      return `
+        <div class="email ${unreadClass}" onclick="toggleEmail('${e.id}', this)">
+          <div class="email-header">
+            <div class="email-from">${escapeHtml(e.from)}</div>
+            <div class="email-subject">${escapeHtml(e.subject)} ${pdfBadge}</div>
+            <div class="email-date">${new Date(e.receivedAt).toLocaleDateString()}</div>
+          </div>
+          <div class="email-body" id="body-${e.id}">
+            <pre class="body-text">${escapeHtml(e.text)}</pre>
+            <div class="pdf-viewer" id="pdf-${e.id}">
+              <div class="pdf-toolbar" id="toolbar-${e.id}">
+                <button onclick="viewPdf('${e.id}', Math.max(1, currentPage-1), 'pdf-${e.id}')">◀ Prev</button>
+                <span id="page-info-${e.id}">Page 1 / 1</span>
+                <button onclick="viewPdf('${e.id}', currentPage+1, 'pdf-${e.id}')">Next ▶</button>
+                <button onclick="downloadPdf('${e.id}', 0)">⬇ Download</button>
+              </div>
+              <div id="pdf-render-${e.id}"><div class="pdf-loading">Loading PDF...</div></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // Mark as read
+    data.emails.filter(e => !e.read).slice(0, 5).forEach(e => {
+      // The read route is registered per domain, and the domain goes in the body
+      // so the server files the flag against the right inbox.
+      fetch(API + '/read', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id: e.id })
+      }).catch(()=>{});
+    });
+    
+  } catch (err) {
+    list.innerHTML = `<div class="empty"><h2>⚠️ Error</h2><p>${err.message}</p></div>`;
+  }
+}
+
+let currentPage = 1;
+let pdfDocs = {};
+
+async function viewPdf(emailId, pageNum, viewerId) {
+  const viewer = document.getElementById(viewerId);
+  const renderDiv = document.getElementById('pdf-render-' + emailId);
+  const pageInfo = document.getElementById('page-info-' + emailId);
+  
+  if (!viewer.classList.contains('open')) {
+    viewer.classList.add('open');
+  }
+  
+  if (pageNum) currentPage = Math.max(1, pageNum);
+  renderDiv.innerHTML = '<div class="pdf-loading">Loading PDF...</div>';
+  
+  try {
+    const agent = document.getElementById('agent-id').value.trim() || 'vex';
+    const r = await fetch(`/resend/attachment/${emailId}/0?agent=${agent}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    
+    const pdf = await pdfjsLib.getDocument(url).promise;
+    pdfDocs[emailId] = pdf;
+    
+    currentPage = Math.min(currentPage, pdf.numPages);
+    const page = await pdf.getPage(currentPage);
+    const scale = Math.min(1.5, viewer.offsetWidth / 800);
+    const viewport = page.getViewport({scale});
+    
+    const canvas = document.createElement('canvas');
+    canvas.className = 'pdf-canvas';
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    renderDiv.innerHTML = '';
+    renderDiv.appendChild(canvas);
+    
+    await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
+    pageInfo.textContent = `Page ${currentPage} / ${pdf.numPages}`;
+    
+  } catch (err) {
+    renderDiv.innerHTML = `<div style="color:#f87171;font-size:0.8rem;">PDF error: ${err.message}</div>`;
+  }
+}
+
+async function downloadPdf(emailId, index) {
+  const agent = document.getElementById('agent-id').value.trim() || 'vex';
+  const a = document.createElement('a');
+  a.href = `/resend/attachment/${emailId}/${index}?agent=${agent}`;
+  a.download = 'document.pdf';
+  a.click();
+}
+
+function toggleEmail(id, el) {
+  const body = document.getElementById('body-' + id);
+  const wasClosed = !body.classList.contains('open');
+  
+  // Close all others
+  document.querySelectorAll('.email-body.open').forEach(b => b.classList.remove('open'));
+  
+  body.classList.toggle('open');
+  if (wasClosed) {
+    el.classList.remove('unread');
+  }
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+loadInbox();
+</script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <base href="/elze/writer/">
+  <title>Elze Contract Writer™ — Commercial Lease Builder</title>
+  <meta name="description" content="Build Virginia common law-compliant commercial real estate lease documents from structured input. Clause library, template engine, compliance pre-check, and multi-format export.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/elze-design-system.css?v=2">
+  <link rel="stylesheet" href="styles.css?v=5">
+</head>
+<body>
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <path d="M16 2L4 8v8c0 7.2 5.1 13.8 12 16 6.9-2.2 12-8.8 12-16V8L16 2z" stroke="#6366f1" stroke-width="1.5" fill="rgba(99,102,241,0.08)"/>
+          <path d="M16 10v12M10 16h12" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="16" cy="16" r="3" stroke="#6366f1" stroke-width="1" fill="none"/>
+        </svg>
+      </div>
+      <div class="sidebar-name">
+        <span class="brand-primary">Elze</span><span class="brand-accent"> Contract</span><br>
+        <span class="brand-subtitle">Writer<sup>™</sup></span>
+      </div>
+    </div>
+
+    <!-- Template Selector -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Lease Template</div>
+      <div class="template-list" id="templateList">
+        <div class="template-loading">Loading templates…</div>
+      </div>
+    </div>
+
+    <!-- Party Info -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Parties & Premises</div>
+      <div class="form-group">
+        <label>Landlord Name</label>
+        <input type="text" id="inpLandlord" placeholder="e.g. Alexandria Industrial Properties, LLC">
+      </div>
+      <div class="form-group">
+        <label>Tenant Name</label>
+        <input type="text" id="inpTenant" placeholder="e.g. Fairfax Tech Solutions, Inc.">
+      </div>
+      <div class="form-group">
+        <label>Premises Address</label>
+        <input type="text" id="inpAddress" placeholder="e.g. 4400 Wheeler Ave, Suite 200, Alexandria, VA 22304">
+      </div>
+      <div class="form-group">
+        <label>Building Name</label>
+        <input type="text" id="inpBuilding" placeholder="e.g. The Port Center">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Premises SF</label>
+          <input type="number" id="inpSF" placeholder="12500" min="0">
+        </div>
+        <div class="form-group">
+          <label>Premises Type</label>
+          <input type="text" id="inpPremisesType" placeholder="office">
+        </div>
+      </div>
+    </div>
+
+    <!-- Lease Terms -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Lease Terms</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Term (Years)</label>
+          <input type="number" id="inpTermYears" placeholder="5" min="1">
+        </div>
+        <div class="form-group">
+          <label>Base Rent / SF</label>
+          <input type="number" id="inpBaseRentPSF" placeholder="18.50" step="0.01" min="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Commencement Date</label>
+          <input type="date" id="inpCommencement">
+        </div>
+        <div class="form-group">
+          <label>Expiration Date</label>
+          <input type="date" id="inpExpiration">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Security Deposit (Months)</label>
+          <input type="number" id="inpSecDepMonths" placeholder="2" min="0" max="2">
+        </div>
+        <div class="form-group">
+          <label>Late Fee %</label>
+          <input type="number" id="inpLateFeePct" placeholder="10" min="0" max="10" step="0.5">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Late Fee Grace (Days)</label>
+          <input type="number" id="inpGraceDays" placeholder="5" min="0">
+        </div>
+        <div class="form-group">
+          <label>CAM Pro Rata %</label>
+          <input type="number" id="inpCAM" placeholder="15.0" step="0.1" min="0" max="100">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Parking Spaces</label>
+          <input type="number" id="inpParking" placeholder="10" min="0">
+        </div>
+        <div class="form-group">
+          <label>Escalation Rate ($/SF)</label>
+          <input type="number" id="inpEscalation" placeholder="0.00" step="0.25" min="0">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Permitted Use</label>
+        <input type="text" id="inpUse" placeholder="general office and administrative purposes">
+      </div>
+      <div class="form-group">
+        <label>Renewal Option</label>
+        <select id="inpRenewal">
+          <option value="">None</option>
+          <option value="1">1 year</option>
+          <option value="3">3 years</option>
+          <option value="5">5 years</option>
+          <option value="10">10 years</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="sidebar-actions">
+      <button class="btn btn-accent btn-full" id="btnBuild">
+        <span class="btn-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span> Build Lease Document
+      </button>
+      <button class="btn btn-secondary btn-full" id="btnPrecheck">
+        <span class="btn-icon"><svg class="elze-icon elze-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>️</span> Run Compliance Pre-Check
+      </button>
+    </div>
+
+    <!-- Sidebar Footer -->
+    <div class="sidebar-footer">
+      <div class="sidebar-label">Powered by</div>
+      <div class="powered-by">Cuttlefish Labs VILM™<br>VA Common Law · VRLTA · RUPA · Stock Corp Act · UTSA</div>
+      <div class="version-badge">v0.3 Multi-Contract</div>
+      <a href="/elze" class="analyzer-link">← Back to Contract Suite</a>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+  </aside>
+
+  <!-- ── Main Content ── -->
+  <main class="main" id="main">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-glow"></div>
+      <h1 class="header-title">Elze Contract Writer<sup>™</sup></h1>
+      <p class="header-tagline">Commercial Lease Builder — Virginia Common Law</p>
+      <p class="header-subtitle">Select a template, fill in party and term details, toggle and edit clauses from the 30-clause library, then generate a formatted lease document with live compliance pre-checks against Virginia common law.</p>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav" id="tabNav">
+      <button class="tab-btn active" data-tab="builder">
+        <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="8" rx="1"/><path d="M17 14v7"/><path d="M7 14v7"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="8" y1="2" x2="16" y2="2"/></svg>️</span> Builder
+      </button>
+      <button class="tab-btn" data-tab="preview">
+        <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>️</span> Preview
+      </button>
+      <button class="tab-btn" data-tab="compliance">
+        <span class="tab-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><path d="m2.16 16 5.08-8 5.08 8c-.87.63-1.92 1-3.06 1a4 4 0 0 1-3.94-1z"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/></svg>️</span> Compliance
+      </button>
+    </nav>
+
+    <!-- Content Area -->
+    <div class="content-area">
+
+      <!-- ───── TAB: Builder ───── -->
+      <section class="tab-content active" id="tab-builder">
+        <div class="builder-toolbar">
+          <div class="toolbar-left">
+            <span class="toolbar-label">Clause Library</span>
+            <span class="clause-count" id="clauseCount">—</span>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn btn-sm btn-secondary" id="btnExpandAll">Expand All</button>
+            <button class="btn btn-sm btn-secondary" id="btnCollapseAll">Collapse All</button>
+            <button class="btn btn-sm btn-secondary" id="btnSelectDefaults">Reset to Template Defaults</button>
+          </div>
+        </div>
+
+        <!-- Clause categories -->
+        <div class="clause-categories" id="clauseCategories">
+          <div class="clause-loading">Loading clause library…</div>
+        </div>
+      </section>
+
+      <!-- ───── TAB: Preview ───── -->
+      <section class="tab-content" id="tab-preview">
+        <div class="preview-toolbar">
+          <div class="toolbar-left">
+            <span class="toolbar-label">Generated Lease Document</span>
+            <span class="preview-status" id="previewStatus"></span>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn btn-sm btn-secondary" id="btnDownloadTxt"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> .txt</button>
+            <button class="btn btn-sm btn-secondary" id="btnDownloadMd"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> .md</button>
+            <button class="btn btn-sm btn-secondary" id="btnDownloadJson"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> .json</button>
+            <button class="btn btn-sm btn-accent" id="btnDownloadDocx"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> .docx (Redlined)</button>
+            <button class="btn btn-sm btn-accent" id="btnAnalyzeLease"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg> Analyze This Lease</button>
+          </div>
+        </div>
+        <div class="preview-container">
+          <div class="preview-doc" id="previewDocument">
+            <div class="empty-state" style="padding:60px 20px;text-align:center;color:var(--text-dim);">
+              <div style="font-size:48px;margin-bottom:16px;"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div>
+              <div style="font-size:18px;font-weight:600;margin-bottom:8px;">No Document Yet</div>
+              <div style="font-size:14px;">Fill in the lease terms and click "Build Lease Document" to generate a preview.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analysis Results (hidden until analyzed) -->
+        <div class="analysis-results" id="analysisResults" style="display:none">
+          <div class="section-header"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg> Analyzer Results</div>
+          <div class="compliance-banner" id="analysisBanner"></div>
+          <div class="finding-list" id="analysisFindings"></div>
+        </div>
+      </section>
+
+      <!-- ───── TAB: Compliance ───── -->
+      <section class="tab-content" id="tab-compliance">
+        <div class="compliance-toolbar">
+          <div class="toolbar-left">
+            <span class="toolbar-label">Compliance Pre-Check</span>
+            <span class="compliance-status" id="complianceStatus">Not yet checked</span>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn btn-sm btn-accent" id="btnRunPrecheck"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Run Pre-Check Now</button>
+          </div>
+        </div>
+        <div class="compliance-summary" id="complianceSummary">
+          <div class="empty-state">Fill in lease terms and click "Run Pre-Check Now" to check compliance against Virginia statutes.</div>
+        </div>
+        <div class="warning-list" id="complianceWarnings"></div>
+      </section>
+
+    </div>
+
+    <!-- ── Page Footer ── -->
+    <footer class="page-footer">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <span class="footer-mark"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
+          <span>Elze Contract Writer<sup>™</sup></span>
+        </div>
+        <div class="footer-links">
+          <span>Cuttlefish Labs VILM™</span>
+          <span>·</span>
+          <span>VA Code § 55.1-1200 et seq.</span>
+        </div>
+        <div class="footer-legal">
+          © 2026 Cuttlefish Labs. All rights reserved.
+        </div>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- ── Login Gate (Protects IP — requires valid relay API key) ── -->
+  <div id="loginGate" class="login-gate">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">
+          <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
+            <path d="M16 2L4 8v8c0 7.2 5.1 13.8 12 16 6.9-2.2 12-8.8 12-16V8L16 2z" stroke="#6366f1" stroke-width="1.5" fill="rgba(99,102,241,0.08)"/>
+            <path d="M16 10v12M10 16h12" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="16" cy="16" r="3" stroke="#6366f1" stroke-width="1" fill="none"/>
+          </svg>
+        </div>
+        <div class="login-title"><span class="brand-primary">Elze</span> Contract Writer<sup>™</sup></div>
+        <div class="login-subtitle">Intellectual Property — Authorized Access Only</div>
+      </div>
+
+      <div class="login-body">
+        <div class="login-field">
+          <label for="apiKeyInput">API Key</label>
+          <input type="password" id="apiKeyInput" placeholder="Enter your relay API key" autocomplete="off">
+          <div class="login-hint">Your key is validated against the relay and never stored on our servers.</div>
+        </div>
+        <button id="btnLogin" class="btn btn-accent btn-full">
+          <span class="btn-icon"><svg class="elze-icon elze-icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Unlock Access
+        </button>
+      </div>
+
+      <div id="loginError" class="login-error" style="display:none"></div>
+
+      <div class="login-footer">
+        <p>© 2026 Cuttlefish Labs. All rights reserved.</p>
+        <p>VA Code § 55.1-1200 et seq. · Phase 1 — Domain Kernel</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=5"></script>
+</body>
+</html>

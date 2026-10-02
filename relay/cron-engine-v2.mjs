@@ -553,6 +553,119 @@ function saveState(s) {
   try { writeFileSync(STATE_FILE, JSON.stringify(s, null, 2)); } catch {}
 }
 
+
+
+// Shared Context Writer and TTL-pruning/Dispatch-filter fixes
+
+// ── Shared Context Writer ──────────────────────────────────
+
+// Writes TTL-tracked entries to shared_context for scanner pruning
+
+// and workflow engine dispatch filtering.
+async function writeSharedContext(entry) {
+  try {
+    const pool = getSharedPool();
+    const ttlMinutes = entry.ttl_minutes || 90;
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60000).toISOString();
+    await pool.query(
+      `INSERT INTO public.shared_context (key, value, ttl_minutes, expires_at, agent, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value,
+           ttl_minutes = EXCLUDED.ttl_minutes,
+           expires_at = EXCLUDED.expires_at,
+           agent = EXCLUDED.agent,
+           created_at = NOW()`
+    );
+    return { ok: true };
+  } catch (e) {
+    log(`writeSharedContext: DB error: ${e.message}`, 'WARN');
+    return { ok: false, error: e.message };
+  }
+}
+
+// Scanner Pruning & Deduplication
+// Runs after arch-ecosystem-scanner execution to TTL-prune stale items,
+// track acknowledgments, and mark duplicates with no-reemit guard.
+async function pruneScannerItems() {
+  try {
+    const pool = getSharedPool();
+    const scanRes = await pool.query(
+      `SELECT value FROM public.shared_context WHERE key = 'arch-ecosystem-scan'`
+    );
+    let scanItems = [];
+    if (scanRes.rows.length > 0) {
+      try {
+        scanItems = JSON.parse(scanRes.rows[0].value || '[]');
+      } catch (e) {
+        log(`pruneScannerItems: failed to parse scan output: ${e.message}`, 'WARN');
+        scanItems = [];
+      }
+    }
+    if (scanItems.length === 0) {
+      log('pruneScannerItems: no scanner items to prune');
+      return { ok: true };
+    }
+    const THRESHOLD_MS = 6 * 60 * 60 * 1000;
+    const now = Date.now();
+    let kept = 0, dropped = 0, markedDuplicate = 0;
+    const processed = scanItems.map(item => {
+      const itemAge = now - (item.nudged_at || item.created_at || now);
+      const isResolved = item.status === 'resolved' || item.status === 'done' || item.status === 'closed';
+      const isAcknowledged = item.acknowledged_at !== undefined;
+      const isDuplicate = item.isDuplicate === true;
+      if ((isResolved || isAcknowledged || isDuplicate) && itemAge > THRESHOLD_MS) {
+        dropped++;
+        return { ...item, toKeep: false, action: isResolved ? 'resolved-drop' : (isAcknowledged ? 'ack-drop' : 'duplicate-drop') };
+      }
+      if (!isDuplicate) { markedDuplicate++; return { ...item, toKeep: true, action: 'kept' }; }
+      kept++;
+      return { ...item, toKeep: true, action: 'kept-unresolved' };
+    }).filter(p => p.toKeep);
+    if (processed.length > 0 || dropped > 0) {
+      await writeSharedContext({
+        key: 'arch-ecosystem-scan',
+        value: JSON.stringify(processed),
+        ttl_minutes: 360,
+        expires_at: new Date(Date.now() + 360 * 60000).toISOString(),
+        agent: 'cron-engine-v2'
+      });
+    }
+    log(`pruneScannerItems: kept=${processed.length}, dropped=${dropped}, markedDuplicate=${markedDuplicate}, totalIn=${scanItems.length}`);
+    return { ok: true, kept, dropped, markedDuplicate, totalIn: scanItems.length };
+  } catch (e) {
+    log(`pruneScannerItems: error: ${e.message}`, 'ERROR');
+    return { ok: false, error: e.message };
+  }
+}
+
+// Workflow Engine Dispatch Filter Update
+// Changes the fleet-chat-task-creator to use live tasks table query
+// instead of string-matching conversation history.
+// New filter: assignee_agent_id = eliza-001 AND status IN (PENDING, CLAIMED, IN_PROGRESS)
+async function updateWorkflowDispatchFilter() {
+  try {
+    const pool = getSharedPool();
+    const taskRes = await pool.query(
+      `SELECT id, title, status, stage, priority, assignee_agent_id FROM public.tasks WHERE assignee_agent_id = 'eliza-001' AND status IN ('PENDING', 'CLAIMED', 'IN_PROGRESS') ORDER BY priority DESC, created_at DESC`
+    );
+    const activeTasks = taskRes.rows.map(t => ({ id: t.id, title: t.title, status: t.status, stage: t.stage, priority: t.priority }));
+    await writeSharedContext({
+      key: 'eliza-active-tasks',
+      value: JSON.stringify(activeTasks),
+      ttl_minutes: 30,
+      expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
+      agent: 'cron-engine-v2'
+    });
+    log(`updateWorkflowDispatchFilter: loaded ${activeTasks.length} active eliza-001 tasks from live table`);
+    return { ok: true, count: activeTasks.length };
+  } catch (e) {
+    log(`updateWorkflowDispatchFilter: DB error: ${e.message}`, 'WARN');
+    return { ok: true };
+  }
+}
+
+
 async function tick() {
   const jobs = await loadJobsFromPg();
   if (!jobs.length) {
@@ -613,6 +726,30 @@ async function tick() {
     }
   }
   saveState(state);
+
+  // After all jobs have run, perform post-tick maintenance:
+  //   1. TTL-prune scanner items & track acknowledgments (Ghost loop fix)
+  //   2. Update workflow dispatch filter from live tasks table
+  try {
+    const pruneRes = await pruneScannerItems();
+    if (pruneRes.ok) {
+      log('pruneScannerItems: kept=' + (pruneRes.kept || 0) + ', dropped=' + (pruneRes.dropped || 0) + ', markedDuplicate=' + (pruneRes.markedDuplicate || 0));
+    } else {
+      log('pruneScannerItems: ' + (pruneRes.error || 'unknown error'), 'WARN');
+    }
+  } catch (e) {
+    log('pruneScannerItems: unexpected error: ' + e.message, 'ERROR');
+  }
+  try {
+    const dispatchRes = await updateWorkflowDispatchFilter();
+    if (dispatchRes.ok) {
+      log('updateWorkflowDispatchFilter: loaded ' + (dispatchRes.count || 0) + ' active eliza-001 tasks from live table');
+    } else {
+      log('updateWorkflowDispatchFilter: ' + (dispatchRes.error || 'unknown error'), 'WARN');
+    }
+  } catch (e) {
+    log('updateWorkflowDispatchFilter: unexpected error: ' + e.message, 'ERROR');
+  }
 }
 
 export async function runOnce() {

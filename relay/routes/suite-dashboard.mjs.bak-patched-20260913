@@ -1,0 +1,527 @@
+/**
+ * Suite Dashboard API — REST endpoints for the 31 Harbor Agency multi-tenant app.
+ * Mirrors every data-access pattern in 31harbor-agency-dashboard/src/db/queries.ts.
+ *
+ * All routes are mounted under /api/suite/ in relay/server.js.
+ * Uses the shared pg Pool from localDb.mjs.
+ */
+
+import { query, queryOne } from '../lib/localDb.mjs';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function json(res, data, status = 200) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(status).json(data);
+}
+
+function error(res, msg, status = 400) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(status).json({ error: msg });
+}
+
+/** Build WHERE clause + params for lead filters. */
+function leadWhere(filters) {
+  const clauses = [];
+  const params = [];
+  if (filters.company && filters.company !== 'all') {
+    clauses.push('company_routed = $' + (params.length + 1));
+    params.push(filters.company);
+  }
+  if (filters.status) {
+    clauses.push('status = $' + (params.length + 1));
+    params.push(filters.status);
+  }
+  if (filters.source) {
+    clauses.push('source = $' + (params.length + 1));
+    params.push(filters.source);
+  }
+  if (filters.search) {
+    clauses.push('(name ILIKE $' + (params.length + 1) + ' OR email ILIKE $' + (params.length + 1) + ')');
+    params.push(`%${filters.search}%`);
+  }
+  if (filters.minScore !== undefined) {
+    clauses.push('score >= $' + (params.length + 1));
+    params.push(filters.minScore);
+  }
+  if (filters.maxScore !== undefined) {
+    clauses.push('score <= $' + (params.length + 1));
+    params.push(filters.maxScore);
+  }
+  return { where: clauses.length ? 'WHERE ' + clauses.join(' AND ') : '', params };
+}
+
+// ─── Route Registrations ─────────────────────────────────────────────────────
+
+export default function register(app) {
+
+  // ── Health / probe ───────────────────────────────────────────────
+  app.get('/api/suite/health', async (req, res) => {
+    try {
+      const row = await queryOne('SELECT COUNT(*)::int AS count FROM app.suite_companies');
+      json(res, { ok: true, companies: row.count });
+    } catch (e) {
+      json(res, { ok: false, error: e.message }, 503);
+    }
+  });
+
+  // ── Companies ────────────────────────────────────────────────────
+  app.get('/api/suite/companies', async (req, res) => {
+    try {
+      const rows = await query(
+        'SELECT id, name, industry, color, domain, api_key_masked, active, lead_score_threshold, dns_verified, created_at FROM app.suite_companies WHERE active = 1 ORDER BY id'
+      );
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/companies/:id', async (req, res) => {
+    try {
+      const row = await queryOne(
+        'SELECT id, name, industry, color, domain, api_key_masked, active, lead_score_threshold, dns_verified, created_at FROM app.suite_companies WHERE id = $1',
+        [req.params.id]
+      );
+      if (!row) return error(res, 'Not found', 404);
+      json(res, row);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Leads ─────────────────────────────────────────────────────────
+  app.get('/api/suite/leads', async (req, res) => {
+    try {
+      const filters = {
+        company: req.query.company,
+        status: req.query.status,
+        source: req.query.source,
+        search: req.query.search,
+        minScore: req.query.minScore ? parseInt(req.query.minScore) : undefined,
+        maxScore: req.query.maxScore ? parseInt(req.query.maxScore) : undefined,
+      };
+      const { where, params } = leadWhere(filters);
+      const limit = req.query.limit ? parseInt(req.query.limit) : null;
+      const sql = `SELECT id, name, email, phone, source, intent, company_routed, score, status, ai_confidence, ai_reasoning, pipeline_stage, value, created_at, updated_at FROM app.suite_leads ${where} ORDER BY created_at DESC` +
+        (limit ? ' LIMIT ' + limit : '');
+      const rows = await query(sql, params.length ? params : []);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/leads/:id', async (req, res) => {
+    try {
+      const row = await queryOne(
+        'SELECT id, name, email, phone, source, intent, company_routed, score, status, ai_confidence, ai_reasoning, pipeline_stage, value, created_at, updated_at FROM app.suite_leads WHERE id = $1',
+        [parseInt(req.params.id)]
+      );
+      if (!row) return error(res, 'Not found', 404);
+      json(res, row);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.post('/api/suite/leads', async (req, res) => {
+    try {
+      const b = req.body;
+      const result = await query(
+        `INSERT INTO app.suite_leads (name, email, phone, source, intent, company_routed, score, status, ai_confidence, ai_reasoning, pipeline_stage, value)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        [b.name ?? 'Unknown', b.email ?? null, b.phone ?? null, b.source ?? 'Organic', b.intent ?? null,
+         b.company_routed ?? null, b.score ?? 0, b.status ?? 'new', b.ai_confidence ?? 'high',
+         b.ai_reasoning ?? null, b.pipeline_stage ?? 'scraping', b.value ?? 0]
+      );
+      json(res, { id: result[0].id }, 201);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.patch('/api/suite/leads/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const sets = [];
+      const params = [];
+      for (const [k, v] of Object.entries(req.body)) {
+        if (['name','email','phone','source','intent','company_routed','score','status','ai_confidence','ai_reasoning','pipeline_stage','value'].includes(k)) {
+          sets.push(`${k} = $${params.length + 1}`);
+          params.push(v);
+        }
+      }
+      if (!sets.length) return error(res, 'No valid fields', 400);
+      sets.push('updated_at = NOW()');
+      params.push(id);
+      await query(`UPDATE app.suite_leads SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.delete('/api/suite/leads/:id', async (req, res) => {
+    try {
+      await query('DELETE FROM app.suite_leads WHERE id = $1', [parseInt(req.params.id)]);
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Lead Count (simple stats) ─────────────────────────────────────
+  app.get('/api/suite/leads/count', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const sql = company
+        ? 'SELECT COUNT(*)::int AS count FROM app.suite_leads WHERE company_routed = $1'
+        : 'SELECT COUNT(*)::int AS count FROM app.suite_leads';
+      const params = company ? [company] : [];
+      const row = await queryOne(sql, params);
+      json(res, { count: row.count });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Pipeline Value (total weighted pipeline) ──────────────────────
+  app.get('/api/suite/pipeline/value', async (req, res) => {
+    try {
+      const row = await queryOne(
+        "SELECT COALESCE(SUM(value), 0)::numeric AS value FROM app.suite_leads WHERE status IN ('Routed','Qualified','Pending','Quoted')"
+      );
+      json(res, { value: parseFloat(row.value) });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Lead Sharing Rules ────────────────────────────────────────────
+  app.get('/api/suite/sharing-rules', async (req, res) => {
+    try {
+      const rows = await query('SELECT id, from_company, to_company, allowed, created_at FROM app.suite_lead_sharing_rules ORDER BY from_company, to_company');
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/sharing-rules/can-share', async (req, res) => {
+    try {
+      const { from, to } = req.query;
+      if (!from || !to) return error(res, 'from and to required');
+      if (from === to) return json(res, { allowed: true });
+      const row = await queryOne(
+        'SELECT allowed FROM app.suite_lead_sharing_rules WHERE from_company = $1 AND to_company = $2',
+        [from, to]
+      );
+      json(res, { allowed: row ? row.allowed === 1 : true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.post('/api/suite/sharing-rules', async (req, res) => {
+    try {
+      const { from_company, to_company, allowed } = req.body;
+      await query(
+        `INSERT INTO app.suite_lead_sharing_rules (from_company, to_company, allowed)
+         VALUES ($1, $2, $3) ON CONFLICT(from_company, to_company) DO UPDATE SET allowed = $3`,
+        [from_company, to_company, allowed ? 1 : 0]
+      );
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Agent & Task Visualizer (Kanban board) ─────────────────────────
+  // Needed by AgentTaskVisualizer at /suite/dashboard (local-api.ts)
+  app.get('/api/suite/tasks', async (req, res) => {
+    try {
+      const statusIn = (req.query.status_in || '').toString().split(',').filter(Boolean);
+      const assignee = req.query.assignee_agent_id;
+      const limit = parseInt(req.query.limit || '50');
+      const clauses = [];
+      const params = [];
+      if (statusIn.length) { clauses.push('stage IN (' + statusIn.map((_, i) => '$' + (i + 1)).join(',')) + ')'); params.push(...statusIn); }
+      if (assignee) { clauses.push('assignee_agent_id = $' + (params.length + 1)); params.push(assignee); }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
+      // suite_tasks table: id, title, stage, status, assignee_agent_id, priority, progress_percentage, updated_at
+      const rows = await query('SELECT id, title, stage, status, assignee_agent_id, priority, progress_percentage, updated_at FROM suite_tasks ' + where + ' ORDER BY updated_at DESC LIMIT $' + (params.length + 1), [...params, limit]);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/agents', async (req, res) => {
+    try {
+      const statusIn = (req.query.status_in || '').toString().split(',').filter(Boolean);
+      const clauses = [];
+      const params = [];
+      if (statusIn.length) { clauses.push('status IN (' + statusIn.map((_, i) => '$' + (i + 1)).join(',')) + ')'); params.push(...statusIn); }
+      const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
+      const rows = await query('SELECT id, name, status, role, created_at FROM agents ' + where + ' ORDER BY name', params);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Route a lead to another company ───────────────────────────────
+  app.post('/api/suite/leads/:id/route', async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.id);
+      const { targetCompany } = req.body;
+      if (!targetCompany) return error(res, 'targetCompany required');
+
+      const lead = await queryOne('SELECT company_routed FROM app.suite_leads WHERE id = $1', [leadId]);
+      if (!lead) return error(res, 'Lead not found', 404);
+      if (!lead.company_routed) return error(res, 'Lead has no source company', 400);
+
+      // Check sharing rule
+      if (lead.company_routed !== targetCompany) {
+        const rule = await queryOne(
+          'SELECT allowed FROM app.suite_lead_sharing_rules WHERE from_company = $1 AND to_company = $2',
+          [lead.company_routed, targetCompany]
+        );
+        if (!rule || rule.allowed !== 1) {
+          return error(res, 'Sharing not allowed', 403);
+        }
+      }
+
+      await query(
+        `UPDATE app.suite_leads SET company_routed = $1, status = 'Routed', ai_reasoning = COALESCE(ai_reasoning, '') || $2, updated_at = NOW() WHERE id = $3`,
+        [targetCompany, ` [Routed from ${lead.company_routed} to ${targetCompany}]`, leadId]
+      );
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Campaigns ─────────────────────────────────────────────────────
+  app.get('/api/suite/campaigns', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const sql = company
+        ? 'SELECT id, name, company, status, budget, spend, revenue, roi, reach, clicks, conversions, platform, start_date, end_date FROM app.suite_campaigns WHERE company = $1 ORDER BY id'
+        : 'SELECT id, name, company, status, budget, spend, revenue, roi, reach, clicks, conversions, platform, start_date, end_date FROM app.suite_campaigns ORDER BY id';
+      const params = company ? [company] : [];
+      const rows = await query(sql, params);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.patch('/api/suite/campaigns/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const sets = [];
+      const params = [];
+      for (const [k, v] of Object.entries(req.body)) {
+        if (['name','company','status','budget','spend','revenue','roi','reach','clicks','conversions','platform','start_date','end_date'].includes(k)) {
+          sets.push(`${k} = $${params.length + 1}`);
+          params.push(v);
+        }
+      }
+      if (!sets.length) return error(res, 'No valid fields', 400);
+      params.push(id);
+      await query(`UPDATE app.suite_campaigns SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Campaign Count ────────────────────────────────────────────────
+  app.get('/api/suite/campaigns/count', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const sql = company
+        ? 'SELECT COUNT(*)::int AS count FROM app.suite_campaigns WHERE company = $1'
+        : 'SELECT COUNT(*)::int AS count FROM app.suite_campaigns';
+      const params = company ? [company] : [];
+      const row = await queryOne(sql, params);
+      json(res, { count: row.count });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Pipeline Stages ───────────────────────────────────────────────
+  app.get('/api/suite/pipeline-stages', async (req, res) => {
+    try {
+      const rows = await query('SELECT id, name, order_index, requires_approval, auto_advance, timeout_hours FROM app.suite_pipeline_stages ORDER BY order_index');
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/pipeline-data', async (req, res) => {
+    try {
+      const stages = await query('SELECT id, name, order_index, requires_approval, auto_advance, timeout_hours FROM app.suite_pipeline_stages ORDER BY order_index');
+      const company = req.query.company;
+      const result = [];
+      for (const stage of stages) {
+        const companyClause = company ? ' AND company_routed = $2' : '';
+        const companyParams = company ? [stage.id, company] : [stage.id];
+        const leads = await query(
+          `SELECT id FROM app.suite_leads WHERE pipeline_stage = $1${companyClause} ORDER BY created_at DESC`,
+          companyParams
+        );
+        result.push({
+          id: stage.id,
+          label: stage.name,
+          count: leads.length,
+          leadIds: leads.map(r => r.id),
+          needsApproval: stage.requires_approval,
+        });
+      }
+      json(res, result);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Activity Log ──────────────────────────────────────────────────
+  app.get('/api/suite/activity-log', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const limit = parseInt(req.query.limit || '50');
+      const sql = company
+        ? 'SELECT id, type, company, description, metadata, created_at FROM app.suite_activity_log WHERE company = $1 ORDER BY created_at DESC LIMIT $2'
+        : 'SELECT id, type, company, description, metadata, created_at FROM app.suite_activity_log ORDER BY created_at DESC LIMIT $1';
+      const params = company ? [company, limit] : [limit];
+      const rows = await query(sql, params);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.post('/api/suite/activity-log', async (req, res) => {
+    try {
+      const b = req.body;
+      await query(
+        `INSERT INTO app.suite_activity_log (type, company, description, metadata)
+         VALUES ($1, $2, $3, $4)`,
+        [b.type ?? null, b.company ?? null, b.description, b.metadata ?? null]
+      );
+      json(res, { ok: true }, 201);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Users ─────────────────────────────────────────────────────────
+  app.get('/api/suite/users', async (req, res) => {
+    try {
+      const rows = await query('SELECT id, name, email, role, companies, status, last_active FROM app.suite_users ORDER BY id');
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Analytics ─────────────────────────────────────────────────────
+  app.get('/api/suite/analytics', async (req, res) => {
+    try {
+      const company = req.query.company;
+
+      // Total leads
+      const leadsRow = company
+        ? await queryOne('SELECT COUNT(*)::int AS count FROM app.suite_leads WHERE company_routed = $1', [company])
+        : await queryOne('SELECT COUNT(*)::int AS count FROM app.suite_leads');
+
+      // Total revenue / spend / avg ROI
+      const whereClause = company ? ' WHERE company = $1' : '';
+      const params = company ? [company] : [];
+
+      const revRow = await queryOne(`SELECT COALESCE(SUM(revenue), 0)::numeric AS val FROM app.suite_campaigns${whereClause}`, params);
+      const spendRow = await queryOne(`SELECT COALESCE(SUM(spend), 0)::numeric AS val FROM app.suite_campaigns${whereClause}`, params);
+      const roiRow = await queryOne(`SELECT COALESCE(AVG(roi), 0)::numeric AS val FROM app.suite_campaigns${whereClause}${params.length ? ' AND roi > 0' : ' WHERE roi > 0'}`, params);
+
+      // Leads by company
+      const leadsByCompany = await query(
+        'SELECT company_routed AS company, COUNT(*)::int AS count FROM app.suite_leads GROUP BY company_routed ORDER BY count DESC'
+      );
+
+      // Leads by status
+      const statusParams = company ? [company] : [];
+      const statusClause = company ? ' WHERE company_routed = $1' : '';
+      const leadsByStatus = await query(
+        `SELECT status, COUNT(*)::int AS count FROM app.suite_leads${statusClause} GROUP BY status`,
+        statusParams
+      );
+
+      // Monthly revenue (mocked the same way as sql.js seed)
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const revenueByMonth = months.map((m, i) => ({
+        month: m,
+        harbor: Math.round(18000 + i * 2000 + ((i * 137) % 3000)),
+        party: Math.round(12000 + i * 1800 + ((i * 251) % 2500)),
+        xmrt: Math.round(8000 + i * 1200 + ((i * 89) % 2000)),
+      }));
+
+      json(res, {
+        totalLeads: leadsRow.count,
+        totalRevenue: parseFloat(revRow.val),
+        totalSpend: parseFloat(spendRow.val),
+        avgRoi: parseFloat(roiRow.val),
+        leadsByCompany,
+        leadsByStatus,
+        revenueByMonth,
+      });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Revenue Data (chart) ──────────────────────────────────────────
+  app.get('/api/suite/revenue-data', async (req, res) => {
+    try {
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const data = months.map((m, i) => ({
+        month: m,
+        harbor: Math.round(18000 + i * 2000 + ((i * 137) % 3000)),
+        party: Math.round(12000 + i * 1800 + ((i * 251) % 2500)),
+        xmrt: Math.round(8000 + i * 1200 + ((i * 89) % 2000)),
+      }));
+      json(res, data);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Conversion Funnel ─────────────────────────────────────────────
+  app.get('/api/suite/conversion-funnel', async (req, res) => {
+    try {
+      const stages = ['scraping', 'qualify', 'quote', 'contract', 'paid'];
+      const result = [];
+      for (const stage of stages) {
+        const row = await queryOne('SELECT COUNT(*)::int AS count FROM app.suite_leads WHERE pipeline_stage = $1', [stage]);
+        result.push({ stage: stage.toUpperCase(), count: row.count });
+      }
+      json(res, result);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── Email Activity ────────────────────────────────────────────────
+  app.get('/api/suite/email-activity', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const limit = parseInt(req.query.limit || '20');
+      const sql = company && company !== 'all'
+        ? 'SELECT id, resend_id, company_id, email_from, email_to, subject, status, clicks, opens, sent_at, created_at FROM app.suite_email_activity WHERE company_id = $1 ORDER BY sent_at DESC LIMIT $2'
+        : 'SELECT id, resend_id, company_id, email_from, email_to, subject, status, clicks, opens, sent_at, created_at FROM app.suite_email_activity ORDER BY sent_at DESC LIMIT $1';
+      const params = company && company !== 'all' ? [company, limit] : [limit];
+      const rows = await query(sql, params);
+      json(res, rows);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.post('/api/suite/email-activity', async (req, res) => {
+    try {
+      const b = req.body;
+      await query(
+        `INSERT INTO app.suite_email_activity (resend_id, company_id, email_from, email_to, subject, status, clicks, opens, sent_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(resend_id) DO NOTHING`,
+        [b.resend_id, b.company_id, b.email_from ?? null, b.email_to ?? null, b.subject ?? null,
+         b.status ?? 'sent', b.clicks ?? 0, b.opens ?? 0, b.sent_at ?? new Date().toISOString()]
+      );
+      json(res, { ok: true }, 201);
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.patch('/api/suite/email-activity/:resendId', async (req, res) => {
+    try {
+      const sets = ['status = $1'];
+      const params = [req.body.status];
+      if (req.body.opens !== undefined) { sets.push(`opens = $${params.length + 1}`); params.push(req.body.opens); }
+      if (req.body.clicks !== undefined) { sets.push(`clicks = $${params.length + 1}`); params.push(req.body.clicks); }
+      params.push(req.params.resendId);
+      await query(`UPDATE app.suite_email_activity SET ${sets.join(', ')} WHERE resend_id = $${params.length}`, params);
+      json(res, { ok: true });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  app.get('/api/suite/email-stats', async (req, res) => {
+    try {
+      const company = req.query.company;
+      const where = company && company !== 'all' ? 'WHERE company_id = $1' : '';
+      const params = company && company !== 'all' ? [company] : [];
+
+      const total = (await queryOne(`SELECT COUNT(*)::int AS count FROM app.suite_email_activity ${where}`, params))?.count ?? 0;
+      const sent = (await queryOne(`SELECT COUNT(*)::int AS count FROM app.suite_email_activity ${where} ${where ? 'AND' : 'WHERE'} status = 'sent'`, params))?.count ?? 0;
+      const delivered = (await queryOne(`SELECT COUNT(*)::int AS count FROM app.suite_email_activity ${where} ${where ? 'AND' : 'WHERE'} status = 'delivered'`, params))?.count ?? 0;
+      const opened = (await queryOne(`SELECT COUNT(*)::int AS count FROM app.suite_email_activity ${where} ${where ? 'AND' : 'WHERE'} status IN ('opened','clicked')`, params))?.count ?? 0;
+      const bounced = (await queryOne(`SELECT COUNT(*)::int AS count FROM app.suite_email_activity ${where} ${where ? 'AND' : 'WHERE'} status IN ('bounced','complained')`, params))?.count ?? 0;
+
+      json(res, { total, sent, delivered, opened, bounced });
+    } catch (e) { error(res, e.message, 500); }
+  });
+
+  // ── OPTIONS handler for all suite routes ─────────────────────────
+  app.options('/api/suite/*path', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(200).end();
+  });
+}

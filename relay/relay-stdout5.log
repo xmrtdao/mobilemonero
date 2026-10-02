@@ -1,0 +1,73 @@
+[Relay] Loaded .env (overwrite mode) from C:\Users\PureTrek\Desktop\xmrtdao\relay\.env
+  Suite SPA: C:\Users\PureTrek\Desktop\xmrtdao\suite\dist
+  HottieHouse SPA: C:\Users\PureTrek\Desktop\xmrtdao\hottiehouse\app\dist
+  CuttlefishClaws SPA: C:\Users\PureTrek\Desktop\xmrtdao\cuttlefishclaws\dist
+  CashDApp SPA: NOT FOUND at C:\Users\PureTrek\Desktop\xmrtdao\cashdapp\dist — skipping
+  Agency Dashboard: C:\Users\PureTrek\Desktop\xmrtdao\31harbor-agency-dashboard\dist (harbor/party/xmrt)
+[CuttlefishClaws] Registered engine routes: trust-score, trust-history, trust-event, recompute, standing, standing-event, gate-evaluate, gate-thresholds, activity-event, agents, rate-card, engine-health
+[RUM] Registering /api/rum-quota route...
+[CuttlefishClaws] Registered university bridge routes: onboard, cert-holders, status, teach
+[runtime] Registered local function: agent-workflow-engine
+[consolidate] cuttlefishclaws-mcp: 25 tools
+[consolidate] xmrtdao-suite-mcp: 15 tools
+[runtime] Registered local function: code-monitor-daemon
+[runtime] Discovered 2 local functions
+[consolidate] cuttlefish-mcp: 19 tools
+[consolidate] Registered 59 MCP tools in-process
+[consolidate] 59 MCP tools registered in-process
+[consolidate] Alice daemon started (cycle: 60min)
+
+=== Alice Status ===
+Certified: ❌ No
+Last service check: 2026-07-25T20:06:22.593Z
+Autopilot cycle: undefined
+Cycle definition: not set
+Last run: Never
+Last sync from shared_context: Never
+
+Services:
+  ✅ relay: 142 tools, 7 handlers
+  ✅ tunnel: Cloudflare Access responding
+  ✅ ollama: 14 models
+  ✅ supabase: API responding
+  ❌ muapi: $0.000 balance
+  ✅ university: 0 modules
+  ✅ campaign: running
+
+Brands managed:
+  xmrt-dao: primary #ff6b35
+  mobilemonero: primary #ff6b35
+  zeroclaw: primary #a78bfa
+  suite-ai: primary #60a5fa
+  party-favor-photo: primary #ff6b35
+  night-moves: primary #818cf8
+[2026-07-25T20:07:10.951Z] [MONITOR] Checking all services...
+[2026-07-25T20:07:10.966Z] ========================================
+[2026-07-25T20:07:10.967Z] Alice Sidecar Agent starting...
+[2026-07-25T20:07:10.968Z] Reports to: Isabella Rodriguez (CMO)
+[2026-07-25T20:07:10.969Z] Operates as: Vex sidecar
+[2026-07-25T20:07:10.970Z] ========================================
+[2026-07-25T20:07:10.970Z] [MONITOR] Checking all services...
+[2026-07-25T20:07:14.098Z] [EMAIL] No API key for hermes@mobilemonero.com
+[2026-07-25T20:07:14.155Z] [MONITOR] 6/7 services ok
+
+=== Service Summary ===
+  ✅ relay: ok — 142 tools, 7 handlers
+  ✅ tunnel: ok — Cloudflare Access responding
+  ✅ ollama: ok — 14 models
+  ✅ supabase: ok — API responding
+  ❌ muapi: low — $0.000 balance
+  ✅ university: ok — 0 modules
+  ✅ campaign: ok — running
+[2026-07-25T20:07:14.344Z] [EMAIL] No API key for hermes@mobilemonero.com
+[2026-07-25T20:07:14.388Z] [MONITOR] 6/7 services ok
+[2026-07-25T20:07:14.396Z] [HEARTBEAT] Sent ONLINE status
+[2026-07-25T20:07:14.397Z] [CYCLE 1] Starting...
+[2026-07-25T20:07:14.404Z] [MONITOR] Checking all services...
+[2026-07-25T20:07:15.431Z] [EMAIL] No API key for hermes@mobilemonero.com
+[2026-07-25T20:07:15.489Z] [MONITOR] 6/7 services ok
+[2026-07-25T20:07:15.497Z] [INBOUND] Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\lib\inbound-email-parser.mjs' imported from C:\Users\PureTrek\Desktop\xmrtdao\relay\alice.mjs
+[2026-07-25T20:07:15.498Z] [TASKS] Fetching pending tasks from local relay...
+[2026-07-25T20:07:15.503Z] [TASKS] Found 0 pending tasks
+[2026-07-25T20:07:15.522Z] [LOOP] Error: Cannot find module 'C:\Users\PureTrek\Desktop\xmrtdao\relay\lib\fleet-memory.mjs' imported from C:\Users\PureTrek\Desktop\xmrtdao\relay\alice.mjs
+[2026-07-25T20:07:15.524Z] [CYCLE 1] Complete. Next in 60 minutes.
