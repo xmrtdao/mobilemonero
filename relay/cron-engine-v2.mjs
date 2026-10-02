@@ -567,15 +567,38 @@ async function writeSharedContext(entry) {
     const pool = getSharedPool();
     const ttlMinutes = entry.ttl_minutes || 90;
     const expiresAt = new Date(Date.now() + ttlMinutes * 60000).toISOString();
+    // Two bugs were here. The column names were all wrong — the table is
+    // (id, context_key, context_type, value, description, tags,
+    // last_updated_by, created_at, updated_at) and this named `key`,
+    // `ttl_minutes`, `expires_at` and `agent`, none of which exist. And the
+    // statement had five placeholders with no parameter array passed at all.
+    //
+    // Together they meant this could never succeed. The catch turned the failure
+    // into a WARN line, callers carried on, and the scanner's shared context was
+    // silently never written - it looked healthy because nothing threw.
+    //
+    // There is no TTL column, so the expiry travels inside the value instead of
+    // being discarded, where a reader can see it and pruning can act on it.
+    const payload = (() => {
+      try {
+        const parsed = JSON.parse(entry.value);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return JSON.stringify({ ...parsed, _expires_at: expiresAt, _ttl_minutes: ttlMinutes });
+        }
+        return JSON.stringify({ value: parsed, _expires_at: expiresAt, _ttl_minutes: ttlMinutes });
+      } catch {
+        return entry.value;
+      }
+    })();
     await pool.query(
-      `INSERT INTO public.shared_context (key, value, ttl_minutes, expires_at, agent, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (key) DO UPDATE
+      `INSERT INTO public.shared_context (context_key, context_type, value, last_updated_by, created_at, updated_at)
+       VALUES ($1, $2, $3::jsonb, $4, NOW(), NOW())
+       ON CONFLICT (context_key) DO UPDATE
        SET value = EXCLUDED.value,
-           ttl_minutes = EXCLUDED.ttl_minutes,
-           expires_at = EXCLUDED.expires_at,
-           agent = EXCLUDED.agent,
-           created_at = NOW()`
+           context_type = EXCLUDED.context_type,
+           last_updated_by = EXCLUDED.last_updated_by,
+           updated_at = NOW()`,
+      [entry.key, entry.context_type || 'general', payload, entry.agent || 'cron-engine-v2']
     );
     return { ok: true };
   } catch (e) {
