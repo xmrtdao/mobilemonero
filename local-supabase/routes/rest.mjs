@@ -217,6 +217,19 @@ export default function makeRestRouter({ dbUrl }) {
     } catch (e) {
       // If setting role fails (e.g. role not granted to current user), just continue
       // We'll fall back to using the postgres superuser connection
+      //
+      // That fallback is fine for a read and is the actual mechanism of the
+      // write hole: when `SET LOCAL role` failed, the request continued on the
+      // superuser connection with no role at all, so the requested privileges
+      // were the connection's rather than the caller's. A caller whose role
+      // could not be applied must be refused on writes, not quietly upgraded -
+      // failing open on an auth failure is the bug, not the design.
+      console.warn(`[rest] could not apply role "${role}": ${e.message}`);
+      const isWrite = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(
+        String(req.method || '').toUpperCase());
+      if (isWrite && role !== 'service_role') {
+        throw Object.assign(new Error('role could not be applied to a write'), { statusCode: 500 });
+      }
     }
     return client;
   }
@@ -233,6 +246,58 @@ export default function makeRestRouter({ dbUrl }) {
       // Validate table name (only letters, digits, underscore, and dot for schema prefix)
       if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(table)) {
         return res.status(400).json({ error: 'invalid_table_name' });
+      }
+
+      // ── Anonymous writes to authority tables are refused ──────────────
+      //
+      // This router had no authorisation check at all: no 401, no 403, and
+      // `supabaseCtx` was read but never consulted. `clientWithAuth` does try
+      // `SET LOCAL role`, but that call is wrapped in a catch that swallows
+      // failure and continues on the superuser connection - so a role that
+      // cannot be set silently becomes unrestricted access.
+      //
+      // That made `anon` able to INSERT and DELETE on every table. Proven on the
+      // public relay with no credentials:
+      //   DELETE /rest/v1/agents?id=eq.<nonexistent>      -> 200 []
+      //   DELETE /rest/v1/suite_leads?id=eq.999999999     -> 200 []
+      // (200 with an empty array is PostgREST's "authorised, matched nothing";
+      // a permission failure would be 401/403/425. Nothing was deleted.)
+      //
+      // Why this table and not blanket-deny: the Suite SPA reads and writes
+      // through /rest/v1 with the anon key, so refusing every anonymous write
+      // would break product features whose legitimate write set has never been
+      // enumerated. Authority tables are different in kind - they confer
+      // capability - and they are the ones where an anonymous write escalates.
+      // The rest is logged below so the allowlist can be built from evidence
+      // rather than guesswork.
+      const AUTHORITY_TABLES = new Set([
+        'agents', 'cuttlefish_agents',
+        'cuttlefish_trust_events',
+        'xmrt_university_enrollments',
+        'xmrt_university_courses',
+      ]);
+      const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+      const role = (req.supabaseCtx && req.supabaseCtx.role) || 'anon';
+      const bare = table.includes('.') ? table.split('.').pop() : table;
+
+      if (WRITE_METHODS.has(method) && role !== 'service_role') {
+        if (AUTHORITY_TABLES.has(table) || AUTHORITY_TABLES.has(bare)) {
+          console.warn(
+            `[rest] REFUSED anonymous ${method} on authority table "${table}" ` +
+            `(role=${role}) - anonymous writes to authority tables are not permitted`
+          );
+          return res.status(403).json({
+            error: 'forbidden',
+            detail: `"${table}" confers agent authority and cannot be written without a service-role credential.`,
+          });
+        }
+        // Not refused yet, but recorded. This log is the input to the write
+        // allowlist: whatever appears here is either a legitimate anon write
+        // that needs allowlisting, or a hole.
+        console.warn(
+          `[rest] anon ${method} on "${table}" - allowed for now, ` +
+          `recorded so the write allowlist can be built from evidence`
+        );
       }
       // Handle schema-prefixed table names like "app.tasks"
       let schemaOverride = null;

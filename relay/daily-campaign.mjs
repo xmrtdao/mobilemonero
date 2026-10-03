@@ -10,6 +10,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildCampaignHtml } from './lib/email-template.mjs';
+import {
+  ensureCampaignSchema, recordSend, recordFailure, loadSuppression,
+  recentlySent, campaignStats,
+} from './lib/pfp-campaign-log.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,26 +32,47 @@ const RESEND_HOST = 'api.resend.com';
 const FROM_ADDRESS = 'Party Favor Photo <bookings@partyfavorphoto.com>';
 const REPLY_TO = 'joe@partyfavorphoto.com';
 const CONTACTS_FILE = path.join(__dirname, '..', 'relay-data', 'campaign-contacts.json');
+// LOG_FILE is now append-only and created if absent. The old `catch {}` around
+// every write meant a failure here was invisible: the campaign reported success
+// while recording nothing, which is how 50+ sends a day went out with no audit
+// trail and a totalSent counter reading zero.
 const LOG_FILE = path.join(__dirname, '..', 'relay-data', 'campaign.log');
-const SENT_FILE = path.join(__dirname, '..', 'relay-data', 'campaign-sent.json');
-const SUPPRESSION_FILE = path.join(__dirname, '..', 'relay-data', 'suppression-list.json');
 
-function loadSuppression() {
-  try {
-    if (fs.existsSync(SUPPRESSION_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SUPPRESSION_FILE, 'utf8'));
-      return new Set(data.suppressed || []);
-    }
-  } catch {}
-  return new Set();
+/**
+ * The pool, the Resend key, and the send log.
+ *
+ * Sends are recorded in public.pfp_campaign_sends, which is what the relay
+ * dashboard's campaign tile reads. The JSON sent-log is gone on purpose: it was
+ * never created, so nothing read it either, and a second source of truth that
+ * only one writer touches is a source of disagreement.
+ */
+let DB_QUERY = null;
+async function query(sql, params) {
+  if (!DB_QUERY) {
+    const { getPool } = await import('./jobby/store.mjs');
+    const pool = await getPool();
+    DB_QUERY = (s, p) => pool.query(s, p);
+  }
+  return DB_QUERY(sql, params);
 }
 
-// Load contacts, mark sent ones
-let contacts = [];
-try { contacts = JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); } catch { contacts = []; }
+function logLine(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(msg);
+  try { appendFileSync(LOG_FILE, line + '\n'); }
+  catch (e) { console.error(`campaign.log write failed: ${e.message}`); }
+}
 
-let sentHistory = [];
-try { sentHistory = JSON.parse(fs.readFileSync(SENT_FILE, 'utf8')); } catch { sentHistory = []; }
+// Suppression lives in public.pfp_campaign_suppressions now. This previously
+// read a suppression-list.json that has never existed, so an unsubscribe had
+// nowhere to be recorded and the next drop emailed that person again.
+let suppressed = new Set();
+
+// The pool is the recipient list. It is still a 2.7 MB JSON blob and is loaded
+// once per run, which is fine; what was missing was the WRITE side.
+let contacts = [];
+try { contacts = JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')); }
+catch (e) { console.error(`contact pool unreadable: ${e.message}`); contacts = []; }
 
 // Image extensions that are NOT valid TLDs — reject emails whose domain TLD is an image extension
 const IMAGE_EXTENSIONS = new Set(['png','jpg','jpeg','gif','webp','svg','bmp','tiff','tif','avif','heic','heif','raw','psd','eps','ico']);
@@ -62,23 +87,40 @@ function isRealEmail(email) {
   return true;
 }
 
-// Filter out already-sent emails (last 30 days) and suppressed
-const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-const recentSent = new Set(sentHistory.filter(s => s.ts > cutoff).map(s => s.email));
-const suppressed = loadSuppression();
+// ── de-duplication, suppression, schema ─────────────────────────────────────
+// Seed the suppression set from the table rather than a file that never existed.
+suppressed = await loadSuppression(query);
 
-let available = contacts.filter(c => !recentSent.has(c.email) && isRealEmail(c.email));
+// The 30-day check. `sentCount` on the pool record is only a hint the pool file
+// carries; the table is the authority, because this is what every send writes.
+const recentSent = new Set();
+let recentCount = 0;
+try {
+  const { rows } = await query(
+    `SELECT DISTINCT lower(email) AS email FROM public.pfp_campaign_sends
+      WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '30 days'`);
+  for (const r of rows) recentSent.add(r.email);
+  recentCount = recentSent.size;
+} catch (e) {
+  // Fail open on purpose: if the de-dup lookup fails we still send, because
+  // dropping half the campaign on a bookkeeping error is the worse outcome.
+  // The sentCount sort below still prefers untouched contacts.
+  console.error(`[Campaign] de-dup lookup failed, falling back to sentCount sort: ${e.message}`);
+}
+
+let available = contacts.filter(
+  (c) => c && c.email && !recentSent.has(String(c.email).toLowerCase().trim()) && isRealEmail(c.email));
 
 if (suppressed.size > 0) {
-  const blocked = available.filter(c => suppressed.has(c.email));
+  const blocked = available.filter((c) => suppressed.has(String(c.email).toLowerCase().trim()));
   if (blocked.length > 0) {
     console.log(`[Campaign] Skipping ${blocked.length} suppressed contacts`);
-    available = available.filter(c => !suppressed.has(c.email));
+    available = available.filter((c) => !suppressed.has(String(c.email).toLowerCase().trim()));
   }
 }
 
-// Pick 50, prioritizing untried ones
-const day = new Date().getDate();
+// Pick the batch, preferring the least-contacted. `sentCount` is seeded from the
+// table after each run so this ordering stays truthful across restarts.
 const sorted = [...available].sort((a, b) => (a.sentCount || 0) - (b.sentCount || 0));
 const count = parseInt(process.argv[2]) || 100;
 
@@ -114,7 +156,12 @@ if (batch.length === 0) {
   process.exit(0);
 }
 
-let sent = 0, errors = 0;
+let sent = 0, errors = 0, skipped = 0;
+// Sends made in THIS run. Without it a duplicate inside a single batch would be
+// invisible, because the table write lands after Resend has already accepted.
+const sentEmailsThisRun = new Set();
+const SUBJECT = 'The difference: DSLR + strobe vs tablet + ring light';
+
 const logDir = path.join(__dirname, '..', 'relay-data');
 const LOCK_FILE = path.join(logDir, 'campaign.lock');
 
@@ -142,26 +189,63 @@ process.on('exit', releaseLock);
 process.on('SIGINT', () => { releaseLock(); process.exit(1); });
 process.on('uncaughtException', () => { releaseLock(); process.exit(1); });
 
-function appendSent(email) {
-  sentHistory.push({ email, ts: Date.now() });
-  fs.writeFileSync(SENT_FILE, JSON.stringify(sentHistory, null, 2));
+/**
+ * Record one send.
+ *
+ * The JSON sent-log is replaced by public.pfp_campaign_sends. It was a
+ * multi-megabyte read-modify-write per email that had never once been created, so
+ * `recentSent` was permanently empty and the defence-in-depth check below was
+ * permanently passing.
+ */
+async function recordDelivered(entry, resendId) {
+  await recordSend(query, (m) => console.error(m), {
+    email: entry.email,
+    name: entry.name,
+    source: entry.source,
+    query: entry.query,
+    region: entry.region,
+    subject: SUBJECT,
+    resend_id: resendId,
+    status: 'sent',
+  });
+  sentEmailsThisRun.add(String(entry.email).toLowerCase().trim());
 }
 
 function sendNext() {
   if (batch.length === 0 || sent + errors >= count) {
-    const summary = `[${new Date().toISOString()}] Campaign: ${sent} sent, ${errors} errors`;
-    console.log(summary);
-    fs.appendFileSync(LOG_FILE, summary + '\n');
-    releaseLock();
+    // Written to the log AND to the table, so the scheduler's counters and the
+    // dashboard tile both reflect what actually happened this run.
+    logLine(`done  sent=${sent} errors=${errors} skipped=${skipped}`);
+    (async () => {
+      try {
+        await recordSend(query, (m) => console.error(m), {
+          email: `run-summary-${Date.now()}@campaign.local`,
+          status: sent > 0 ? 'run' : 'run_empty',
+          detail: JSON.stringify({ sent, errors, skipped }),
+          campaign: 'daily-run',
+        });
+        await reconcilePool();
+      } catch (e) {
+        console.error(`run summary not recorded: ${e.message}`);
+      }
+      releaseLock();
+    })();
     return;
   }
   const entry = batch.shift();
-  
-  // Double-check this email hasn't been sent already (defense in depth)
-  const recentSentCheck = new Set(sentHistory.filter(s => s.ts > Date.now() - 30*24*60*60*1000).map(s => s.email));
-  if (recentSentCheck.has(entry.email)) {
-    // Already sent in this session -�" skip
-    sent++;
+  const entryKey = String(entry.email || '').toLowerCase().trim();
+
+  // Defence in depth, against BOTH sources: the table seeded at startup, and the
+  // sends already made in this run. The old check only looked at an in-memory
+  // array that was never populated, so it could not have caught anything.
+  if (recentSent.has(entryKey) || sentEmailsThisRun.has(entryKey)) {
+    skipped++;
+    logLine(`skip ${entry.email} (already contacted in the last 30 days)`);
+    setTimeout(sendNext, 10);
+    return;
+  }
+  if (suppressed.has(entryKey)) {
+    skipped++;
     setTimeout(sendNext, 10);
     return;
   }
@@ -193,7 +277,7 @@ Packages:
   4 hours -- $996
   ${stripe4hr}
 
-Military and non-profit rate -- $398. Just reply.
+School, military and non-profit rate -- 20% off any package. Reply and we will quote it.
 
 No commitment until deposit. Questions? Reply or call.
 
@@ -204,28 +288,35 @@ Party Favor Photo
 (202) 798-0610
 partyfavorphoto.com`;
 
-  // Template B: Limited time $100 off (A/B test)
-  const COUPON_CODE = 'STUDIO100';
+  // Template B: the school/military rate, at the real percentage.
+  //
+  // This used to advertise "save $100" and quote $398 / $647 / $896, which is the
+  // old FLAT-$100 discount. It is dead code - `const body = templateA` - so
+  // nothing wrong has been sent, but it is one edit away from going live with
+  // prices the business does not charge.
+  //
+  // The real rate is 20% off Standard, rounded to the dollar, which is what the
+  // published price column says: $398 / $598 / $796. Authoritative values live in
+  // relay/lib/pfp-pricing.mjs (DISCOUNTS, PUBLISHED_DISCOUNTED); these figures
+  // must match it.
   const templateB = `Hello again from Party Favor Photo,
 
-We are running a limited-time offer for our past clients and wanted you to be the first to know.
-
-For the next 30 days, save $100 on any StudioStation package.
+If your event is a school function, a military gathering, or a non-profit event, reply and we will quote the discounted rate.
 
 Here is what you already know about our setup -- professional DSLR camera with strobe lighting, not a tablet on a stick. The strobe flash creates clean, professional photos in any venue. Your guests see the difference immediately.
 
-Packages at the discounted rate (limited time):
+Standard packages:
 
-  2 hours -- $398 (regularly $498)
+  2 hours -- $498
   ${stripeGeneral}
 
-  3 hours -- $647 (regularly $747)
+  3 hours -- $747
   ${stripe3hr}
 
-  4 hours -- $896 (regularly $996)
+  4 hours -- $996
   ${stripe4hr}
 
-Offer ends in 30 days. No commitment until deposit. Questions? Reply or call.
+No commitment until deposit. Questions? Reply or call.
 
 Warmly,
 
@@ -260,13 +351,17 @@ partyfavorphoto.com`;
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(postData),
     },
-  }, (res) => {
+  }, async (res) => {
     let data = '';
     res.on('data', (chunk) => { data += chunk; });
-    res.on('end', () => {
+    res.on('end', async () => {
       if (res.statusCode === 200 || res.statusCode === 201) {
         sent++;
-        appendSent(entry.email);
+        // Record BEFORE advancing. Resend has accepted the mail at this point, so
+        // losing this row means that address can be emailed again in 30 days.
+        let resendId = null;
+        try { resendId = JSON.parse(data || '{}').id ?? null; } catch {}
+        await recordDelivered(entry, resendId);
         console.log(`  [${sent}] Sent to ${entry.email}`);
       } else if (res.statusCode === 429) {
         // Rate limited by Resend (5 req/s cap). Re-queue to front, back off 2s.
@@ -277,13 +372,25 @@ partyfavorphoto.com`;
         return;
       } else {
         errors++;
+        // Failures are recorded too. The old state file showed totalErrors: 434
+        // next to totalSent: 0, which is what a counter looks like when only one
+        // of its two branches writes.
+        await recordFailure(query, (m) => console.error(m), {
+          email: entry.email, name: entry.name, source: entry.source,
+          region: entry.region, subject, status: 'error',
+          detail: `HTTP ${res.statusCode} ${String(data).slice(0, 200)}`,
+        });
         console.error(`  [ERR] ${entry.email}: HTTP ${res.statusCode} ${data.slice(0,200)}`);
       }
       setTimeout(sendNext, 250);
     });
   });
-  req.on('error', (err) => {
+  req.on('error', async (err) => {
     errors++;
+    await recordFailure(query, (m) => console.error(m), {
+      email: entry.email, name: entry.name, source: entry.source,
+      region: entry.region, subject, status: 'error', detail: err.message,
+    });
     console.error(`  [ERR] ${entry.email}: ${err.message}`);
     setTimeout(sendNext, 250);
   });
@@ -291,5 +398,39 @@ partyfavorphoto.com`;
   req.end();
 }
 
-console.log(`Pool: ${contacts.length}, Available: ${available.length}, Target: ${count}, Sending: ${batch.length}`);
+/**
+ * Seed `sentCount` back onto the pool file so the batch selection stays truthful
+ * across restarts. Once per run, not once per send: the file is 2.7 MB and a
+ * write per email would be 50 serialised rewrites for no benefit.
+ */
+async function reconcilePool() {
+  try {
+    const { rows } = await query(
+      `SELECT lower(email) AS email, count(*)::int AS n
+         FROM public.pfp_campaign_sends WHERE status = 'sent' GROUP BY 1`);
+    const counts = new Map(rows.map((r) => [r.email, r.n]));
+    let changed = 0;
+    for (const c of contacts) {
+      if (!c || !c.email) continue;
+      const n = counts.get(String(c.email).toLowerCase().trim());
+      if (n !== undefined && c.sentCount !== n) { c.sentCount = n; changed++; }
+    }
+    if (changed > 0) {
+      fs.writeFileSync(CONTACTS_FILE, JSON.stringify(contacts));
+      logLine(`pool: updated sentCount on ${changed} record(s)`);
+    }
+  } catch (e) {
+    console.error(`pool reconcile failed (non-fatal): ${e.message}`);
+  }
+}
+
+// ── run ─────────────────────────────────────────────────────────────────────
+await ensureCampaignSchema(query).catch((e) =>
+  console.error(`campaign schema unavailable, sends will proceed unlogged: ${e.message}`));
+
+logLine(
+  `start  pool=${contacts.length} available=${available.length} target=${count} ` +
+  `batch=${batch.length} suppressed=${suppressed.size} dedup30d=${recentCount}`
+);
+
 sendNext();

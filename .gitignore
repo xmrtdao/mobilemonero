@@ -39,3 +39,8 @@ relay/relay-data/
 
 # resume_server's rotating access/error log. Runtime output, not source.
 jobby-mcjobberson/resume_server.log*
+
+# resume_server / vite / proxy logs, and Python bytecode caches.
+jobby-mcjobberson/*.log*
+jobby-mcjobberson/**/__pycache__/
+**/__pycache__/

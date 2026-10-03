@@ -33,11 +33,36 @@ const STATE_FILE = join(DATA_DIR, 'supervisor-state.json');
 const LOG_FILE = join(LOG_DIR, 'supervisor.log');
 
 // ── Logging ──────────────────────────────────────────────────────────
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_LOG_FILES = 5;
+
+function rotateLogIfNeeded() {
+  try {
+    const st = statSync(LOG_FILE);
+    if (st.size > MAX_LOG_SIZE) {
+      // Rotate: log -> log.1 -> log.2 -> ... -> log.5 (delete oldest)
+      for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
+        const src = i === 1 ? LOG_FILE : `${LOG_FILE}.${i - 1}`;
+        const dst = `${LOG_FILE}.${i}`;
+        try {
+          if (existsSync(src)) {
+            if (i === MAX_LOG_FILES - 1 && existsSync(dst)) unlinkSync(dst);
+            renameSync(src, dst);
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 function log(line) {
   const stamp = new Date().toISOString();
   const full = `${stamp} [supervisor] ${line}`;
   console.log(full);
-  try { appendFileSync(LOG_FILE, full + '\n'); } catch {}
+  try {
+    rotateLogIfNeeded();
+    appendFileSync(LOG_FILE, full + '\n');
+  } catch {}
 }
 
 // ── Service definitions ──────────────────────────────────────────────
@@ -48,7 +73,15 @@ const SERVICE_DEFS = [
     args: ['--max-old-space-size=512', 'relay/server.js'],
     cwd: ROOT,
     tcpPort: 8080,
-    startupGraceMs: 60000,
+    // HTTP health check: a wedged relay keeps TCP 8080 LISTENING but stops
+    // answering HTTP (event-loop block). A bare TCP check reports it healthy
+    // forever, so the supervisor never restarts it. Checking /health with a
+    // short timeout catches that — checkHttp() times out if no response.
+    healthUrl: 'http://127.0.0.1:8080/health',
+    healthCheck: (body) => {
+      try { const d = JSON.parse(body); return d && d.status === 'ok'; } catch { return false; }
+    },
+    startupGraceMs: 90000,
     maxFailures: 2,
     dependsOn: ['pg', 'local-sb', 'health-server'],
   },
@@ -69,16 +102,6 @@ const SERVICE_DEFS = [
     name: 'campaign-scheduler',
     cmd: 'node',
     args: ['relay/campaign-scheduler.mjs', '--daemon'],
-    cwd: ROOT,
-    healthUrl: null,
-    healthCheck: null,
-    startupGraceMs: 5000,
-    dependsOn: ['pg'],
-  },
-  {
-    name: '31harbor-scheduler',
-    cmd: 'node',
-    args: ['relay/tools/31harbor-scheduler.mjs', '--daemon'],
     cwd: ROOT,
     healthUrl: null,
     healthCheck: null,
@@ -116,6 +139,7 @@ const SERVICE_DEFS = [
     cwd: 'C:\\Users\\PureTrek\\Desktop\\page-agent\\packages\\mcp',
     healthUrl: null, // check via process existence (stdio MCP)
     healthCheck: null,
+    tcpPort: 38401, // hub port — prevents false "external" adoption via node.exe
     startupGraceMs: 5000,
     dependsOn: [],
   },
@@ -140,6 +164,7 @@ const SERVICE_DEFS = [
     cwd: ROOT,
     healthUrl: 'http://127.0.0.1:54321/health',
     healthCheck: (body) => typeof body === 'object',
+    tcpPort: 54321,
     startupGraceMs: 10000,
     dependsOn: ['pg'],
   },
@@ -185,9 +210,36 @@ const SERVICE_DEFS = [
     startupGraceMs: 5000,
     dependsOn: ['relay'],
   },
+  {
+    // DeepSeek Harness web UI — Builder's workspace + watchable harness on :3080.
+    // The detached .cjs launcher sets DEEPSEEK_BASE_URL/API_KEY in the child env
+    // and writes the one-time auth-token URL to dsh/dsh-web-harness.log (that's
+    // the file dsh-open reads to open an authenticated window). Health is TCP :3080
+    // (the bare URL returns a 401 auth-wall, which is the healthy state, so a raw
+    // HTTP probe would false-negative — a TCP port check is correct here).
+    name: 'dsh',
+    cmd: 'node',
+    args: ['dsh/dsh-web-supervised.cjs'],
+    cwd: ROOT,
+    healthUrl: null,
+    healthCheck: null,
+    tcpPort: 3080,
+    startupGraceMs: 30000,
+    dependsOn: ['relay'],
+  },
+  {
+    name: 'resume-server',
+    cmd: 'py',
+    args: ['resume_server.py', '--host', '127.0.0.1', '--port', '5175'],
+    cwd: join(ROOT, 'jobby-mcjobberson'),
+    healthUrl: 'http://127.0.0.1:5175/',
+    healthCheck: () => true,
+    startupGraceMs: 5000,
+    dependsOn: [],
+  },
 ];
 
-const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', '31harbor-scheduler'];
+const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', 'dsh', 'resume-server'];
 
 // ── State ────────────────────────────────────────────────────────────
 const state = {};
@@ -223,6 +275,10 @@ function saveState() {
     out.services[name].startedAt = s.startedAt || out.services[name].startedAt || now;
     if (s.healthy !== undefined) out.services[name].healthy = s.healthy;
     if (s.failures !== undefined) out.services[name].failures = s.failures;
+    // `degradedBy` is cleared rather than copied when absent, so a recovered
+    // dependency does not leave a stale degradation marker behind.
+    if (s.degradedBy && s.degradedBy.length) out.services[name].degradedBy = s.degradedBy;
+    else delete out.services[name].degradedBy;
     if (s.isExternal) out.services[name].isExternal = true;
   }
   out._pid = process.pid;
@@ -267,7 +323,8 @@ function findProcessByName(name) {
 }
 
 function findProcessByScript(scriptName) {
-  // Find a node process running a specific script
+  // Find a node process running a specific script — returns ALL matching PIDs
+  // (not just the first) so the supervisor can self-prune duplicates.
   try {
     if (process.platform === 'win32') {
       const out = execSync(
@@ -278,15 +335,78 @@ function findProcessByScript(scriptName) {
       const dataRows = out.trim().split('\n')
         .filter(l => l.includes(','))
         .filter(l => /,\d+\s*$/.test(l));
-      return dataRows.length > 0 ? parseInt(dataRows[0].split(',').pop().trim(), 10) : null;
+      const pids = dataRows.map(l => parseInt(l.split(',').pop().trim(), 10)).filter(Boolean);
+      return pids.length > 0 ? pids : null;
     }
     const out = execSync(`pgrep -f "node.*${scriptName}" 2>/dev/null`, {
       stdio: ['pipe', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8',
     }).trim();
-    return out ? parseInt(out.split('\n')[0]) : null;
+    return out ? out.split('\n').map(l => parseInt(l, 10)).filter(Boolean) : null;
   } catch {
     return null;
   }
+}
+
+// ── Self-pruning ───────────────────────────────────────────────────
+// Keep one healthy process per supervised service and kill duplicates.
+// This is the guard against the known failure mode where repeated
+// supervisor/relay/mcp launches accumulate (double relay on :8080, three
+// cuttlefishclaws-mcp daemons, etc.) and silently eat RAM until the box
+// OOMs. For each service it enumerates every matching PID, keeps the one
+// that owns the service's TCP port (or the single instance if a service
+// runs portless), and kills the rest — skipping its own children so a
+// legitimately restarted service isn't reaped.
+function pruneDuplicateProcesses() {
+  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'cuttlefish-mcp': 3122, dsh: 3080 };
+  let pruned = 0;
+
+  for (const name of START_ORDER) {
+    const def = SERVICE_DEFS.find(d => d.name === name);
+    if (!def) continue;
+
+    const scriptName = def.args.find(a => a.endsWith('.mjs') || a.endsWith('.js'));
+    if (!scriptName) continue;
+    // Use the full relative path (e.g. "relay/health-server.mjs") for matching
+    // instead of just the base name — prevents false positives where "server.mjs"
+    // also matches "health-server.mjs".
+    const matchPath = scriptName.replace(/^[/\\]+/, '');
+
+    let pids;
+    try { pids = findProcessByScript(matchPath); } catch { continue; }
+    if (!pids || pids.length < 2) {
+      // single instance (or none) — nothing to prune for this service
+      if (pids && pids.length === 1) continue;
+      continue;
+    }
+
+    // Determine which PID is the "keeper":
+    //   1. the supervisor's own live child for this service, if any
+    //   2. else the PID owning the service's TCP port
+    let keeper = null;
+    if (state[name]?.child && !state[name].child.killed) {
+      keeper = state[name].child.pid;
+    } else {
+      const port = def.tcpPort || tcpPorts[name];
+      if (port) {
+        try {
+          const out = execSync(`netstat -ano | findstr ":${port} " | findstr LISTENING`, { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          const m = out.match(/(\d+)\s*$/m);
+          if (m) keeper = parseInt(m[1], 10);
+        } catch {}
+      }
+    }
+
+    for (const pid of pids) {
+      if (pid === process.pid) continue;             // never kill ourselves
+      if (pid === state[name]?.child?.pid) continue; // never kill our managed child
+      if (pid === keeper) continue;                  // keep the one serving
+      // Heuristic safety: never kill a relay/MCP that the relay actively tracks
+      // (avoid reaping during a restart race). Only prune if not the keeper.
+      try { killProcess(pid); pruned++; log(`[self-prune] ${name}: killed duplicate pid ${pid} (keeper=${keeper})`); }
+      catch {}
+    }
+  }
+  if (pruned > 0) log(`[self-prune] pruned ${pruned} duplicate process(es)`);
 }
 
 function killProcess(pid) {
@@ -313,14 +433,22 @@ async function checkHttp(url, timeoutMs = 4000) {
 }
 
 async function checkTcpPort(host, port, timeoutMs = 2000) {
-  return new Promise((resolve) => {
-    const sock = new net.Socket();
-    sock.setTimeout(timeoutMs);
-    sock.on('connect', () => { sock.destroy(); resolve(true); });
-    sock.on('error', () => resolve(false));
-    sock.on('timeout', () => { sock.destroy(); resolve(false); });
-    sock.connect(port, host);
-  });
+  // Try the given host first, then the other loopback (IPv4/IPv6).
+  // Some services (e.g. page-agent-mcp) bind only ::1, so a 127.0.0.1
+  // check would falsely report "not running" and cause duplicate spawns.
+  const hosts = host === '127.0.0.1' ? ['127.0.0.1', '::1'] : host === '::1' ? ['::1', '127.0.0.1'] : [host];
+  for (const h of hosts) {
+    const ok = await new Promise((resolve) => {
+      const sock = new net.Socket();
+      sock.setTimeout(timeoutMs);
+      sock.on('connect', () => { sock.destroy(); resolve(true); });
+      sock.on('error', () => resolve(false));
+      sock.on('timeout', () => { sock.destroy(); resolve(false); });
+      sock.connect(port, h);
+    });
+    if (ok) return true;
+  }
+  return false;
 }
 
 // ── Process detection ────────────────────────────────────────────────
@@ -359,12 +487,16 @@ async function findExistingProcess(name) {
   }
 
   // For services known by TCP port, try a socket connect
-  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121 };
+  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
   const port = def.tcpPort || tcpPorts[name];
   if (port) {
     try {
       const alive = await checkTcpPort('127.0.0.1', port, 1000);
       if (alive) return -1;
+      // Explicit tcpPort that is NOT listening → not running, start it.
+      // Do NOT fall through to the .exe fallback (node.exe is always running
+      // and would falsely report "adopting" for page-agent-mcp).
+      if (def.tcpPort) return null;
     } catch {}
   }
 
@@ -372,8 +504,8 @@ async function findExistingProcess(name) {
   // check by process name / script name
   const scriptName = def.args.find(a => a.endsWith('.mjs') || a.endsWith('.js'));
   if (scriptName) {
-    const pid = findProcessByScript(scriptName.replace(/^.*\//, ''));
-    if (pid) return pid;
+    const pids = findProcessByScript(scriptName.replace(/^.*[/\\]/, ''));
+    if (pids && pids.length > 0) return pids[0];
   }
   if (def.cmd && def.cmd.endsWith('.exe')) {
     const exeName = def.cmd.split(/[/\\]/).pop();
@@ -515,6 +647,78 @@ async function checkServiceHealth(name) {
 async function tick() {
   const stateFile = loadState();
 
+  // ── Process agent-queued service actions ──
+  // The relay's `service_control` tool writes actions to service-actions.json;
+  // the supervisor executes them here. Without this, queued restarts pile up
+  // with `processed: false` forever and agents' restart requests never happen.
+  try {
+    const queueFile = join(DATA_DIR, 'service-actions.json');
+    if (existsSync(queueFile)) {
+      const queue = JSON.parse(readFileSync(queueFile, 'utf8'));
+      if (Array.isArray(queue) && queue.length > 0) {
+        const pending = queue.filter(a => !a.processedAt);
+        for (const action of pending) {
+          const def = SERVICE_DEFS.find(d => d.name === action.service);
+          if (!def) {
+            log(`service_control: unknown service "${action.service}"`);
+            action.processedAt = Date.now();
+            action.result = 'unknown_service';
+            continue;
+          }
+          if (action.action === 'restart') {
+            log(`service_control: restarting ${action.service} (requested by ${action.requestedBy || 'unknown'})`);
+            // Kill the port owner first (handles external/adopted services whose
+            // childPid is null — stopService() alone can't kill them, and a fresh
+            // spawn would crash with EADDRINUSE while the old process holds the port).
+            const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
+            const port = def.tcpPort || tcpPorts[action.service];
+            if (port) {
+              try {
+                const out = execSync(`netstat -ano | findstr ":${port} " | findstr LISTENING`, { encoding: 'utf8', timeout: 5000, windowsHide: true });
+                const pidMatch = out.match(/(\d+)\s*$/m);
+                if (pidMatch) {
+                  const ownerPid = parseInt(pidMatch[1], 10);
+                  if (ownerPid && ownerPid !== process.pid) {
+                    log(`service_control: killing port ${port} owner pid ${ownerPid}`);
+                    killProcess(ownerPid);
+                  }
+                }
+              } catch {}
+            }
+            stopService(action.service);
+            startService(action.service);
+            action.processedAt = Date.now();
+            action.result = 'restarted';
+          } else if (action.action === 'start') {
+            const healthy = await checkServiceHealth(action.service);
+            if (!healthy) {
+              log(`service_control: starting ${action.service} (requested by ${action.requestedBy || 'unknown'})`);
+              startService(action.service);
+              action.processedAt = Date.now();
+              action.result = 'started';
+            } else {
+              log(`service_control: ${action.service} already healthy, skipping start`);
+              action.processedAt = Date.now();
+              action.result = 'already_healthy';
+            }
+          } else if (action.action === 'stop') {
+            log(`service_control: stopping ${action.service} (requested by ${action.requestedBy || 'unknown'})`);
+            stopService(action.service);
+            action.processedAt = Date.now();
+            action.result = 'stopped';
+          } else if (action.action === 'status') {
+            // status is handled inline by the relay tool, not queued
+            action.processedAt = Date.now();
+            action.result = 'status_inline';
+          }
+        }
+        writeFileSync(queueFile, JSON.stringify(queue, null, 2));
+      }
+    }
+  } catch (e) {
+    log(`service_control queue processing error: ${e.message}`);
+  }
+
   for (const name of START_ORDER) {
     if (shuttingDown) return;
 
@@ -555,12 +759,34 @@ async function tick() {
       await performHealthCheck(name, def);
     }
 
-    // Check dependency health
+    // Check dependency health.
+    //
+    // This used to write `state[name].healthy = false` and nothing ever wrote
+    // it back to true: `performHealthCheck` above only *raises* healthy to
+    // true, and it runs before this block, so a service that was latched false
+    // by an unhealthy dependency stayed false forever even after the service
+    // itself and all its dependencies recovered. dsh (dependsOn: ['relay'])
+    // got stuck reporting unhealthy after a relay restart, which is what made
+    // service_control tell agents dsh was down while it had been up for hours.
+    //
+    // Degradation is now recorded as its own field and never overwrites the
+    // service's own health verdict.
     if (def.dependsOn) {
-      const depsHealthy = def.dependsOn.every(d => state[d]?.healthy);
-      if (!depsHealthy && state[name]?.healthy) {
-        log(`${name} dependency unhealthy — marking as degraded`);
-        state[name].healthy = false;
+      const unhealthyDeps = def.dependsOn.filter(d => !state[d]?.healthy);
+      // The entry can be missing by this point: the branches above delete it
+      // when an external process dies or a service is started, so the service
+      // will be (re)started next tick. Writing here unconditionally threw
+      // "Cannot set properties of undefined (setting 'degradedBy')" and took
+      // the whole tick down with it.
+      const entry = state[name];
+      if (!entry) {
+        if (unhealthyDeps.length) {
+          log(`${name} pending restart — degraded by ${unhealthyDeps.join(', ')}`);
+        }
+      } else if (unhealthyDeps.length > 0) {
+        entry.degradedBy = unhealthyDeps;
+      } else {
+        delete entry.degradedBy;
       }
     }
   }
@@ -586,11 +812,29 @@ async function performHealthCheck(name, def) {
     log(`${name} unhealthy (failure ${s.failures}/${maxFail})`);
     if (s.failures >= maxFail) {
       log(`${name} ${maxFail} consecutive failures — restarting`);
-      // Kill and re-spawn
+      // Kill the actual TCP port owner FIRST, not just our tracked child pid.
+      // A stale instance can hold the port while state[] points at a dead or
+      // different pid (e.g. after a supervisor restart the real owner gets
+      // orphaned from state). Killing only s.child leaves the port taken, so
+      // every fresh spawn dies on EADDRINUSE — the suite-mcp restart loop.
+      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
+      const port = def.tcpPort || tcpPorts[name];
+      if (port) {
+        try {
+          const out = execSync(`netstat -ano | findstr ":${port} " | findstr LISTENING`, { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          const pidMatch = out.match(/(\d+)\s*$/m);
+          if (pidMatch) {
+            const ownerPid = parseInt(pidMatch[1], 10);
+            if (ownerPid && ownerPid !== process.pid && (!s.child || ownerPid !== s.child.pid)) {
+              log(`${name}: killing port ${port} owner pid ${ownerPid}`);
+              killProcess(ownerPid);
+            }
+          }
+        } catch {}
+      }
+      // Also kill our tracked child if it's still alive
       if (s.child) killProcess(s.child.pid);
       // Wait for port to be released before spawning new instance
-      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121 };
-      const port = def.tcpPort || tcpPorts[name];
       if (port) {
         let waited = 0;
         while (waited < 10000) {
@@ -644,7 +888,13 @@ async function daemonLoop() {
   while (!shuttingDown) {
     cycle++;
     log(`=== TICK ${cycle} starting ===`);
-    try { await tick(); } catch (e) { log(`TICK ${cycle} ERROR: ${e.stack || e.message}`); }
+    try {
+      await tick();
+      // Self-prune duplicates each tick so repeated launches can't accumulate
+      // a double-relay / triple-MCP memory leak. Runs after tick so the keeper
+      // selection reflects the freshly-adopted/started processes.
+      try { pruneDuplicateProcesses(); } catch (pe) { log(`self-prune ERROR: ${pe.message}`); }
+    } catch (e) { log(`TICK ${cycle} ERROR: ${e.stack || e.message}`); }
     log(`=== TICK ${cycle} done, sleeping 30s ===`);
     await new Promise((r) => setTimeout(r, 30_000));
   }
@@ -702,6 +952,89 @@ function releaseLock() {
 }
 
 // ── Main ─────────────────────────────────────────────────────────────
+/**
+ * Kill every stale owner of a supervised port at daemon start.
+ *
+ * Windows allows two sockets to bind the same port when SO_REUSEADDR is set,
+ * and netstat then lists both. When this daemon is killed and relaunched, the
+ * `py` launcher it spawned survives as an orphan and keeps the port, so the
+ * freshly started service load-balances against stale code. That is not a
+ * visible failure: requests appear to work, they just answer from the old
+ * build about half the time. It has twice cost an hour of debugging a "fix that
+ * did not take effect".
+ *
+ * Only ports this supervisor owns are touched, and the daemon's own pid is
+ * never a candidate.
+ */
+function sweepStalePortOwners() {
+  // pids of services this supervisor is already tracking, which must survive
+  // the sweep. Read fresh from the state file: a restarted daemon has no
+  // in-memory children yet, but the previous run's pids are still recorded.
+  //
+  // loadState() nests service entries under `.services`. Reading the top level
+  // instead finds nothing, and the sweep then kills every live service — which
+  // it did, taking Postgres with it.
+  const trackedChildPids = new Set();
+  const persisted = loadState() || {};
+  const entries = persisted.services && typeof persisted.services === 'object'
+    ? Object.entries(persisted.services)
+    : [];
+  for (const [, entry] of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    for (const key of ['childPid', 'externalPid', 'pid']) {
+      const pid = Number(entry[key]);
+      if (Number.isInteger(pid) && pid > 0) trackedChildPids.add(pid);
+    }
+  }
+  log(`startup sweep: ${trackedChildPids.size} tracked child pid(s) to preserve`);
+
+  // With no record of what we own, killing listeners is a guess. Refuse rather
+  // than take the whole stack down on a bad state file.
+  if (trackedChildPids.size === 0) {
+    log('startup sweep: no tracked pids found — skipping sweep to avoid killing live services');
+    return;
+  }
+
+  const ports = new Set();
+  for (const def of SERVICE_DEFS) {
+    if (def.tcpPort) ports.add(def.tcpPort);
+  }
+  // Ports the daemon monitors but which are not in SERVICE_DEFS.
+  for (const port of [5432, 54321, 8080, 5173, 3120, 3121, 3080, 5175, 5174, 38401]) {
+    ports.add(port);
+  }
+
+  for (const port of ports) {
+    let out = '';
+    try {
+      out = execSync(`netstat -ano | findstr ":${port} " | findstr LISTENING`, {
+        encoding: 'utf8', timeout: 5000,
+      });
+    } catch { continue; }
+
+    // Every pid, not just the first: with two bound sockets there are two.
+    const pids = new Set();
+    for (const line of out.split(/\r?\n/)) {
+      const m = line.trim().match(/(\d+)\s*$/);
+      if (m) pids.add(parseInt(m[1], 10));
+    }
+    for (const pid of pids) {
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      if (pid === process.pid) continue;
+      // `state` is keyed by service name, not pid, so the tracked children have
+      // to be collected explicitly. Killing one of our own live services here
+      // would be a self-inflicted outage.
+      if (trackedChildPids.has(pid)) continue;
+      try {
+        log(`startup sweep: killing stale pid ${pid} on port ${port}`);
+        killProcess(pid);
+      } catch (e) {
+        log(`startup sweep: could not kill pid ${pid} on port ${port}: ${e.message}`);
+      }
+    }
+  }
+}
+
 async function main() {
   const mode = process.argv.includes('--once') ? 'once'
     : process.argv.includes('--serve') ? 'serve'
@@ -718,6 +1051,13 @@ async function main() {
     const st = loadState();
     console.log(JSON.stringify({ pid: process.pid, supervisor: st._pid, alive: !!st._pid, ...st }, null, 2));
     return;
+  }
+
+  // Clear orphaned listeners before anything adopts or starts a service.
+  if (mode === 'serve') {
+    try { sweepStalePortOwners(); } catch (e) {
+      log(`startup sweep failed: ${e.message}`);
+    }
   }
 
   // For --once mode: skip if a --serve daemon is already running

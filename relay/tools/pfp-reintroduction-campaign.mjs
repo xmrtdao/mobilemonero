@@ -27,12 +27,16 @@ function loadEnv() {
 }
 
 const env = loadEnv();
-const SUPABASE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_KEY = env.RESEND_API_KEY;
-const SB = env.SUPABASE_URL || 'http://127.0.0.1:54321';
 
-if (!SUPABASE_KEY || !RESEND_KEY) {
-  console.error('Missing API keys');
+// Postgres runs directly on 127.0.0.1:5432 (db xmrt_suite). The PostgREST shim
+// on 54321 talks to the same database and is used elsewhere in the relay, but
+// this tool reads through the pool so it can filter on source_code.
+if (env.LOCAL_DATABASE_URL) process.env.LOCAL_DATABASE_URL = env.LOCAL_DATABASE_URL;
+const { getPool } = await import('../jobby/store.mjs');
+
+if (!RESEND_KEY || !env.LOCAL_DATABASE_URL) {
+  console.error('Missing RESEND_API_KEY or LOCAL_DATABASE_URL in .env');
   process.exit(1);
 }
 
@@ -45,6 +49,29 @@ if (existsSync(SENT_LOG)) {
 const sentEmails = new Set(sentLog.map(e => e.email));
 
 const REINTRO_SUBJECT = 'Party Favor Photo — We\'re Better Than Ever';
+// ─────────────────────────────────────────────────────────────────────────────
+// WHO THIS IS FOR
+//
+// VSCO was the previous CMS. `vsco_import` means these people booked us BEFORE,
+// which is what makes "it's been a while" true and the offer fair.
+//
+// DO NOT point this at cold scraped contacts. A person who has never heard of us
+// receiving "we'd love to reconnect with our past clients" and a preferred rate
+// is worse than no email at all. Scraped leads are `scraped_ai` /
+// `scraped_wedding` and are reached by the outbound campaign instead, which
+// already sends six times a day to cold contacts and delivers cleanly.
+//
+// The emoji and em-dashes below are CORRECT and were not touched. Reading this
+// file through PowerShell's Get-Content renders them as "?" and "-", which
+// looks exactly like mojibake and is not. Editing them "to fix the encoding"
+// would have damaged the file. This is the same PowerShell 5.1 UTF-8 mis-decode
+// that has bitten this estate repeatedly: the reader was wrong, not the data.
+//
+// What DID change is the pricing line below. It promised "a preferred pricing
+// rate", which contradicts the pricing rule - default price stands unless the
+// owner directs a discount. The reply path still works; it just no longer
+// advertises a discount nobody has authorised.
+// ─────────────────────────────────────────────────────────────────────────────
 const REINTRO_BODY = `Hi there,
 
 It's been a while! We wanted to reach out and reconnect with our past clients.
@@ -58,7 +85,7 @@ Party Favor Photo is back and better than ever. We've added exciting new AI-powe
 
 Whether you need a photo booth for a wedding, corporate event, school function, or private party — we'd love to help make it special.
 
-As a past client, we'd love to offer you a preferred pricing rate. Just reply to this email to learn more or book.
+Reply to this email and we'll send current pricing and availability for your date.
 
 Let's create something fun together!
 
@@ -68,17 +95,45 @@ Party Favor Photo
 (202) 798-0610
 www.partyfavorphoto.com`;
 
+/**
+ * Past clients we have not re-introduced to yet.
+ *
+ * READ PATH ONLY. The Resend send below is untouched, because that tool has
+ * real send history (50 delivered on 2026-05-22) and a mistake there reaches
+ * clients. This query was migrated off the PostgREST shim to the same direct
+ * pool the rest of the relay uses, for two reasons:
+ *
+ *   1. It can filter on `source_code`, which is how we distinguish backfilled
+ *      VSCO clients from cold scraped contacts. PostgREST cannot express that
+ *      cleanly and the old query fell back to `status IN ('lead','vsco_import')`,
+ *      which mixes categories that must never share an email.
+ *   2. It reads the same database the checkout and webhook code write to, so
+ *      there is no second connection that can be looking at a different state.
+ *
+ * Only `vsco_import` is selected. A `scraped_*` row is someone who has never
+ * heard of us, and telling them "it's been a while, we'd love to reconnect with
+ * our past clients" is the wrong email to that person entirely.
+ */
 async function getUnsentContacts(limit) {
-  // Get leads that haven't been contacted yet - prioritize VSCO imports with past revenue
-  const url = `${SB}/rest/v1/pfp_leads?select=contact_email,contact_name,status,notes&or=(status.eq.lead,status.eq.vsco_import)&order=created_at.asc&limit=${limit * 2}`;
-  const res = await fetch(url, {
-    headers: { Authorization: 'Bearer ' + SUPABASE_KEY, apikey: SUPABASE_KEY }
-  });
-  const data = await res.json();
-  if (!Array.isArray(data)) return [];
-  
-  // Filter out already sent
-  return data.filter(r => !sentEmails.has(r.contact_email) && r.contact_email).slice(0, limit);
+  const pool = await getPool();
+  try {
+    const { rows } = await pool.query(
+      `SELECT contact_email, contact_name, status, notes
+         FROM public.pfp_leads
+        WHERE source_code = 'vsco_import'
+          AND contact_email IS NOT NULL
+          AND contact_email <> ''
+        ORDER BY created_at ASC
+        LIMIT $1`,
+      [limit * 2]
+    );
+    // Filter out already sent, in JS: sentLog is a file, not a table.
+    return rows
+      .filter((r) => !sentEmails.has(r.contact_email))
+      .slice(0, limit);
+  } finally {
+    await pool.end();
+  }
 }
 
 async function sendEmail(to, subject, text) {

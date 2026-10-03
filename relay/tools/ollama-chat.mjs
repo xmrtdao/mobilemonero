@@ -3,26 +3,34 @@
  *
  * Primary:   Ollama Pro Cloud (api.ollama.com/v1/chat/completions) via
  *            OLLAMA_API_KEY or OLLAMA_XMRT_API_KEY or OLLAMA_3RD_API_KEY
- * Fallback:  OpenRouter (openrouter.ai/api/v1/chat/completions) via
- *            OPENROUTER_API_KEY with minimax-m3 model (vision) or
- *            nvidia/nemotron-3.5-lightning:free (text-only, longer rate limits)
+ * Fallback:  OpenRouter free tier. Minimax removed 2026-10-02 - it was pinned
+ *            here as the DEFAULT for any text request that did not name a listed
+ *            model, so ordinary tool-calling chat went to a vision model. It is
+ *            now 404 on OpenRouter's free tier anyway.
  *
  * Cascade order:
- *   1) OpenCode Zen (opencode.ai/zen/v1) via OPENCODE_API_KEY — space-bunny-free.
+ *   1) OpenCode Zen (opencode.ai/zen/v1) via OPENCODE_API_KEY - space-bunny-free.
  *      First tier because the Ollama Cloud and OpenRouter free tiers get
  *      rate-limited together and take the whole fleet offline together; Zen
- *      bills against a separate quota pool.
- *   2) Ollama Pro Cloud — gemma4:31b on each of 3 keys (primary daily driver)
- *   3) Ollama Pro Cloud — gpt-oss:120b, gpt-oss:20b, nemotron-3-nano:30b,
- *      nemotron-3-super, nemotron-3-ultra — each on each of the 3 keys
- *   4) OpenRouter — minimax/minimax-m3:free (vision-only; text goes to nemotron-3.5-lightning)
- *   5) OpenRouter — nvidia/nemotron-3.5-lightning:free (text-only daily driver, longer rate limits)
+ *      bills against a separate quota pool. Also multimodal.
+ *   2) Ollama Pro Cloud - gemma4:31b on each of 3 keys (primary daily driver).
+ *      Also accepts images, so vision no longer needs OpenRouter at all.
+ *   3) Ollama Pro Cloud - gpt-oss:120b, gpt-oss:20b, nemotron-3-nano:30b,
+ *      nemotron-3-super, nemotron-3-ultra - each on each of the 3 keys
+ *   4) OpenRouter free tier - nemotron-3-ultra-550b-a55b:free first, tool
+ *      calling verified 2026-10-02, then qwen3.8-27b, laguna-s-2.1,
+ *      north-mini-code, nemotron-3.5-lightning
+ *
+ * Tracks which agent/source made each request for token-usage logging.
  *
  * Tracks which agent/source made each request for token-usage logging.
  */
 
 const OLLAMA_HOST       = process.env.OLLAMA_HOST       || 'http://localhost:11434';
-const DEFAULT_MODEL     = process.env.OLLAMA_MODEL       || 'minimax/minimax-m3:free';
+// Was 'minimax/minimax-m3:free' - a model that no longer exists on OpenRouter's
+// free tier. Anything reaching this without OLLAMA_MODEL set would have asked
+// for a model that 404s. Falls back to a probed, live free model.
+const DEFAULT_MODEL     = process.env.OLLAMA_MODEL       || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 // All API keys are read lazily to avoid a module-load-order bug:
 // server.js imports ollama-chat.mjs BEFORE calling loadEnv(), so env
 // vars set in relay/.env are not yet available at import time.
@@ -241,23 +249,45 @@ function imagesToOpenAI(messages) {
     };
   });
 }
-async function tryOpenRouter(messages, signal, requestedModel = 'minimax/minimax-m3:free') {
+async function tryOpenRouter(messages, signal, requestedModel = null) {
   const key = getOpenRouterKey();
   if (!key) throw new Error('No OPENROUTER_API_KEY configured');
-  // Vision-capable on OpenRouter: minimax/minimax-m3 supports text+image+video→text.
-  // Text-only: same model — tool-calling support is the priority over cheap/fast.
+
+  // MINIMAX REMOVED, and the vision-specific routing went with it.
+  //
+  // It was pinned here two ways: explicitly for images, and - worse - as
+  // FREE_TIER_MODELS[0], which is what ANY text request fell back to when it did
+  // not name a listed model. So ordinary chat with tool definitions was being
+  // sent to a vision-tuned model, which is the most likely reason `}<]minimax[>[
+  // <tool_call>` reached fleet chat on 2026-10-02 20:22 as message text instead
+  // of a tool call.
+  //
+  // Removing it also cost nothing: probed 2026-10-02, every entry in the old
+  // list is gone or restricted.
+  //     minimax/minimax-m3:free             404 unavailable for free
+  //     thinkingmachines/inkling:free        403 agentic harnesses only
+  //     nvidia/nemotron-3.5-lightning:free   no response
+  //     nex-n2.5-pro:free                    404 no endpoints found
+  //
+  // Vision no longer needs OpenRouter. Tier 1 (Zen, space-bunny-free) is
+  // multimodal, and tier 2 (gemma4:31b) accepts images - so images go down the
+  // same path as text instead of being diverted to a provider that serves them
+  // worse and mangles the reply.
+  //
+  // The list below is what OpenRouter's own /models reported as `:free` on
+  // 2026-10-02, most reliable first. `nonexistent` marks an entry that answered
+  // :free at probe time and is kept only in case it returns.
   const FREE_TIER_MODELS = [
-    'minimax/minimax-m3:free',     // tier 1: vision + tool-calling
-    'thinkingmachines/inkling:free',  // tier 2: confirmed working 2026-09-20 (agent identity/self-ID provider)
-    'nvidia/nemotron-3.5-lightning:free', // tier 3: text-only, long rate limits
-    'nex-n2.5-pro:free',           // tier 4: newest 2026-09-19 fallback (new model)
+    'nvidia/nemotron-3-ultra-550b-a55b:free',  // confirmed live, 1M ctx
+    'qwen/qwen3.8-27b:free',                   // 262k ctx, 429s transiently
+    'poolside/laguna-s-2.1:free',              // 262k ctx
+    'cohere/north-mini-code:free',             // 256k ctx
+    'nvidia/nemotron-3.5-lightning:free',       // was 404 at probe; keep as fallback
   ];
-  const hasImages = messages.some(m => m.images && m.images.length > 0);
-  // Vision: pin minimax (only vision-capable in free tier). Text: cycle through
-  // FREE_TIER_MODELS, preferring the requested model when it matches, else tier 1.
-  const model = hasImages ? 'minimax/minimax-m3:free'
-    : (requestedModel && FREE_TIER_MODELS.includes(requestedModel)
-        ? requestedModel : FREE_TIER_MODELS[0]);
+  // No image branch. Zen and gemma4 both take images, and a vision model being
+  // handed a tool-calling text request is what produced the markup leak.
+  const model = (requestedModel && FREE_TIER_MODELS.includes(requestedModel))
+    ? requestedModel : FREE_TIER_MODELS[0];
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -543,15 +573,19 @@ export async function ollamaGenerate(prompt, options = {}) {
     }
   }
 
-  // ── 3) Fallback: OpenRouter (minimax/minimax-m3:free, supports tools) ──
+  // ── 3) Fallback: OpenRouter (nemotron-3-ultra-550b-a55b:free, tool-calling verified) ──
+  //   Was pinned to minimax/minimax-m3:free here as well, which is 404 on
+  //   OpenRouter's free tier as of 2026-10-02 - so this fallback was guaranteed
+  //   to fail every time it was reached. Probed replacement emits real
+  //   tool_calls with a tools array supplied.
   if (!result && getOpenRouterKey()) {
     try {
       const messages = [
         { role: 'system', content: 'You are an AI agent. Be concise, helpful, and do not use emoji sign-offs.' },
         { role: 'user', content: prompt },
       ];
-      const data = await tryOpenRouter(messages, controller.signal, 'minimax/minimax-m3:free');
-      result = normalizeResponse(data, 'minimax/minimax-m3:free', 'openrouter');
+      const data = await tryOpenRouter(messages, controller.signal, 'nvidia/nemotron-3-ultra-550b-a55b:free');
+      result = normalizeResponse(data, 'nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter');
     } catch (err) {
       errors.push(`OpenRouter: ${err.message}`);
     }

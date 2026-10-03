@@ -19,16 +19,56 @@
 
 import { Router } from 'express';
 import { spawn } from 'child_process';
-import { existsSync, readdirSync, statSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, statSync, writeFileSync, unlinkSync, readFileSync, mkdirSync, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 
 let _funcCache = null;
 
+// Connection-scoped headers that must not be forwarded to the upstream Deno
+// process. undici's fetch throws UND_ERR_NOT_SUPPORTED on several of these
+// (notably `expect`), so leaving them in turns any client that sends them into
+// a 502 "fetch failed".
+const HOP_BY_HOP_HEADERS = new Set([
+  'expect',
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
 // ── Persistent Deno process pool ──────────────────────────────
 // Each function gets one long-lived Deno process on a fixed port.
 // The process is started on first request and kept alive for reuse.
 const denoPool = new Map(); // name -> { proc, port, startTime, lastUsed }
+
+// ── Per-function startup mutex ────────────────────────────────
+// Concurrent requests for the same function all see the pooled process as
+// "not healthy yet" during startup and each try to kill+respawn on the same
+// fixed port → port-conflict churn, "pooled process dead, restarting" spam,
+// timeouts, and memory drain (the dashboard crash trigger). This map holds an
+// in-flight startup promise per function so only ONE process is ever spawned
+// for a given function at a time; the rest await the same promise.
+const functionStarting = new Map(); // name -> Promise<entry>
+
+// Wrap the actual spawn (ensureFunctionProcess body) with a per-function mutex.
+// Returns the shared pool entry for concurrent callers.
+async function ensureFunctionProcessMutex(name, funcFile, functionsDir, denoPath) {
+  const inFlight = functionStarting.get(name);
+  if (inFlight) {
+    // A startup is already in progress for this function — wait for it.
+    try { return await inFlight; } catch { /* failed spawn; fall through to retry */ }
+  }
+  const p = ensureFunctionProcess(name, funcFile, functionsDir, denoPath)
+    .finally(() => { functionStarting.delete(name); });
+  functionStarting.set(name, p);
+  return await p;
+}
+
 
 // ── Idle process reaper ──────────────────────────────────────
 // Kill pooled Deno processes that haven't been called in IDLE_TIMEOUT_MS.
@@ -86,6 +126,8 @@ function discoverFunctions(dir) {
     if (!statSync(p).isDirectory()) continue;
     if (existsSync(join(p, 'index.ts'))) out[name] = join(p, 'index.ts');
     else if (existsSync(join(p, 'index.js'))) out[name] = join(p, 'index.js');
+    else if (existsSync(join(p, 'mod.ts'))) out[name] = join(p, 'mod.ts');
+    else if (existsSync(join(p, 'mod.js'))) out[name] = join(p, 'mod.js');
   }
   return out;
 }
@@ -224,40 +266,124 @@ if (typeof handler !== "function") {
 }
 const port = ${port};
 console.log("shim: serving ${name} on port " + port);
-Deno.serve({ port }, handler);
+// Intercept the pool's health probe (/_health) and answer immediately with an
+// empty 200 — WITHOUT invoking the function handler. The local-sb pool calls
+// GET /_health to decide if a pooled process is alive; heavy functions like
+// ai-chat treat it as a real request and run DB queries that hang under load,
+// so the pool falsely declares them dead, SIGTERM-kills them, and respawns on
+// the same port -> the "0ms startup" + "pooled process dead, restarting"
+// crash loop. Short-circuiting here stops the kill-loop for ALL functions.
+const wrapped = (req) => {
+  try {
+    if (req && req.method === 'GET') {
+      const u = new URL(req.url);
+      if (u.pathname === '/_health' || u.pathname === '/_ping') {
+        return new Response('{"status":"ok"}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+  } catch {}
+  return handler(req);
+};
+Deno.serve({ port }, wrapped);
 `;
   writeFileSync(shimPath, shim, 'utf8');
 
   const localSupabaseUrl = `http://127.0.0.1:${process.env.LOCAL_SUPABASE_PORT || 54321}`;
-  // Use real service role key from env, fall back to placeholder
-  const localServiceKey = process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY
-    || process.env.SUPABASE_SERVICE_ROLE_KEY
-    || 'eyJhbG...MMpM';
-  const proc = spawn(denoPath, [
-    'run',
-    '--no-config',
-    '--no-check',
-    '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-run', '--allow-sys',
-    '--allow-import',
-    shimPath,
-  ], {
-    cwd: funcDir,
-    env: {
-      ...process.env,
-      DENO_DIR: join(functionsDir, '..', '.deno_cache'),
-      SUPABASE_URL: localSupabaseUrl,
-      NEXT_PUBLIC_SUPABASE_URL: localSupabaseUrl,
-      SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'local-anon-key',
-      SUPABASE_SERVICE_ROLE_KEY: localServiceKey,
-      SUPABASE_DB_URL: process.env.LOCAL_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/xmrt_suite',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+    // Use real service role key from env, fall back to placeholder
+    const localServiceKey = process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY
+      || process.env.SUPABASE_SERVICE_ROLE_KEY
+      || 'eyJhbG...MMpM';
+    const proc = spawn(denoPath, [
+      'run',
+      '--no-config',
+      '--no-check',
+      '--allow-net', '--allow-read', '--allow-write', '--allow-env', '--allow-run', '--allow-sys',
+      '--allow-import',
+      shimPath,
+    ], {
+      cwd: funcDir,
+      env: {
+        ...process.env,
+        DENO_DIR: join(functionsDir, '..', '.deno_cache'),
+        SUPABASE_URL: localSupabaseUrl,
+        NEXT_PUBLIC_SUPABASE_URL: localSupabaseUrl,
+        SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'local-anon-key',
+        SUPABASE_SERVICE_ROLE_KEY: localServiceKey,
+        SUPABASE_DB_URL: process.env.LOCAL_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/xmrt_suite',
+        // Pass Ollama API keys to edge functions
+        OLLAMA_API_KEY: process.env.OLLAMA_API_KEY || '',
+        OLLAMA_XMRT_API_KEY: process.env.OLLAMA_XMRT_API_KEY || '',
+        OLLAMA_3RD_API_KEY: process.env.OLLAMA_3RD_API_KEY || '',
+        OLLAMA_HERMES_API_KEY: process.env.OLLAMA_HERMES_API_KEY || '',
+        OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+        // OpenCode Zen — tier 1 of the edge-function AI cascade
+        OPENCODE_API_KEY: process.env.OPENCODE_API_KEY || '',
+        OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/v1',
+        DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+        OLLAMA_MODEL: process.env.OLLAMA_MODEL || 'minimax/minimax-m3:free',
+        OLLAMA_LOCAL_MODEL: process.env.OLLAMA_LOCAL_MODEL || 'gemma3:1b',
+        LOCAL_OLLAMA_ONLY: process.env.LOCAL_OLLAMA_ONLY || '',
+        AI_CHAT_DEBUG_LOG: process.env.AI_CHAT_DEBUG_LOG || '',
+        RELAY_BASE_URL: process.env.RELAY_BASE_URL || 'http://127.0.0.1:8080',
+        SUPABASE_LOCAL_URL: localSupabaseUrl,
+        SUPABASE_LOCAL_ANON: process.env.SUPABASE_ANON_KEY || 'local-anon-key',
+        PARAGRAPH_API_KEY: process.env.PARAGRAPH_API_KEY || '',
+        PARAGRAPH_PUBLICATION: process.env.PARAGRAPH_PUBLICATION || '',
+        PARAGRAPH_COIN_SYMBOL: process.env.PARAGRAPH_COIN_SYMBOL || '',
+        PARAGRAPH_DEFAULT_AUTHOR: process.env.PARAGRAPH_DEFAULT_AUTHOR || '',
+        PARAGRAPH_PUBLICATION_HANDLE: process.env.PARAGRAPH_PUBLICATION_HANDLE || '',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
 
   let stderrBuf = '';
   proc.stderr.on('data', (d) => { stderrBuf += d.toString(); });
-  proc.stdout.on('data', () => {});
+  // Deno stdout used to be discarded entirely, which made edge-function
+  // internals (ai-chat's provider routing, tool counts, iteration counts)
+  // completely invisible. ai-chat takes 90s+ per request, and the only way to
+  // find out WHY was to add ad-hoc DB writes. Tee the child's stdout to a
+  // per-function log file, with a size cap so it can't grow unbounded.
+  // functionsDir is <repo>/suite/supabase/functions, so the repo root is three
+  // levels up. Keep these next to relay.log / local-sb.log rather than in
+  // suite/logs, which is the DB manager's own log directory.
+  const fnLogPath = join(functionsDir, '..', '..', '..', 'logs', `function-${name}.log`);
+  let fnLogStream = null;
+  try {
+    mkdirSync(dirname(fnLogPath), { recursive: true });
+    // Rotate at 5 MB so a chatty function can't fill the disk.
+    try {
+      if (existsSync(fnLogPath) && statSync(fnLogPath).size > 5 * 1024 * 1024) {
+        writeFileSync(fnLogPath, '');
+      }
+    } catch {}
+    fnLogStream = createWriteStream(fnLogPath, { flags: 'a' });
+  } catch {
+    fnLogStream = null; // Logging is best-effort; never block a spawn on it.
+  }
+  if (fnLogStream) {
+    proc.stdout.on('data', (d) => {
+      try { fnLogStream.write(d); } catch {}
+    });
+  } else {
+    proc.stdout.on('data', () => {});
+  }
+  // Log WHY a pooled process died (health-check kills or crashes). Without
+  // this, a process that starts OK then dies under load leaves no trace —
+  // the dashboard crash signature ("0ms startup" + "proxy error: fetch
+  // failed") was impossible to root-cause before this.
+  proc.on('exit', (code, signal) => {
+    console.log(`[functions] ${name}: pooled process EXITED code=${code} signal=${signal}`);
+    if (fnLogStream) { try { fnLogStream.end(); } catch {} }
+    if (stderrBuf.trim()) {
+      console.log(`[functions] ${name} STDERR (last 1200):\n${stderrBuf.slice(-1200)}`);
+    }
+  });
 
   const ready = await waitForPort(port, 60000);
   if (!ready) {
@@ -300,9 +426,11 @@ async function handleFunctionCall(req, res, { functionsDir, denoPath }) {
   }
 
   // Get or start the persistent Deno process
+  // Use the per-function mutex so concurrent requests don't each spawn a
+  // duplicate Deno process on the same fixed port (the crash trigger).
   let poolEntry;
   try {
-    poolEntry = await ensureFunctionProcess(name, funcFile, functionsDir, denoPath);
+    poolEntry = await ensureFunctionProcessMutex(name, funcFile, functionsDir, denoPath);
   } catch (e) {
     console.error(`[functions] ${name}: ${e.message}`);
     return res.status(502).json({ error: 'function_start_failed', details: e.message });
@@ -315,6 +443,16 @@ async function handleFunctionCall(req, res, { functionsDir, denoPath }) {
   const headers = { ...req.headers };
   delete headers.host;
   delete headers['content-length'];
+  // Strip hop-by-hop and framing headers. undici's fetch REJECTS several of
+  // these outright rather than ignoring them: an inbound `Expect: 100-continue`
+  // made every edge function fail with "UND_ERR_NOT_SUPPORTED: expect header
+  // not supported", which surfaced as an opaque 502 "fetch failed" for all of
+  // ai-chat, paragraph-publisher, xmrt-university, etc. Only delete host and
+  // content-length was ever handled, so the rest were passed straight through.
+  for (const h of Object.keys(headers)) {
+    const lh = h.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lh) || lh.startsWith('proxy-')) delete headers[h];
+  }
 
   try {
     const upstream = await fetch(targetUrl, {
@@ -338,8 +476,15 @@ async function handleFunctionCall(req, res, { functionsDir, denoPath }) {
     res.end(buf);
   } catch (e) {
     console.error(`[functions] ${name} proxy error:`, e.message);
+    // undici puts the real transport-level reason in `cause` (ECONNREFUSED,
+    // ECONNRESET, UND_ERR_SOCKET, invalid header value, ...). Without it every
+    // failure collapses to the same useless "fetch failed" string.
+    if (e.cause) {
+      console.error(`[functions] ${name} proxy cause:`, e.cause.code || '', e.cause.message || e.cause);
+    }
+    console.error(`[functions] ${name} proxy target:`, targetUrl);
     console.error(e.stack);
-    try { res.status(502).json({ error: 'function_proxy_failed', details: e.message }); }
+    try { res.status(502).json({ error: 'function_proxy_failed', details: e.message, cause: e.cause?.code || e.cause?.message || null }); }
     catch { /* already sent */ }
   }
 }
