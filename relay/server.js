@@ -6748,9 +6748,50 @@ app.get('/', (req, res) => {
     .sec-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
     @media (min-width: 480px) { .sec-grid { grid-template-columns: 1fr 1fr; } }
   
-    canvas#mesh-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+    /* The mesh canvas is the BACKGROUND, so it gets a negative z-index rather than
+       being kept underneath by a whitelist.
+
+       It used to be z-index:0 with body at z-index:0, which meant every piece
+       of content had to be explicitly listed at z-index:10 to paint above it.
+       That is a whitelist that has to be maintained forever, and it had already
+       drifted: .status-strip was missed, so the canvas painted over it. Because
+       the canvas is drawn progressively - filled opaque first, mesh lines after
+       - the region looked right for a moment after load and then went black,
+       while the mesh animation stayed visible on top of the black. That reads
+       as "the card disappeared" rather than "something is painted over it".
+
+       At z-index:-1 the canvas sits behind ALL in-flow content automatically,
+       because body establishes the stacking context. New tiles cannot be missed
+       because there is no list to add them to.
+
+       body { position: relative; z-index: 0 } below is what makes this work: it
+       creates the stacking context that -1 is relative to. */
+    canvas#mesh-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
     body { position: relative; z-index: 0; }
-    .grid, h1, .subtitle, .table-wrap, .footer, .controls { position: relative; z-index: 10; }
+    /* Everything that must sit ABOVE the fixed mesh canvas.
+       This is an explicit whitelist, not a rule of thumb, and that is the
+       whole bug: canvas#mesh-bg is position:fixed with z-index:0, so any
+       in-flow content that is not listed here paints BELOW it. A positioned
+       element with z-index:0 paints above non-positioned content in the same
+       stacking context.
+
+       .status-strip and the Edge Functions link line were missing, so the mesh
+       canvas drew over them. Because the canvas is painted progressively by
+       JS, the region looked correct for a moment after load and then went
+       black - which read as "the tile disappeared" rather than "something is
+       painted on top of it".
+
+       Anything added to the top level of <body> must be added here too. */
+    .grid, h1, .subtitle, .table-wrap, .footer, .controls,
+    .status-strip, .archive, .status-strip ~ div { position: relative; z-index: 10; }
+
+    /* Kept even though the canvas is now at z-index:-1 and none of this is
+       strictly required. It costs nothing, it keeps the existing tooltips and
+       overlays explicitly above content, and it means a future change to the
+       canvas cannot silently reintroduce the same class of bug. Every direct
+       child of <body> is listed, including .status-strip and .archive, which
+       is what the whitelist got wrong before. */
+    body > *:not(.scanline):not(canvas#mesh-bg):not(script) { position: relative; z-index: 10; }
 
     /* ── Lumen Component Enhancements ── */
     /* Typography */
