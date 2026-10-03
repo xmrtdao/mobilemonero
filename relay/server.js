@@ -6687,6 +6687,22 @@ app.get('/', (req, res) => {
        minmax(Npx, 1fr)) can, with no query at all: it fits as many Npx columns
        as the parent can actually hold. min-width:0 on the children stops a
        wide child re-inflating its own track. */
+    /* Containment for content that is intrinsically wider than its column.
+
+       Measured at an 800px viewport: three 170px inbox columns (EXECUTION,
+       REVIEW, COMPLETION - built in dashboard.js) reaching x=924, 1100 and
+       1276, and the Edge Functions table at 883px reaching x=925. All four
+       stick out past the viewport, and because they are painted in document
+       order they cover whatever sits beside them - which is how a neighbour
+       ends up looking like it vanished when it is really underneath.
+
+       overflow-x:auto makes the overflow scroll INSIDE its own box instead of
+       escaping, so it can no longer paint over a sibling tile. */
+    .intel-split, .intel-left, .intel-split > div,
+    .quarterdeck-mid > *, .quarterdeck-bottom > * { overflow: hidden; }
+    #fn-catalog table { display: block; overflow-x: auto; max-width: 100%; }
+    #fn-catalog .card { overflow: hidden; }
+
     /* Campus Intelligence splits by CONTENT rather than by count: XMRT University
        and GitHub Activity are short fixed-height readouts and stack in the left
        column, Incoming Mail is a long scrolling list and gets the right column
