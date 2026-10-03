@@ -6454,7 +6454,12 @@ app.get('/', (req, res) => {
     /* Floor raised from 0.65rem. 0.65rem is 10.4px, which is below the point
        where a dense ops table stops being readable, and it applied to every
        label and value in the UI. 0.75rem = 12px. */
-    .stat { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.75rem; gap: 0.4rem; overflow: hidden; line-height: 1.45; }
+    /* flex-wrap so that when a label and its value cannot share a line the VALUE
+       drops to its own line, rather than the label being crushed into a
+       one-character-per-line column. Pairs with overflow-wrap:normal on
+       .label: labels break at spaces, and whole words are never split.
+       Without both, "Last Commit" rendered as "Last / Commi / t". */
+    .stat { display: flex; flex-wrap: wrap; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.75rem; gap: 0.4rem; line-height: 1.45; }
     @media (min-width: 640px) { .stat { padding: 0.32rem 0; font-size: 0.9rem; gap: 0.6rem; } }
     .stat:last-child { border-bottom: none; }
     /* 'white-space: nowrap' + 'flex-shrink: 0' together meant a label could never
@@ -6464,7 +6469,7 @@ app.get('/', (req, res) => {
        content in a 360px viewport. Labels now wrap, and are allowed to shrink;
        min-width:0 lets them do it inside a flex row. Wrapping is preferred to
        ellipsis here because a truncated label hides which metric it names. */
-    .label { color: var(--text-muted); flex-shrink: 1; min-width: 0; overflow-wrap: break-word; }
+    .label { color: var(--text-muted); flex-shrink: 1; min-width: 0; overflow-wrap: normal; }
     /* Tabular figures so columns of numbers align vertically down a dense panel.
        Without it, Inter's proportional digits make a wall of pids and scores
        shimmer as values change. */
@@ -6682,6 +6687,15 @@ app.get('/', (req, res) => {
        minmax(Npx, 1fr)) can, with no query at all: it fits as many Npx columns
        as the parent can actually hold. min-width:0 on the children stops a
        wide child re-inflating its own track. */
+    /* Campus Intelligence splits by CONTENT rather than by count: XMRT University
+       and GitHub Activity are short fixed-height readouts and stack in the left
+       column, Incoming Mail is a long scrolling list and gets the right column
+       to itself. Laid out as three equal columns the tile was one tall narrow
+       stack with dead space beside a very tall mail list. */
+    .intel-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px; align-items: start; }
+    .intel-split > * { min-width: 0; }
+    .intel-left { display: grid; grid-template-rows: auto auto; gap: 8px; align-content: start; min-width: 0; }
+
     .subgrid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
     .subgrid-3 > * { min-width: 0; }
     .subgrid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
@@ -7233,39 +7247,48 @@ app.get('/', (req, res) => {
     📡 Campus Intelligence
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
   </h3>
-  <div class="subgrid-3">
+  <!-- Two columns by CONTENT, not by count. XMRT University and GitHub
+       Activity are short fixed-height readouts; Incoming Mail is a long
+       scrolling list. Laid out as three equal columns the two short panels
+       left a tall column of dead space beside a very tall mail list, and the
+       whole tile became one narrow stack. So: the two short panels stack in
+       the left column, the mail list gets the right column to itself.
+       auto-fit means this still collapses to one column on a phone. -->
+  <div class="intel-split">
+    <div class="intel-left">
     <!-- 🎓 XMRT University -->
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:var(--accent-purple);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
+      <div style="font-size:0.75rem;color:var(--accent-purple);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-family:var(--font-display);font-weight:600;">🎓 XMRT University</div>
       <div id="university-status">
         <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#948d9e;">checking...</span></div>
       </div>
       <div id="university-detail">
         <div class="stat"><span class="label">Progress</span><span class="value" id="uni-progress">-</span></div>
-        <div class="stat"><span class="label">Cert ID</span><span class="value" id="uni-cert" style="font-size:0.65rem;">-</span></div>
+        <div class="stat"><span class="label">Cert ID</span><span class="value" id="uni-cert" style="font-size:0.75rem;">-</span></div>
         <div class="stat"><span class="label">Tier</span><span class="value" id="uni-tier">-</span></div>
-        <div class="stat"><span class="label">Perms</span><span class="value" id="uni-perms" style="font-size:0.65rem;">-</span></div>
+        <div class="stat"><span class="label">Perms</span><span class="value" id="uni-perms" style="font-size:0.75rem;">-</span></div>
       </div>
-      <div style="margin-top:4px;font-size:0.65rem;color:#948d9e;">
+      <div style="margin-top:4px;font-size:0.75rem;color:#948d9e;">
         <div>New agents must graduate from XMRT University to join the fleet.</div>
         <div style="margin-top:2px;">
-          <span style="color:#a78bfa;">POST</span> <code style="color:#60a5fa;font-size:0.6rem;">/functions/v1/xmrt-university</code>
+          <span style="color:#a78bfa;">POST</span> <code style="color:#60a5fa;font-size:0.7rem;">/functions/v1/xmrt-university</code>
         </div>
-      </div>
-    </div>
-    <!-- 📬 Incoming Mail -->
-    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📬 Incoming Mail</div>
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        ${resendTileHtml()}
       </div>
     </div>
     <!-- 🐙 GitHub Activity -->
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
-      <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
+      <div style="font-size:0.75rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-family:var(--font-display);font-weight:600;">🐙 GitHub Activity</div>
       <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
-      <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
-      <div style="margin-top:4px;font-size:0.65rem;color:#948d9e;" id="gh-recent-commits"></div>
+      <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.75rem;">-</span></div>
+      <div style="margin-top:4px;font-size:0.75rem;color:#948d9e;" id="gh-recent-commits"></div>
+    </div>
+    </div>
+    <!-- 📬 Incoming Mail — right column, to itself -->
+    <div style="background:#0d0d15;border-radius:6px;padding:8px;">
+      <div style="font-size:0.75rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-family:var(--font-display);font-weight:600;">📬 Incoming Mail</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${resendTileHtml()}
+      </div>
     </div>
   </div>
 </div>
