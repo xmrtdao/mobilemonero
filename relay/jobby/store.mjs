@@ -49,6 +49,472 @@ export async function getOrCreateClient(sessionKey, displayName = null) {
   return rows[0];
 }
 
+/**
+ * Record that `sessionKey` was seen from `ip`, and pin that IP to the client.
+ *
+ * IP is kept in two places on purpose: `first_ip`/`last_ip` on the client row so
+ * a person can be recognised at a glance, and one row per session in
+ * `job_client_sessions` so "this account has been used from four addresses" is a
+ * question that can be answered rather than guessed at.
+ *
+ * `ip` is normalised before it is stored. An IPv4 address arriving through an
+ * IPv6 socket shows up as ::ffff:203.0.113.9, and storing the two forms as
+ * different values would make one visitor look like two.
+ */
+export async function recordSession(clientId, { sessionKey, ip = null, userAgent = null } = {}) {
+  const p = await db();
+  const norm = normaliseIp(ip);
+  await p.query(
+    `UPDATE app.job_clients
+        SET last_ip = COALESCE($2::inet, last_ip),
+            first_ip = COALESCE(first_ip, $2::inet),
+            updated_at = now()
+      WHERE id = $1`,
+    [clientId, norm]
+  );
+  if (sessionKey) {
+    await p.query(
+      `INSERT INTO app.job_client_sessions (client_id, session_key, ip, user_agent)
+       VALUES ($1, $2, $3::inet, $4)
+       ON CONFLICT DO NOTHING`,
+      [clientId, sessionKey, norm, userAgent]
+    );
+    await p.query(
+      `UPDATE app.job_client_sessions
+          SET last_seen = now(), ip = COALESCE($3::inet, ip), user_agent = COALESCE($4, user_agent)
+        WHERE client_id = $1 AND session_key = $2`,
+      [clientId, sessionKey, norm, userAgent]
+    );
+  }
+  return getClient(clientId);
+}
+
+/** Strip a port, an IPv4-mapped IPv6 prefix, and surrounding whitespace. */
+function normaliseIp(ip) {
+  if (!ip || typeof ip !== 'string') return null;
+  let v = ip.trim();
+  if (!v) return null;
+  if (v.startsWith('::ffff:')) v = v.slice(7);
+  // "[::1]:443" and "203.0.113.9:51234" -> the address alone
+  const bracketed = v.match(/^\[(.+)\](?::\d+)?$/);
+  if (bracketed) v = bracketed[1];
+  else if ((v.match(/:/g) || []).length === 1) v = v.split(':')[0];
+  return /^[0-9.]+$/.test(v) || v.includes(':') ? v : null;
+}
+
+export { normaliseIp };
+
+/**
+ * Find clients that are probably the same person as the one described by
+ * `probe`, ranked by how strong the evidence is.
+ *
+ * WHY THIS DOES NOT MERGE ANYTHING
+ * ---------------------------------
+ * An IP address is the weakest possible identity signal. Two candidates looking
+ * for work from the same office, the same university library, or the same phone
+ * hotspot share one address, and merging them would union two people's
+ * employment history into one record - inventing a tenure that neither of them
+ * worked. That is the same failure mode as unioning two documents that disagree.
+ *
+ * So this function only ever *reports* candidates. The caller decides, and a
+ * caller that wants an automatic answer must use a signal that identifies a
+ * person: the session cookie, a claimed address, or a phone number.
+ *
+ * Signals, strongest first:
+ *   claimed_address  - the address was proved by reading a code out of an inbox
+ *   phone            - stated by the candidate
+ *   name_and_ip      - same name from the same address: suggestive, never proof
+ *   ip_only          - reported as context; must not be used to merge
+ */
+export async function findIdentityCandidates({ claimedEmail, phone, name, ip, excludeClientId } = {}) {
+  const p = await db();
+  const norm = normaliseIp(ip);
+  const found = [];
+  const seen = new Set();
+  const push = (row, reason, strength) => {
+    if (!row || seen.has(row.id) || row.id === excludeClientId) return;
+    seen.add(row.id);
+    found.push({ ...row, reason, strength });
+  };
+
+  if (claimedEmail) {
+    const r = await p.query(
+      `SELECT id, display_name, email, claimed_email, phone, last_ip, mailbox
+         FROM app.job_clients WHERE lower(claimed_email) = lower($1) LIMIT 5`,
+      [claimedEmail]
+    );
+    r.rows.forEach((x) => push(x, 'claimed_address', 'strong'));
+  }
+  if (phone) {
+    const r = await p.query(
+      `SELECT id, display_name, email, claimed_email, phone, last_ip, mailbox
+         FROM app.job_clients WHERE phone = $1 LIMIT 5`,
+      [phone]
+    );
+    r.rows.forEach((x) => push(x, 'phone', 'strong'));
+  }
+  if (name && norm) {
+    const r = await p.query(
+      `SELECT id, display_name, email, claimed_email, phone, last_ip, mailbox
+         FROM app.job_clients
+        WHERE lower(display_name) = lower($1) AND last_ip = $2::inet LIMIT 5`,
+      [name, norm]
+    );
+    r.rows.forEach((x) => push(x, 'name_and_ip', 'suggestive'));
+  }
+  if (norm) {
+    const r = await p.query(
+      `SELECT id, display_name, email, claimed_email, phone, last_ip, mailbox
+         FROM app.job_clients WHERE last_ip = $1::inet
+        ORDER BY updated_at DESC LIMIT 10`,
+      [norm]
+    );
+    r.rows.forEach((x) => push(x, 'ip_only', 'context_only'));
+  }
+  return found.sort((a, b) => rank(b.strength) - rank(a.strength));
+}
+
+function rank(strength) {
+  return { strong: 3, suggestive: 2, context_only: 1 }[strength] || 0;
+}
+
+/** Every address this client has ever sent from, and whether one is still live. */
+export async function listMailboxes(clientId) {
+  const p = await db();
+  const { rows } = await p.query(
+    `SELECT id, address, is_active, reason, assigned_at, released_at
+       FROM app.job_client_mailboxes WHERE client_id = $1 ORDER BY id`,
+    [clientId]
+  );
+  return rows;
+}
+
+/**
+ * The one address this candidate may send from.
+ *
+ * The rule the product needs is "one person, one jobbymcjobberson.com account",
+ * and that has to hold across renames too - a candidate who corrects their name
+ * must not end up with two live addresses, because either could then receive a
+ * reply and there is no way to tell which conversation it belongs to.
+ *
+ * Returns an existing live address rather than minting a new one, so a repeat
+ * call is idempotent instead of accumulating `name2@`, `name3@`, ...
+ */
+export async function primaryMailbox(clientId) {
+  const all = await listMailboxes(clientId);
+  const live = all.filter((m) => m.is_active);
+  if (live.length > 1) {
+    throw new Error(
+      `client ${clientId} has ${live.length} live mailboxes (${live.map((m) => m.address).join(', ')}). ` +
+      `Exactly one is allowed - release the others before sending.`
+    );
+  }
+  return live[0] || all[all.length - 1] || null;
+}
+
+/**
+ * What to call this candidate, and which record it was read from.
+ *
+ * There are two places a candidate's name lives: `job_clients.display_name`,
+ * written once at onboarding, and `dossier.name`, which the candidate and Jobby
+ * both edit afterwards. The dossier wins, because it is the record the candidate
+ * is looking at when they correct a mistake and the one the agent is told to
+ * change.
+ *
+ * The reason this is a function rather than a `COALESCE` at each call site is
+ * that the call sites disagreed. `persona.mjs` read dossier-first, `server.js`
+ * read client-only, and `reconcile.mjs` read client-first. So a candidate could be
+ * "Joe Lee" in the agent's own system prompt and "Jordan Ellis" on the page
+ * naming them, at the same moment, with nothing broken anywhere — which is the
+ * hardest kind of bug to report because both halves look correct.
+ *
+ * `job_clients.display_name` is kept in step by `setDisplayName` rather than being
+ * read as an authority, so the two cannot drift again. It is still written because
+ * the mailbox is derived from it and a mailbox cannot be renamed after mail has
+ * gone out from it.
+ *
+ * Returns the name and where it came from, because the page says so: a candidate
+ * who edits the dossier and watches the card not move needs to be told which
+ * record won, not left to infer it.
+ */
+export function effectiveName(client, dossier) {
+  const fromDossier = typeof dossier?.name === 'string' ? dossier.name.trim() : '';
+  if (fromDossier) return { value: fromDossier, source: 'dossier' };
+  const fromClient = typeof client?.display_name === 'string' ? client.display_name.trim() : '';
+  if (fromClient) return { value: fromClient, source: 'client' };
+  return { value: null, source: 'not_stated' };
+}
+
+/**
+ * The candidate's own contact details, from one record.
+ *
+ * Same split as the name, and it was the same bug: a resume carries a phone and a
+ * location, they land in the dossier, and the mission card reads columns that
+ * nothing writes. So a candidate who had given their number on their resume saw
+ * "not given" on the card and was asked for it again by an edit form that
+ * pre-filled from the wrong place.
+ *
+ * Field names line up between the two — `dossier.phone` and `job_clients.phone`,
+ * `dossier.location` and `job_clients.location` — so this is a per-field fallback
+ * rather than a whole-record choice. One can be present and the other absent, and
+ * the card should show whichever has something in it.
+ */
+export function effectiveContact(client, dossier) {
+  const pick = (dossierKey, clientKey) => {
+    const d = typeof dossier?.[dossierKey] === 'string' ? dossier[dossierKey].trim() : '';
+    if (d) return { value: d, source: 'dossier' };
+    const c = typeof client?.[clientKey] === 'string' ? client[clientKey].trim() : '';
+    if (c) return { value: c, source: 'client' };
+    return { value: null, source: 'not_stated' };
+  };
+  return {
+    name: effectiveName(client, dossier),
+    phone: pick('phone', 'phone'),
+    location: pick('location', 'location'),
+  };
+}
+
+/**
+ * Move the candidate's sending address to match a new name.
+ *
+ * A rename changes the address, because an address derived from the old name is a
+ * lie about who is applying: `jordan.ellis@` on an application from Joe Lee is
+ * something a recruiter will notice, and something the candidate cannot explain.
+ *
+ * The old address is *not* released. It is marked superseded and stays resolvable,
+ * so a reply to an application that went out last week still finds the person who
+ * sent it. "Stopped sending from it" and "nobody owns it any more" are different
+ * states and only the second is dangerous.
+ *
+ * One transaction, because the two halves have to agree: a new address in
+ * `job_clients` with no history row, or a history row with the column still
+ * pointing at the old address, would either orphan replies or send from an
+ * address the record does not claim.
+ *
+ * Reuses an address this candidate held before if it is free of *other* people —
+ * renaming back to a previous name returns the address they had, rather than
+ * growing a suffix for no reason.
+ *
+ * Returns what changed, including when nothing did, because a caller that reports
+ * "your address is now X" when it is already X is making a claim about a change
+ * that did not happen.
+ */
+export async function renameMailbox(clientId, name, { reason = 'renamed' } = {}) {
+  const p = await db();
+  const c = await p.connect();
+  try {
+    await c.query('BEGIN');
+
+    const { rows } = await c.query(
+      'SELECT id, display_name, mailbox FROM app.job_clients WHERE id = $1 FOR UPDATE', [clientId]);
+    const client = rows[0];
+    if (!client) { await c.query('ROLLBACK'); return { changed: false, reason: 'no-client' }; }
+
+    const base = deriveLocalPart(name || client.display_name);
+    const wanted = base
+      ? `${base}@${MAILBOX_DOMAIN}`
+      // Nothing derivable from the name. An obviously-generated address, because a
+      // plausible-looking wrong one would be trusted.
+      : fallbackAddress(clientId);
+
+    // Addresses this candidate has already used, so a rename back to an earlier
+    // name can reclaim one rather than accumulating suffixes.
+    const { rows: mine } = await c.query(
+      'SELECT address FROM app.job_client_mailboxes WHERE client_id = $1', [clientId]);
+    const alreadyMine = new Set(mine.map((r) => r.address.toLowerCase()));
+
+    // Anything held by somebody else, in use or only historically.
+    const { rows: theirs } = await c.query(
+      `SELECT split_part(lower(address), '@', 1) AS local FROM app.job_client_mailboxes
+        WHERE client_id <> $1
+        UNION
+       SELECT split_part(lower(mailbox), '@', 1) AS local FROM app.job_clients
+        WHERE mailbox IS NOT NULL AND id <> $1`,
+      [clientId]);
+    const taken = new Set(theirs.map((r) => r.local).filter(Boolean));
+
+    const current = client.mailbox ? client.mailbox.toLowerCase() : null;
+    if (current && current === wanted.toLowerCase()) {
+      await c.query('ROLLBACK');
+      return { changed: false, reason: 'already-correct', address: current };
+    }
+
+    // Reclaim one of their own former addresses if it is the one the new name
+    // derives and nobody else holds it.
+    const local = (() => {
+      const want = localPartOf(wanted);
+      if (alreadyMine.has(wanted.toLowerCase()) && !taken.has(want)) return want;
+      return uniqueLocalPart(want, taken);
+    })();
+    if (!local) { await c.query('ROLLBACK'); return { changed: false, reason: 'exhausted' }; }
+    const next = `${local}@${MAILBOX_DOMAIN}`;
+    if (next.toLowerCase() === current) {
+      await c.query('ROLLBACK');
+      return { changed: false, reason: 'already-correct', address: next };
+    }
+
+    // Release the outgoing address BEFORE claiming the incoming one.
+    //
+    // `job_client_mailboxes_one_active_per_client` is UNIQUE (client_id) WHERE
+    // is_active, so claiming first briefly holds two active rows for one client and
+    // the insert raises 23505 — rolling the whole rename back and leaving a caller
+    // that believes it renamed somebody. That is how the first version of this
+    // reported a successful rename and moved nothing at all: the name was saved, the
+    // address was not, and the tool said it had done both.
+    //
+    // The old row is kept and only marked inactive, so mail to it still resolves to
+    // the person who used it.
+    if (current) {
+      await c.query(
+        `UPDATE app.job_client_mailboxes
+            SET is_active = false, released_at = now(),
+                reason = COALESCE(reason, '') || ' | superseded by a rename'
+          WHERE client_id = $1 AND is_active AND lower(address) <> $2`,
+        [clientId, next]);
+    }
+
+    // Now the incoming address can be active without a second one existing.
+    const { rows: claimed } = await c.query(
+      `INSERT INTO app.job_client_mailboxes (client_id, address, is_active, reason)
+       VALUES ($1, $2, true, $3)
+       ON CONFLICT (address) DO UPDATE
+         SET is_active = true, released_at = NULL, reason = EXCLUDED.reason
+       WHERE app.job_client_mailboxes.client_id = $1
+       RETURNING address`,
+      [clientId, next, reason]);
+    // The ON CONFLICT only updates when the existing row is already this client's,
+    // so an empty result means somebody else holds it and the suffix was wrong.
+    if (!claimed[0]) { await c.query('ROLLBACK'); return { changed: false, reason: 'address-held-elsewhere' }; }
+
+    await c.query(
+      'UPDATE app.job_clients SET mailbox = $2, display_name = $3, updated_at = now() WHERE id = $1',
+      [clientId, next, name || client.display_name]);
+
+    await c.query('COMMIT');
+    return { changed: true, address: next, previous: current, reclaimed: alreadyMine.has(next.toLowerCase()) };
+  } catch (e) {
+    try { await c.query('ROLLBACK'); } catch { /* the connection is already gone */ }
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/**
+ * Set the candidate's name, in both records, in one call.
+ *
+ * Two writes, and the dossier one is the real one. The client column is kept in
+ * step rather than being treated as a separate truth, because leaving it to drift
+ * is what produced a mission card reading "not set" for a candidate whose dossier
+ * was complete — 12 of them, all of them from the onboarding path writing a name
+ * that arrived before the resume did.
+ *
+ * The mailbox is deliberately not touched. `ensureMailbox` holds whatever address
+ * it first assigned, on purpose: an application that went out from
+ * jordan.ellis@jobbymcjobberson.com cannot be recalled by renaming the person to
+ * Joe Lee, and a candidate whose applications land in an address nobody reads
+ * because the product tidied up after itself has been harmed by the tidying.
+ */
+export async function setDisplayName(clientId, name, { updatedBy = 'jobby' } = {}) {
+  return setCandidateDetails(clientId, { name }, { updatedBy });
+}
+
+/**
+ * Write the candidate's own details to the dossier, and mirror them onto the
+ * client columns that need one.
+ *
+ * One call, because the two records are one fact. A function that set the name
+ * and left the phone to a different code path is how the name got fixed and the
+ * phone stayed broken in the same release.
+ *
+ * The mirror columns are not authorities — `effectiveName` and `effectiveContact`
+ * read the dossier first — but the mailbox is derived from the name, and the
+ * reconcile job and the claim flow read the columns directly, so they are kept in
+ * step rather than left to drift.
+ *
+ * Blank is a real value here: a candidate clearing their phone is recorded as
+ * having no phone on file, and the audit row says so. Silently ignoring it would
+ * make the edit form look broken.
+ *
+ * Only the dossier is written when nothing actually changed, so re-saving an
+ * unchanged form does not bump the revision and make the page think the record
+ * moved when it did not.
+ */
+export async function setCandidateDetails(clientId, details, { updatedBy = 'jobby' } = {}) {
+  const clean = (v) => (typeof v === 'string' ? v.trim() : v === null ? null : undefined);
+  const want = {
+    name: clean(details.name),
+    phone: clean(details.phone),
+    location: clean(details.location),
+  };
+  const touched = Object.entries(want).filter(([, v]) => v !== undefined);
+  if (!touched.length) return null;
+
+  const p = await db();
+  const current = await getDossier(clientId);
+  // The client row, for the "did the name actually change" test that decides
+  // whether the address has to move. Read before the column writes below, or the
+  // comparison is always false and the address never follows the name.
+  const clientRow = await getClient(clientId);
+  const dossier = { ...(current?.dossier || {}) };
+  const audits = [];
+  for (const [key, value] of touched) {
+    const before = typeof dossier[key] === 'string' ? dossier[key] : null;
+    if (before === value) continue;
+    dossier[key] = value;
+    audits.push({
+      op: value === null ? 'delete' : 'update',
+      path: key,
+      before_value: before,
+      after_value: value,
+      reason: 'changed by the candidate',
+      actor: updatedBy,
+      confirmedByUser: true,
+    });
+  }
+
+  // The client columns, for the readers that bypass the dossier entirely.
+  const columnFor = { name: 'display_name', phone: 'phone', location: 'location' };
+  const sets = [];
+  const values = [clientId];
+  for (const [key, value] of touched) {
+    sets.push(`${columnFor[key]} = $${values.length + 1}`);
+    values.push(value);
+  }
+  if (sets.length) {
+    await p.query(
+      `UPDATE app.job_clients SET ${sets.join(', ')}, updated_at = now() WHERE id = $1`,
+      values);
+  }
+
+  if (audits.length) {
+    await saveDossier(clientId, dossier, { updatedBy, audits });
+  }
+
+  // The address follows the name.
+  //
+  // A candidate whose name changed and whose address did not is applying as
+  // `jordan.ellis@` while being Joe Lee, and the mismatch is visible to every
+  // recruiter who reads the application. So the address moves with the name.
+  //
+  // Deliberately after the dossier write, not before: if the rename cannot find a
+  // free address, the name is still saved and the candidate still goes by it. The
+  // address is a convenience; the name is who they are. Losing the name because a
+  // local part was taken would be exactly backwards.
+  let mailbox = null;
+  if (want.name !== undefined && want.name && want.name !== clientRow?.display_name) {
+    try {
+      mailbox = await renameMailbox(clientId, want.name, { reason: `renamed from "${clientRow?.display_name || 'unset'}"` });
+    } catch (e) {
+      // Logged and out of the way. The name is saved either way, and the next
+      // rename or the send path will settle the address.
+      console.warn(`[jobby] client ${clientId}: name saved but the address did not move: ${e.message}`);
+    }
+  }
+
+  return { changed: audits.map((a) => a.path), details: want, mailbox };
+}
+
 export async function getClient(clientId) {
   const p = await db();
   const { rows } = await p.query('SELECT * FROM app.job_clients WHERE id = $1', [clientId]);
@@ -97,9 +563,21 @@ export async function getDossier(clientId) {
  */
 async function takenLocalParts(exceptClientId = null) {
   const p = await db();
+  // Both the address in use and every address this client or anyone else has ever
+  // sent from. A released address is still claimed — replies to it are still
+  // attributed to a person — so handing it to a new candidate would deliver one
+  // person's mail to another. `job_clients.mailbox` alone would not catch that,
+  // because a renamed client's old address is no longer in that column.
   const { rows } = await p.query(
-    `SELECT split_part(lower(mailbox), '@', 1) AS local FROM app.job_clients
-     WHERE mailbox IS NOT NULL AND ($1::int IS NULL OR id <> $1)`,
+    `SELECT local FROM (
+       SELECT split_part(lower(mailbox), '@', 1) AS local, id
+         FROM app.job_clients
+        WHERE mailbox IS NOT NULL
+        UNION ALL
+       SELECT split_part(lower(address), '@', 1) AS local, client_id AS id
+         FROM app.job_client_mailboxes
+     ) t
+     WHERE local IS NOT NULL AND ($1::int IS NULL OR id <> $1)`,
     [exceptClientId]);
   return new Set(rows.map(r => r.local).filter(Boolean));
 }
@@ -127,8 +605,26 @@ export async function ensureMailbox(clientId, name) {
     // plausible-looking wrong address would be trusted; an obvious one is not.
     : fallbackAddress(clientId);
 
-  for (let attempt = 0; attempt < 12; attempt++) {
+  // One suffix rule, in one place: `uniqueLocalPart`.
+  //
+  // The first version wrapped it in a retry loop that re-read the same `taken` set
+  // each time, so it derived the same candidate every attempt and only advanced on a
+  // lost race. The second replaced it with a private walk of its own — which started
+  // its suffixes at 1 while `uniqueLocalPart` starts at 2, so the second Maria Garcia
+  // was offered `maria.garcia1@` by one path and `maria.garcia2@` by the other. Two
+  // rules for one decision, which is worse than the loop it replaced: the loop had one
+  // rule inside it, this had two rules and a comment explaining why not to write a
+  // second.
+  //
+  // So the walk is `uniqueLocalPart`'s alone, and a collision feeds back into the
+  // exclusion set so the next call resumes further along. The bound is a guard
+  // against a pathological loop, not a cap on the search — finding a free suffix is
+  // `uniqueLocalPart`'s job and it has its own ceiling.
+  const avoid = new Set();
+
+  for (let attempt = 0; attempt < 1000; attempt++) {
     const taken = await takenLocalParts(clientId);
+    for (const skip of avoid) taken.add(skip);
     const local = uniqueLocalPart(localPartOf(address), taken);
     if (!local) return { address: null, reason: 'exhausted' };
     const candidate = `${local}@${MAILBOX_DOMAIN}`;
@@ -136,23 +632,47 @@ export async function ensureMailbox(clientId, name) {
     try {
       const { rows } = await p.query(
         `UPDATE app.job_clients SET mailbox = $2, updated_at = now()
-         WHERE id = $1 AND mailbox IS NULL RETURNING mailbox, display_name`,
+          WHERE id = $1 AND mailbox IS NULL RETURNING mailbox, display_name`,
         [clientId, candidate]);
       if (rows[0]) {
+        // Recorded in the address history as well as the column.
+        //
+        // Without this, a first address assigned after the migration had no history
+        // row at all, so a later rename's "supersede the old row" matched nothing
+        // and mail to the address this candidate had been answering stopped
+        // resolving to them. Every path that creates an address writes here, not
+        // only the one that creates a second one — and this is the common one.
+        //
+        // Never fatal. The address is live and in use; a missing history row is a far
+        // smaller problem than a candidate left with no address at all.
+        await p.query(
+          `INSERT INTO app.job_client_mailboxes (client_id, address, is_active, reason)
+           VALUES ($1, $2, true, 'first address assigned')
+           ON CONFLICT (address) DO UPDATE
+             SET is_active = true, released_at = NULL
+           WHERE app.job_client_mailboxes.client_id = $1`,
+          [clientId, candidate],
+        ).catch((e) => {
+          console.warn(`[jobby] client ${clientId}: assigned ${candidate} but could not record it in the address history: ${e.message}`);
+        });
         return { address: rows[0].mailbox, created: true, displayName: rows[0].display_name };
       }
-      // The WHERE matched nothing, so another request assigned it first. Re-read
-      // rather than trying again: the address now exists and it is this client's.
+      // The WHERE matched nothing, so this client already holds an address. Re-read
+      // rather than trying another: it exists and it is this client's.
       const now = await getClient(clientId);
       if (now?.mailbox) return { address: now.mailbox, created: false, displayName: now.display_name };
+      return { address: null, reason: 'client-changed' };
     } catch (e) {
-      // 23505 is the unique index firing: someone claimed this address between
-      // our read and our write. Retry with the next suffix.
-      if (e.code === '23505' || /job_clients_mailbox_uniq/.test(String(e.message))) continue;
+      // 23505: claimed between our read and our write. It is taken now, so the walk
+      // steps over it — which only works because `avoid` carries it forward.
+      if (e.code === '23505' || /job_clients_mailbox_uniq/.test(String(e.message))) {
+        avoid.add(local);
+        continue;
+      }
       throw e;
     }
   }
-  return { address: null, reason: 'contention' };
+  return { address: null, reason: 'exhausted' };
 }
 
 /**
@@ -174,7 +694,23 @@ export async function getClientByMailbox(address) {
   const p = await db();
   const { rows } = await p.query(
     'SELECT * FROM app.job_clients WHERE lower(mailbox) = $1 LIMIT 1', [value]);
-  return rows[0] || null;
+  if (rows[0]) return rows[0];
+  // A former address still resolves.
+  //
+  // Renaming moves the address a candidate sends from, so mail to the old one has
+  // to keep finding them. The catch-all delivers it either way — the domain is
+  // ours — but delivery is not attribution: without this, a recruiter's reply to
+  // last week's application arrives with nobody attached and is silently never
+  // read, which is worse than the reply not arriving because at least a bounce
+  // would have been noticed.
+  //
+  // The history table rather than a scan of released columns, because there is no
+  // column left to scan: the rename replaced it.
+  const { rows: old } = await p.query(
+    `SELECT c.* FROM app.job_client_mailboxes m
+       JOIN app.job_clients c ON c.id = m.client_id
+      WHERE lower(m.address) = $1 LIMIT 1`, [value]);
+  return old[0] || null;
 }
 
 /** The client's address, or null if they have not been given one yet. */
@@ -288,6 +824,27 @@ export async function listOpportunities(clientId, { status = null, limit = 100 }
 }
 
 /**
+ * One opportunity, by id or by url.
+ *
+ * Both lookups, because the agent holds an id in one turn and a url in the next
+ * and has no reason to remember which. Scoped to the client on both: an id is
+ * guessable, and an opportunity belonging to another candidate is not something
+ * to return on the strength of a number.
+ */
+export async function getOpportunity(clientId, { id = null, url = null } = {}) {
+  if (!id && !url) return null;
+  const p = await db();
+  const { rows } = await p.query(
+    `SELECT * FROM app.job_opportunities
+      WHERE client_id = $1
+        AND ($2::int IS NOT NULL AND id = $2
+             OR $2::int IS NULL AND $3::text IS NOT NULL AND url = $3)
+      ORDER BY id DESC LIMIT 1`,
+    [clientId, id ?? null, url ?? null]);
+  return rows[0] || null;
+}
+
+/**
  * The daily send allowance.
  *
  * Returns a decision rather than throwing, because the caller needs to tell the
@@ -296,26 +853,40 @@ export async function listOpportunities(clientId, { status = null, limit = 100 }
  */
 export async function canSend(clientId) {
   const client = await getClient(clientId);
-  if (!client) return { allowed: false, reason: 'no client' };
-  if (client.kill_switch) {
-    return { allowed: false, reason: 'kill switch is engaged', code: 'kill_switch' };
-  }
-  if (client.autonomy !== 'auto') {
-    return { allowed: false, reason: 'client is in draft mode', code: 'draft_mode' };
-  }
+  if (!client) return { allowed: false, reason: 'no client', sent: 0, cap: 0 };
+
+  // The count and the cap are read before any of the verdicts, and returned with
+  // every one of them.
+  //
+  // They used to be computed last, so the three early returns — kill switch, draft
+  // mode, and no client — returned an object with no `sent` and no `cap` in it.
+  // The mission card renders "Sent today" as `${sent} of ${cap}`, so a candidate
+  // who switched to draft mode, which is the single most common setting to switch
+  // to, saw the literal text "undefined of undefined" where their send count
+  // should be. The numbers are wanted for display whether or not sending is
+  // allowed, so they are no longer conditional on the answer.
   const p = await db();
   const { rows } = await p.query(
     `SELECT count(*)::int AS n FROM app.job_outreach
      WHERE client_id = $1 AND status = 'sent' AND created_at > now() - INTERVAL '24 hours'`,
     [clientId]);
   const sent = rows[0]?.n ?? 0;
-  if (sent >= client.daily_send_cap) {
+  const cap = client.daily_send_cap;
+  const counts = { sent, cap, remaining: Math.max(0, cap - sent) };
+
+  if (client.kill_switch) {
+    return { ...counts, allowed: false, reason: 'kill switch is engaged', code: 'kill_switch' };
+  }
+  if (client.autonomy !== 'auto') {
+    return { ...counts, allowed: false, reason: 'client is in draft mode', code: 'draft_mode' };
+  }
+  if (sent >= cap) {
     return {
-      allowed: false, code: 'daily_cap', sent, cap: client.daily_send_cap,
-      reason: `daily send cap reached (${sent}/${client.daily_send_cap})`,
+      ...counts, allowed: false, code: 'daily_cap',
+      reason: `daily send cap reached (${sent}/${cap})`,
     };
   }
-  return { allowed: true, sent, cap: client.daily_send_cap, remaining: client.daily_send_cap - sent };
+  return { allowed: true, ...counts };
 }
 
 /** Identical recipient + subject inside the cooldown is almost always a retry loop. */

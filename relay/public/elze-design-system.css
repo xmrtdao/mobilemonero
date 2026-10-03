@@ -1,0 +1,214 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Elze Contract Suite — Unified Design System
+   Dark-mode-first, professional legal-tech aesthetic
+   Inspired by Linear precision + Stripe authority
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ── Background Surfaces ── */
+  --elze-bg-deep:     #06070a;
+  --elze-bg-base:     #0c0e12;
+  --elze-bg-surface:  #14161c;
+  --elze-bg-elevated: #1a1d26;
+  --elze-bg-hover:    #222630;
+
+  /* ── Text ── */
+  --elze-text-primary:   #f0f1f5;
+  --elze-text-secondary: #a0a5b1;
+  --elze-text-muted:     #6b7280;
+  --elze-text-disabled:  #4b5163;
+
+  /* ── Brand Accent (legal indigo-violet) ── */
+  --elze-accent:        #6366f1;
+  --elze-accent-hover:  #818cf8;
+  --elze-accent-dim:    #4f46e5;
+  --elze-accent-glow:   rgba(99,102,241,0.15);
+
+  /* ── Semantic Colors ── */
+  --elze-success:       #22c55e;
+  --elze-success-bg:    rgba(34,197,94,0.10);
+  --elze-warning:       #f59e0b;
+  --elze-warning-bg:    rgba(245,158,11,0.10);
+  --elze-danger:        #ef4444;
+  --elze-danger-bg:     rgba(239,68,68,0.10);
+  --elze-info:          #3b82f6;
+  --elze-info-bg:       rgba(59,130,246,0.10);
+
+  /* ── Borders ── */
+  --elze-border-subtle: rgba(255,255,255,0.06);
+  --elze-border-standard: rgba(255,255,255,0.10);
+  --elze-border-strong: rgba(255,255,255,0.15);
+  --elze-border-accent: rgba(99,102,241,0.30);
+  --elze-border-hover: rgba(255,255,255,0.20);
+
+  /* ── Typography ── */
+  --elze-font-sans:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --elze-font-mono:   'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --elze-font-features: 'cv01', 'ss03', 'tnum';
+
+  /* ── Spacing Scale (8px base) ── */
+  --elze-space-1: 4px;
+  --elze-space-2: 8px;
+  --elze-space-3: 12px;
+  --elze-space-4: 16px;
+  --elze-space-5: 20px;
+  --elze-space-6: 24px;
+  --elze-space-8: 32px;
+  --elze-space-10: 40px;
+  --elze-space-12: 48px;
+  --elze-space-16: 64px;
+  --elze-space-20: 80px;
+
+  /* ── Border Radius ── */
+  --elze-radius-sm: 4px;
+  --elze-radius-md: 6px;
+  --elze-radius-lg: 8px;
+  --elze-radius-xl: 12px;
+  --elze-radius-pill: 9999px;
+
+  /* ── Shadows ── */
+  --elze-shadow-sm: 0 1px 2px rgba(0,0,0,0.30);
+  --elze-shadow-md: 0 4px 12px rgba(0,0,0,0.40);
+  --elze-shadow-lg: 0 8px 24px rgba(0,0,0,0.50);
+  --elze-shadow-glow: 0 0 20px var(--elze-accent-glow);
+
+  /* ── Transitions ── */
+  --elze-transition-fast: 150ms ease;
+  --elze-transition-base: 200ms ease;
+}
+
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body {
+  font-family: var(--elze-font-sans);
+  font-feature-settings: var(--elze-font-features);
+  color: var(--elze-text-primary);
+  background: var(--elze-bg-deep);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── Typography ── */
+.elze-h1 { font-size: 2.5rem; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; color: var(--elze-text-primary); }
+.elze-h2 { font-size: 1.75rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em; color: var(--elze-text-primary); }
+.elze-h3 { font-size: 1.25rem; font-weight: 600; line-height: 1.3; color: var(--elze-text-primary); }
+.elze-h4 { font-size: 1rem; font-weight: 600; line-height: 1.4; color: var(--elze-text-primary); }
+.elze-body { font-size: 0.875rem; font-weight: 400; line-height: 1.6; color: var(--elze-text-secondary); }
+.elze-body-sm { font-size: 0.8125rem; font-weight: 400; line-height: 1.5; color: var(--elze-text-muted); }
+.elze-caption { font-size: 0.75rem; font-weight: 500; line-height: 1.4; letter-spacing: 0.02em; text-transform: uppercase; color: var(--elze-text-muted); }
+.elze-mono { font-family: var(--elze-font-mono); font-size: 0.8125rem; }
+
+/* ── Buttons ── */
+.elze-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--elze-space-2);
+  padding: var(--elze-space-2) var(--elze-space-4);
+  font-family: var(--elze-font-sans); font-size: 0.875rem; font-weight: 500;
+  border-radius: var(--elze-radius-md); border: 1px solid transparent;
+  cursor: pointer; transition: all var(--elze-transition-fast);
+  text-decoration: none; white-space: nowrap;
+}
+.elze-btn-primary {
+  background: var(--elze-accent); color: #fff;
+}
+.elze-btn-primary:hover { background: var(--elze-accent-hover); box-shadow: var(--elze-shadow-glow); }
+.elze-btn-secondary {
+  background: var(--elze-bg-surface); color: var(--elze-text-primary);
+  border-color: var(--elze-border-standard);
+}
+.elze-btn-secondary:hover { background: var(--elze-bg-elevated); border-color: var(--elze-border-strong); }
+.elze-btn-ghost {
+  background: transparent; color: var(--elze-text-secondary);
+  border-color: var(--elze-border-subtle);
+}
+.elze-btn-ghost:hover { background: var(--elze-bg-surface); color: var(--elze-text-primary); }
+.elze-btn-danger {
+  background: var(--elze-danger-bg); color: var(--elze-danger);
+  border-color: rgba(239,68,68,0.20);
+}
+.elze-btn-sm { padding: var(--elze-space-1) var(--elze-space-3); font-size: 0.8125rem; }
+.elze-btn-lg { padding: var(--elze-space-3) var(--elze-space-5); font-size: 0.9375rem; }
+
+/* ── Cards ── */
+.elze-card {
+  background: var(--elze-bg-surface);
+  border: 1px solid var(--elze-border-standard);
+  border-radius: var(--elze-radius-lg);
+  padding: var(--elze-space-5);
+  transition: border-color var(--elze-transition-fast), box-shadow var(--elze-transition-fast);
+}
+.elze-card:hover { border-color: var(--elze-border-strong); }
+.elze-card-elevated { box-shadow: var(--elze-shadow-md); }
+
+/* ── Inputs ── */
+.elze-input, .elze-textarea, .elze-select {
+  width: 100%; padding: var(--elze-space-2) var(--elze-space-3);
+  font-family: var(--elze-font-sans); font-size: 0.875rem; color: var(--elze-text-primary);
+  background: var(--elze-bg-surface);
+  border: 1px solid var(--elze-border-standard); border-radius: var(--elze-radius-md);
+  outline: none; transition: border-color var(--elze-transition-fast), box-shadow var(--elze-transition-fast);
+}
+.elze-input:focus, .elze-textarea:focus, .elze-select:focus {
+  border-color: var(--elze-accent); box-shadow: 0 0 0 3px var(--elze-accent-glow);
+}
+.elze-input::placeholder, .elze-textarea::placeholder { color: var(--elze-text-disabled); }
+.elze-select { appearance: none; cursor: pointer; }
+
+/* ── Badges ── */
+.elze-badge {
+  display: inline-flex; align-items: center; gap: var(--elze-space-1);
+  padding: var(--elze-space-1) var(--elze-space-2);
+  font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+  border-radius: var(--elze-radius-sm);
+}
+.elze-badge-success { background: var(--elze-success-bg); color: var(--elze-success); }
+.elze-badge-warning { background: var(--elze-warning-bg); color: var(--elze-warning); }
+.elze-badge-danger { background: var(--elze-danger-bg); color: var(--elze-danger); }
+.elze-badge-info { background: var(--elze-info-bg); color: var(--elze-info); }
+.elze-badge-neutral { background: var(--elze-bg-hover); color: var(--elze-text-muted); border: 1px solid var(--elze-border-subtle); }
+
+/* ── Severity Indicators ── */
+.elze-severity-critical { color: var(--elze-danger); }
+.elze-severity-high { color: var(--elze-warning); }
+.elze-severity-medium { color: #fbbf24; }
+.elze-severity-low { color: var(--elze-text-muted); }
+
+/* ── Icons ── */
+.elze-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.elze-icon-sm { width: 14px; height: 14px; }
+.elze-icon-md { width: 16px; height: 16px; }
+.elze-icon-lg { width: 20px; height: 20px; }
+.elze-icon-xl { width: 24px; height: 24px; }
+
+/* ── Layout Utilities ── */
+.elze-container { max-width: 1200px; margin: 0 auto; padding: 0 var(--elze-space-4); }
+.elze-flex { display: flex; }
+.elze-flex-col { display: flex; flex-direction: column; }
+.elze-items-center { align-items: center; }
+.elze-justify-between { justify-content: space-between; }
+.elze-gap-2 { gap: var(--elze-space-2); }
+.elze-gap-3 { gap: var(--elze-space-3); }
+.elze-gap-4 { gap: var(--elze-space-4); }
+.elze-text-center { text-align: center; }
+.elze-w-full { width: 100%; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--elze-border-strong); border-radius: var(--elze-radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--elze-text-muted); }
+
+/* ── Animations ── */
+@keyframes elze-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.elze-animate-fade { animation: elze-fade-in 0.3s ease forwards; }
+
+@keyframes elze-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.elze-animate-pulse { animation: elze-pulse 2s ease-in-out infinite; }

@@ -124,6 +124,14 @@ export function fallbackAddress(clientId, domain = MAILBOX_DOMAIN) {
 export function uniqueLocalPart(base, taken) {
   if (!base) return null;
   if (!taken || !taken.has(base)) return base;
+  // From 2, and that is a contract rather than an accident.
+  //
+  // The first holder of a name gets the plain address and the second gets `…2`.
+  // Briefly started at 1, on the reasoning that `name1` was an unreachable address
+  // being wasted. It broke three tests and, more to the point, it would have
+  // changed an address a candidate had already been given and a recruiter had
+  // already written to. An unreachable slot is a cosmetic gap; a renumbering is
+  // somebody's inbox. The walk starts at 2 and stays there.
   for (let n = 2; n < 1000; n++) {
     const candidate = clip(`${base}${n}`);
     if (!taken.has(candidate)) return candidate;

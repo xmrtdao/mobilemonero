@@ -20,6 +20,7 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
+import { plaintext } from '@libp2p/plaintext';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { bootstrap } from '@libp2p/bootstrap';
@@ -81,15 +82,17 @@ function validateMessage(msg) {
 }
 
 function logMessage(topic, from, data) {
+  // Store full data for bridge consumers, truncate only for console log
+  const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
   const entry = {
     ts: new Date().toISOString(),
     topic,
     from: from?.toString() || 'local',
-    data: typeof data === 'string' ? data.slice(0, 200) : JSON.stringify(data).slice(0, 200),
+    data: dataStr,
   };
   messageLog.unshift(entry);
   if (messageLog.length > 500) messageLog.length = 500;
-  console.log(`[Mesh] ${topic} <- ${entry.from}: ${entry.data.slice(0, 80)}`);
+  console.log(`[Mesh] ${topic} <- ${entry.from}: ${dataStr.slice(0, 80)}`);
 }
 
 // ── Node Lifecycle ──────────────────────────────────────────
@@ -145,7 +148,7 @@ export async function initMeshNode(opts = {}) {
         listen: [`/ip4/0.0.0.0/tcp/${port}`],
       },
       transports: [tcp()],
-      connectionEncryptors: [noise()],
+      connectionEncrypters: [noise(), plaintext()],
       streamMuxers: [yamux()],
       services: {
         identify: identify(),

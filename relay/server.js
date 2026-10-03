@@ -77,7 +77,32 @@ import { displayNameFor, formatFrom, isCandidateMailbox, domainOf, MAILBOX_DOMAI
   from './jobby/mailbox.mjs';
 import { createJobbyTools } from './jobby/tools.mjs';
 import { TRACKS as JOBBY_TRACKS } from './jobby/tracks.mjs';
+// Track 5's roster shape. Imported, not redefined: the same brief the plan uses,
+// so the session payload and the plan cannot describe the roster differently.
+import { fifoBrief } from './jobby/fifo-roster.mjs';
+// Per-track views of the one dossier. Sent whole so the page can switch between
+// them without a request per click.
+import { buildAllViews, viewForTrack } from './jobby/views.mjs';
+// Native company sourcing. Public sources only, no LinkedIn credential and no
+// third-party account, which is the whole reason it exists.
+import { sourceCompany } from './jobby/source-company.mjs';
 import * as jobbyStore from './jobby/store.mjs';
+// The employer side. A separate session cookie, a separate prompt, a separate
+// tool set and a separate set of tables, so that no code path exists from an
+// employer's conversation to a candidate's irreversible send.
+import * as employerStore from './jobby/employer-store.mjs';
+import { parseJobDescription } from './jobby/jd.mjs';
+import { employerChat } from './jobby/employer-chat.mjs';
+// The public board, read from third-party job feeds. Every row it holds is a
+// document from another company's server, and the response says so.
+import {
+  pollFeeds, readBoard as readFeedBoard, boardCount as feedBoardCount, boardHealth as feedBoardHealth,
+  boardBySource as feedBoardBySource,
+} from './jobby/feed-board.mjs';
+// The per-application reader behind GET /api/jobby/applications. Imported here
+// because the endpoint calls it: an import added below its first use, or never
+// added at all, is a ReferenceError that only shows up on that one route.
+import { listApplications } from './jobby/applications.mjs';
 import * as jobbyGoogle from './jobby/google.mjs';
 import * as jobbyGoogleStore from './jobby/google-store.mjs';
 import { encryptionStatus } from './jobby/secrets.mjs';
@@ -88,13 +113,25 @@ import {
 
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
 import { videoEditor } from './tools/video-editor.mjs';
+import { videoBrief, probe as probeMedia, detectShots, contactSheet, loudness, waveform } from './tools/perception.mjs';
+import {
+  register as registerMedia, resolveRef as resolveMediaRef,
+  get as getMedia, list as listMedia, remove as removeMedia,
+} from './tools/media-registry.mjs';
 import { paragraphPublish } from './tools/paragraph-publisher.mjs';
 import * as state from './lib/state.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
 import { handleInboundEmail } from './lib/auto-responder.mjs';
 import { ensureLocalDb, restFetch as localRestFetch, query as localQuery, LOCAL_DB_ENABLED } from './lib/localDb.mjs';
 import { createMeshRouter, initMeshNode, publishToMesh, getMeshMessageLog, getMeshStatus } from './lib/mesh-router.mjs';
-import registerSuiteRoutes from './routes/suite-dashboard.mjs';
+// routes/suite-dashboard.mjs used to be imported here. Every one of its 29 routes
+// was also registered in this file, and because registerSuiteRoutes(app) was
+// CALLED at the bottom of this file rather than here, Express kept this file's
+// handler every time and none of that module's 29 handlers ever ran. It was dead
+// code that read as the implementation, which is how a task handoff came to
+// store no type, no task and no agent, and how a lead-routing handler lost its
+// tenant check. The file also held the relay down once with a parse error (see
+// tests/syntax.test.mjs). Removed; the live handlers were already here.
 import registerPfpRoutes from './routes/pfp.js';
 import { discoverFunctions, listFunctions } from './lib/function-runtime.mjs';
 import * as qwenMemory from './lib/qwen-memory.mjs';
@@ -138,9 +175,9 @@ const SCHEMA_DRIFT_REFS = [
   'agent.agent_skills','agent.agent_tasks','agent.agents','agent.generated_agents',
   // other relay references
   'app.agent_activity','app.agent_activity_summary','app.agent_api_keys','app.agents',
-  'app.chat_messages','app.cuttlefish_agent_tasks','app.cuttlefish_agents','app.cuttlefish_cac_credentials',
-  'app.cuttlefish_capital_stack','app.cuttlefish_financing_programs','app.cuttlefish_proposals',
-  'app.cuttlefish_trust_events','app.fleet_attachments','app.fleet_memory','app.footlocker_artifacts',
+  'app.chat_messages','public.work_queue','public.registry_agents','public.cac_credentials',
+  'public.capital_stack','public.financing_programs','public.submitted_proposals',
+  'public.trust_events','app.fleet_attachments','app.fleet_memory','app.footlocker_artifacts',
   'app.footlocker_files','app.knowledge_entities','app.rum_quota','app.suite_activity_log',
   'app.suite_campaigns','app.suite_companies','app.suite_email_activity','app.suite_lead_sharing_rules',
   'app.suite_leads','app.suite_pipeline_stages','app.suite_users','app.tasks','app.token_usage',
@@ -887,6 +924,31 @@ function jobbyTools() {
 }
 
 const toolHandlers = {
+  // ── PFP financial tools ────────────────────────────────────────────────
+  // The only tools in this map that can move money. Each asks the standing gate
+  // before it reaches Stripe, and the gate is expected to refuse an agent that
+  // has not earned standing — Jobby currently cannot create a payment link or
+  // issue a refund, and that is the intended behaviour, not a misconfiguration.
+  //
+  // Returned and spread in, rather than assigned: `toolHandlers` is still being
+  // initialised inside this literal, so assigning to it here is a
+  // temporal-dead-zone error and the relay will not boot.
+  ...await (async () => {
+    const { pfpMoneyTools, PFP_MONEY_TOOL_DESCRIPTIONS } = await import('./lib/pfp-money-tools.mjs');
+    const { evaluateGateFromDb } = await import('./lib/gate-evaluator.mjs');
+    const require = createRequire(import.meta.url);
+    const tools = pfpMoneyTools({
+      stripe: STRIPE_SECRET_KEY ? require('stripe')(STRIPE_SECRET_KEY) : null,
+      query: queryLocalPg,
+      gate: (q) => evaluateGateFromDb(queryLocalPg, q),
+      log: logActivity,
+    });
+    // `descriptions` is declared ~9000 lines below, so it cannot be touched
+    // yet. Hand it over and let the block after that object do the merge.
+    globalThis.__PFP_MONEY_TOOL_DESCRIPTIONS = PFP_MONEY_TOOL_DESCRIPTIONS;
+    return tools;
+  })(),
+
   'page-agent-task': async (args) => {
     const task = args?.task || args?.instruction;
     if (!task) return { error: 'task is required' };
@@ -966,6 +1028,54 @@ const toolHandlers = {
   },
 
   'video-editor': videoEditor,
+  // Perception: the counterpart to video-editor, which cuts film it has never
+  // seen. This one looks at it first, measures it, and returns a brief in text so
+  // any text-only agent can act on what is actually there.
+  //
+  // These address media by id. `media-register` is the only place a filesystem
+  // path or a URL is accepted, and it copies the bytes into relay-data/media/ so
+  // what an id resolves to cannot be swapped later. That is what lets the tools
+  // sit at a trust level the fleet can actually reach: without it they were an
+  // arbitrary-file-read plus a cloud egress, and TRUSTED was the only defensible
+  // level - which put them out of reach of most agents.
+  'video-brief': videoBrief,
+  'media-register': async (args) => registerMedia({ ...args, registeredBy: args?.agent || 'unknown' }),
+  'media-list': async (args) => listMedia({ kind: args?.kind }),
+  'media-get': async (args) => getMedia(args?.media_id || args?.id),
+  'media-remove': async (args) => removeMedia(args?.media_id || args?.id, { purge: args?.purge === true }),
+  // Per-file helpers. Each resolves the id first, so none of them can be pointed
+  // at a path the registry did not bless.
+  'media-probe': async (args) => {
+    const r = resolveMediaRef(args?.media_id || args?.id || args?.input);
+    return r.ok ? probeMedia(r.entry.path) : { error: r.error };
+  },
+  'media-shots': async (args) => {
+    const r = resolveMediaRef(args?.media_id || args?.id || args?.input);
+    return r.ok ? detectShots(r.entry.path, args?.threshold ?? 12) : { error: r.error };
+  },
+  'media-loudness': async (args) => {
+    const r = resolveMediaRef(args?.media_id || args?.id || args?.input);
+    return r.ok ? loudness(r.entry.path) : { error: r.error };
+  },
+  'media-contact-sheet': async (args) => {
+    const r = resolveMediaRef(args?.media_id || args?.id || args?.input);
+    if (!r.ok) return { error: r.error };
+    const s = await contactSheet(r.entry.path, {
+      frames: args?.frames ?? 12, cols: args?.cols ?? 4, outPath: args?.out ?? null,
+    });
+    // The base64 is deliberately dropped: a tool result gets logged and stored,
+    // and a megabyte of base64 in an activity row helps nobody. `out` writes it
+    // to disk instead.
+    if (s.error) return s;
+    return { success: true, mediaId: r.entry.id, path: s.path, bytes: s.bytes, frames: s.frames, layout: `${s.cols}x${s.rows}` };
+  },
+  'media-waveform': async (args) => {
+    const r = resolveMediaRef(args?.media_id || args?.id || args?.input);
+    if (!r.ok) return { error: r.error };
+    const w = await waveform(r.entry.path, { outPath: args?.out ?? null });
+    if (w.error) return w;
+    return { success: true, mediaId: r.entry.id, path: w.path };
+  },
   'paragraph-publish': paragraphPublish,
 
   'muapi-generate-image': async (args) => {
@@ -1272,7 +1382,14 @@ const toolHandlers = {
   'web-scrape': async (args) => {
     const url = args?.url || args?.u;
     if (!url) return { error: 'url is required' };
-    return await webScrape(url, { maxLength: args?.maxLength || 50000 });
+    return await webScrape(url, {
+      maxLength: args?.maxLength || 50000,
+      timeout: args?.timeout || undefined,
+      // Opt-in because it costs a second pass over the HTML. It is what makes a
+      // contact address on the page visible at all: the text extraction deletes
+      // every tag, and every href and mailto: goes with it.
+      extractLinks: args?.extractLinks === true,
+    });
   },
 
   // ── Jobby: the job-search agent's own tools ──────────────────────────
@@ -2034,11 +2151,16 @@ const toolHandlers = {
   },
 
   'ef:github': async (args) => {
-    const action = args?.action || 'list_issues';
+    // The action may arrive at the top level OR nested inside args/data. It was
+    // read only from the top level, so a caller writing
+    //   {"args":{"action":"list_issues"}}
+    // got action=undefined and fell through to the default branch:
+    // "Unknown action: undefined". Now both shapes are accepted.
     const data = args?.data || args?.args || {};
+    const action = args?.action || data?.action || 'list_issues';
     try {
       const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GITHUB_TOKEN_PROOF_OF_LIFE;
-      const GITHUB_OWNER = process.env.GITHUB_OWNER || 'epicadventurescr';
+      const GITHUB_OWNER = process.env.GITHUB_OWNER || 'xmrtdao';
       if (!GITHUB_TOKEN) return { success: false, error: 'GitHub token not configured in relay .env' };
       const repo = (data?.repo || 'mobilemonero').replace(/^.*\//, '');
       // Normalize action names: camelCase -> snake_case
@@ -2111,8 +2233,8 @@ const toolHandlers = {
       }
       repoResults.sort((a, b) => b.score - a.score);
       const [propCount, agentCount] = await Promise.all([
-        queryLocalPg(`SELECT count(*)::int AS c FROM app.cuttlefish_agent_tasks`).catch(() => ({ rows: [{ c: 0 }] })),
-        queryLocalPg(`SELECT count(*)::int AS c FROM app.cuttlefish_agents`).catch(() => ({ rows: [{ c: 0 }] })),
+        queryLocalPg(`SELECT count(*)::int AS c FROM public.work_queue`).catch(() => ({ rows: [{ c: 0 }] })),
+        queryLocalPg(`SELECT count(*)::int AS c FROM public.registry_agents`).catch(() => ({ rows: [{ c: 0 }] })),
       ]);
       return {
         success: true,
@@ -2703,7 +2825,7 @@ const toolHandlers = {
             // Integer ID from cuttlefish_agents — look up the corresponding app.agents id
             const lookup = await queryLocalPg(
               `SELECT a.id FROM app.agents a
-               JOIN app.cuttlefish_agents c ON LOWER(c.name) = LOWER(SPLIT_PART(a.id, '-', 1))
+               JOIN public.registry_agents c ON LOWER(c.name) = LOWER(SPLIT_PART(a.id, '-', 1))
                WHERE c.id = $1 LIMIT 1`,
               [parseInt(resolvedAssignee, 10)]
             );
@@ -3733,9 +3855,59 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
       return null;
     }
     const data = await res.json();
+
+    // ai-chat is async-wrapped: for a long request it answers immediately with
+    // { status: 'processing', request_id } and expects the caller to poll
+    // GET /functions/v1/ai-chat?request_id= for the real result.
+    //
+    // Nothing here did that. `data.content` was therefore empty, `reply` came
+    // out as '', and the caller read that as a failure and fell through to a
+    // fallback — so Eliza's answer was produced, stored, and dropped on the
+    // floor. Resolving it here fixes every caller of relayToElizaCloud at once,
+    // rather than teaching each one to poll.
+    let resolved = data;
+    if ((data?.status === 'processing' || (!data?.content && data?.request_id)) && data?.request_id) {
+      const pollUrl = `${SUPABASE_URL}/functions/v1/ai-chat?request_id=${encodeURIComponent(data.request_id)}`;
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        let st = null;
+        try {
+          const pr = await fetch(pollUrl, {
+            headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (pr.ok) st = await pr.json();
+        } catch (_) { /* transient; keep polling until the deadline */ }
+
+        if (!st) continue;
+        if (st.status === 'done') {
+          const inner = st.result;
+          if (inner && typeof inner === 'object') {
+            resolved = { ...inner, request_id: data.request_id };
+          } else if (typeof inner === 'string' && inner.trim()) {
+            resolved = { content: inner, request_id: data.request_id };
+          }
+          break;
+        }
+        if (st.status === 'error') {
+          logActivity('eliza', tag, 'FAIL', `async request ${data.request_id} errored: ${String(st.error).slice(0, 120)}`);
+          break;
+        }
+        if (st.status === 'not_found') {
+          // The status store is in-process, so a recycled function loses it.
+          logActivity('eliza', tag, 'FAIL', `async request ${data.request_id} not found (edge function recycled?)`);
+          break;
+        }
+      }
+    }
+    if (resolved !== data) {
+      logActivity('eliza', tag, 'ASYNC', `resolved ${data.request_id} -> ${String(resolved?.content || '').slice(0, 60)}`);
+    }
+
     // ai-chat returns { content, provider, model, success }; the rest of the
     // codebase expects { reply, ... } from eliza-relay, so normalize.
-    let reply = (data?.content || '').trim();
+    let reply = (resolved?.content || '').trim();
     // Strip chain-of-thought / reasoning artifacts that leak into the response
     // Common patterns: internal deliberation, scaffolding instructions, mid-word truncation
     reply = reply
@@ -3754,8 +3926,11 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
     logActivity('eliza', tag, 'REPLY', reply.slice(0, 80));
     // Log token usage for Rum Quota tracking
     try {
-      const inputTokens = data.usage?.input_tokens || data.input_tokens || 0;
-      const outputTokens = data.usage?.output_tokens || data.output_tokens || 0;
+      // Read usage from `resolved`, not `data`: when the request went async,
+      // `data` is the { status: 'processing' } envelope and carries no usage and
+      // no model, so logging against it recorded the wrong provider and zero tokens.
+      const inputTokens = resolved.usage?.input_tokens || resolved.input_tokens || 0;
+      const outputTokens = resolved.usage?.output_tokens || resolved.output_tokens || 0;
       const totalTokens = inputTokens + outputTokens;
       if (totalTokens > 0) {
         fetch('http://localhost:' + PORT + '/api/token-usage/log', {
@@ -3764,8 +3939,8 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
           body: JSON.stringify({
             project: 'xmrt-dao',
             agent: senderName || 'eliza',
-            model: data.model || 'deepseek-v4-flash',
-            provider: data.provider || 'cloud',
+            model: resolved.model || 'deepseek-v4-flash',
+            provider: resolved.provider || 'cloud',
             input_tokens: inputTokens,
             output_tokens: outputTokens,
             estimated_cost_usd: totalTokens > 0 ? (totalTokens / 1000) * 0.0015 : 0,
@@ -3778,7 +3953,7 @@ async function relayToElizaCloud(message, senderName = 'Eliza-Dev', relayTag = n
         }).catch(() => {});
       }
     } catch (_) {}
-    return { ...data, reply };
+    return { ...resolved, reply };
   } catch (err) {
     logActivity('eliza', tag, 'ERROR', err.message);
     return null;
@@ -3959,8 +4134,31 @@ const RATE_LIMIT_WINDOW = 60000;
 const RATE_LIMIT_MAX = 600;
 const SEND_EMAIL_RATE_MAX = 10;
 
-function rateLimit(ip, path) {
-  const now = Date.now();
+/**
+ * The caller's address, as far as we can honestly determine it.
+ *
+ * `x-forwarded-for` is a comma list and the FIRST entry is the original client,
+ * because each proxy appends the address it saw. Behind Cloudflare,
+ * `cf-connecting-ip` is more trustworthy than the header a client can set itself,
+ * so it is preferred when present. `trust proxy` has to be enabled for `req.ip`
+ * to be meaningful behind a proxy at all, which is why this is explicit.
+ *
+ * Returns null when nothing usable is available, so callers store a gap rather
+ * than a fabricated address.
+ */
+function requestIp(req) {
+  const cf = req.headers['cf-connecting-ip']?.split(',')[0]?.trim();
+  if (cf) return cf;
+  const xff = req.headers['x-forwarded-for']?.split(',')[0]?.trim();
+  if (xff) return xff;
+  return req.socket?.remoteAddress || req.ip || null;
+}
+
+function isLoopbackAddress(ip) {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+function rateLimit(ip, path) {  const now = Date.now();
   const key = `${ip}:${path.includes('send-email') ? 'send-email' : 'default'}`;
   const max = path.includes('send-email') ? SEND_EMAIL_RATE_MAX : RATE_LIMIT_MAX;
   let bucket = rateLimitBuckets.get(key);
@@ -3986,6 +4184,13 @@ app.use(async (req, res, next) => {
       req.path === '/ping' ||
       req.path === '/health' ||
       req.path === '/webhook/resend-inbound' ||
+      // Stripe cannot send an API key or a Cloudflare Access assertion, so this
+      // has to be reachable from the internet. That is safe only because the
+      // handler authenticates the request with the Stripe signature over the raw
+      // body, which is unforgeable. It was missing from this list, so every
+      // delivery from Stripe was refused with 401 and no payment was ever
+      // recorded - while the endpoint looked complete.
+      req.path === '/webhook/stripe' ||
       req.path.startsWith('/functions/v1/') ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/auth/cert-login' ||
       req.path.startsWith('/api/suite/') ||
@@ -4032,8 +4237,8 @@ app.use(async (req, res, next) => {
   const isTunnelRequest = req.headers['cf-ray'] || req.headers['cf-connecting-ip'];
   if (!isTunnelRequest && !req.path.startsWith('/api/') && !isSensitive && !isSensitiveHost) return next();
   
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
-  if (!isTunnelRequest && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) return next();
+  const ip = requestIp(req);
+  if (!isTunnelRequest && isLoopbackAddress(ip)) return next();
   
   // Rate limit check
   if (!rateLimit(ip, req.path)) {
@@ -4071,7 +4276,52 @@ app.use(async (req, res, next) => {
     if (apiKey === RELAY_API_KEY) return next();
     // Also accept cert:verified:* cookies — these are set by POST /api/auth/cert-login
     // when a graduate logs in with their XMRT-DAO-CERT JWT
-    if (apiKey.startsWith('cert:verified:')) return next();
+    //
+    // It used to be accepted on a prefix test alone:
+    //
+    //   if (apiKey.startsWith('cert:verified:')) return next();
+    //
+    // No lookup, no expiry check, no revocation check. Anyone presenting the cookie
+    // `cert:verified:anything at all` was authenticated as a graduate — the exact
+    // inverse of tying an agent to their certificate, since an id nobody issued
+    // was as good as one that was.
+    //
+    // The id is now resolved against public.agent_certifications, where all
+    // fourteen certificates actually live, and a miss is refused rather than
+    // assumed. Nothing previously checked expiry or revocation anywhere in this
+    // path: cert-login looked in process memory (empty) and then a Supabase edge
+    // function that 502s.
+    if (apiKey.startsWith('cert:verified:')) {
+      const { verifyCertCookie } = await import('./jobby/certs.mjs');
+      const verdict = await verifyCertCookie(apiKey);
+      if (verdict.ok) {
+        req.certAuth = {
+          agent_id: verdict.agent_id, agent_name: verdict.agent_name,
+          tier: verdict.tier, permissions: verdict.permissions,
+          expires_at: verdict.expires_at,
+        };
+        return next();
+      }
+      // A verifier that cannot reach the database is our fault, not the caller's,
+      // so it is a 503. Reporting 401 here is what sent the previous round of
+      // investigation looking at graduation records instead of at the relay.
+      if (verdict.reason === 'verifier_unavailable') {
+        console.warn(`[AUTH] Cert verifier unavailable for ${ip}: ${req.method} ${req.path}`);
+        return res.status(503).json({
+          error: 'Certificate verification is temporarily unavailable. Retry shortly.',
+          code: 'verifier_unavailable',
+        });
+      }
+      console.warn(`[AUTH] Rejected certificate cookie (${verdict.reason}) from ${ip}: ${req.method} ${req.path}`);
+      return res.status(401).json({
+        error: verdict.reason === 'expired'
+          ? 'This certificate has expired. Graduate again from XMRT University to renew it.'
+          : verdict.reason === 'revoked'
+            ? 'This certificate has been revoked.'
+            : 'Invalid certificate.',
+        code: verdict.reason,
+      });
+    }
     // Check agent-specific API keys (xrt_ prefix) from the in-memory cache
     if (apiKey.startsWith('xrt_') && agentApiKeys[apiKey]) {
       req.agentAuth = { agent_id: agentApiKeys[apiKey].agent_id, label: agentApiKeys[apiKey].label, method: 'agent_key' };
@@ -4155,11 +4405,41 @@ app.get('/images/:name', (req, res) => {
 // there but nothing loads" reads as a data problem and is actually a 404 on this
 // file. tests/static-assets.test.mjs now asserts every script the page references
 // answers 200, so it cannot go missing quietly again.
+// A cache key that changes whenever dashboard.js changes on disk.
+//
+// WHY THIS EXISTS. The script tag used to point at a constant
+// "/static/dashboard.js", and Cloudflare answers that URL from its edge with
+// `cache-control: max-age=14400` and `cf-cache-status: HIT` — four hours. The
+// relay was serving the new file correctly the whole time (167,928 bytes on
+// disk) while every browser kept executing the old one (158,652 bytes). The
+// symptom was a feature that "did nothing": the DOM node was present and the
+// endpoint answered 404/401 correctly, and the button still did not exist in
+// the page, because the page was never given the code.
+//
+// Deriving the stamp from mtime+size means the version bumps itself on every
+// edit. Nothing to remember to update, so nothing can forget.
+let dashboardJsVersionCache = null;
+function dashboardJsVersion() {
+  try {
+    const st = statSync(join(PUBLIC_DIR, 'dashboard.js'));
+    const v = st.mtimeMs + '.' + st.size;
+    if (v !== dashboardJsVersionCache) dashboardJsVersionCache = v;
+    return v;
+  } catch {
+    return dashboardJsVersionCache || '0';
+  }
+}
+
 app.get('/static/dashboard.js', (req, res) => {
   const filePath = join(PUBLIC_DIR, 'dashboard.js');
   if (!existsSync(filePath)) {
     return res.status(404).send('/* dashboard.js not found */');
   }
+  // revalidate, do not serve blind from the edge. The versioned URL in the HTML
+  // is what makes this cheap; this header is what stops an unversioned request
+  // (someone opening the file directly, a bookmark, an old cached HTML page)
+  // from being four hours stale.
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   let content = readFileSync(filePath, 'utf8');
   // The dashboard carries no placeholders today, but the substitution is kept
   // because removing it is a silent breakage: the moment a ${supabaseUrl} is
@@ -4657,29 +4937,83 @@ app.post('/api/suite/sharing-rules', async (req, res) => {
 });
 
 // ── Activity Log ─────────────────────────────────────────────────────
+// THE LIVE HANDLERS live here, not in routes/suite-dashboard.mjs.
+//
+// This path was registered three times. Express keeps the first registration
+// and silently ignores the rest, and registerSuiteRoutes(app) is called at the
+// very bottom of this file (line ~15681) - so every route in that module that
+// also exists here is dead code, not an override. 33 paths are affected; this
+// one mattered because it is how a task handoff is recorded.
+//
+// app.suite_activity_log has exactly these columns, established by measuring
+// SELECT * rather than by reading a migration:
+//   id, type, company, description, metadata, created_at
+// There is no activity_type / title / status / task_id / agent_id column, and
+// the Suite SPA sends all six when it records a handoff. So a handoff used to
+// be stored as a bare sentence - no type, no task, no agent - while the client
+// received 201 and the UI showed a success toast. Nothing was ever wrong with
+// the drag-and-drop itself; the reassignment persisted correctly the whole time.
+// The record of it did not.
+//
+// type now carries the event name so handoffs are queryable, and the fields the
+// table cannot hold are folded into metadata rather than discarded. The proper
+// fix is an additive migration adding those columns; this is lossless without one.
+function suiteActivityMetadata(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return v; }
+}
+
 app.get('/api/suite/activity-log', async (req, res) => {
   trackRequest('/api/suite/activity-log');
   try {
-    const company = req.query.company;
-    const limit = parseInt(req.query.limit) || 50;
-    const r = company
-      ? await queryLocalPg('SELECT * FROM app.suite_activity_log WHERE company = $1 ORDER BY created_at DESC LIMIT $2', [company, limit])
-      : await queryLocalPg('SELECT * FROM app.suite_activity_log ORDER BY created_at DESC LIMIT $1', [limit]);
-    res.json(r.rows);
+    const where = [];
+    const params = [];
+    if (req.query.company) { params.push(req.query.company); where.push(`company = $${params.length}`); }
+    // Added so a handoff can actually be asked for. Without it, callers could
+    // not filter on the event type, which is most of what the log is for.
+    if (req.query.type) { params.push(req.query.type); where.push(`type = $${params.length}`); }
+    const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+    params.push(limit);
+    const r = await queryLocalPg(
+      `SELECT * FROM app.suite_activity_log${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    // jsonb arrives as a string over this driver; hand back an object so every
+    // caller is not each re-parsing it.
+    res.json(r.rows.map((row) => ({ ...row, metadata: suiteActivityMetadata(row.metadata) })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/suite/activity-log', async (req, res) => {
   trackRequest('POST /api/suite/activity-log');
   try {
-    const { type, company, description, metadata } = req.body;
-    await queryLocalPg(
-      `INSERT INTO app.suite_activity_log (type, company, description, metadata, created_at) VALUES ($1,$2,$3,$4,NOW())`,
-      [type||null, company||null, description||null, metadata||null]
+    const b = req.body || {};
+    const activityType = b.activity_type || b.type || null;
+    if (!activityType) return res.status(400).json({ error: 'activity_type required' });
+    const meta = {
+      ...(suiteActivityMetadata(b.metadata) || {}),
+      ...(b.title ? { title: b.title } : {}),
+      ...(b.status ? { status: b.status } : {}),
+      ...(b.task_id ? { task_id: b.task_id } : {}),
+      ...(b.agent_id ? { agent_id: b.agent_id } : {}),
+    };
+    const r = await queryLocalPg(
+      `INSERT INTO app.suite_activity_log (type, company, description, metadata, created_at)
+       VALUES ($1,$2,$3,$4,NOW()) RETURNING *`,
+      [activityType, b.company || null, b.description || '', Object.keys(meta).length ? JSON.stringify(meta) : null]
     );
-    res.status(201).json({ ok: true });
+    const row = r.rows[0] || {};
+    res.status(201).json({ ...row, metadata: suiteActivityMetadata(row.metadata) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// The two other registrations of this path were removed. One read
+// {type, company, description, metadata} against a client that sends
+// {activity_type, title, ...} and nulled everything; the other read columns the
+// table does not have and would have thrown on every handoff. The modular copy
+// in routes/suite-dashboard.mjs is also removed, so there is one implementation
+// and it is the one that runs.
 
 // ── Users ────────────────────────────────────────────────────────────
 app.get('/api/suite/users', async (req, res) => {
@@ -4938,19 +5272,14 @@ app.patch('/api/suite/agents/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Activity Log ────────────────────────────────────────────────
-app.post('/api/suite/activity-log', async (req, res) => {
-  trackRequest('POST /api/suite/activity-log');
-  try {
-    const { activity_type, title, description, status, task_id, agent_id, metadata } = req.body;
-    if (!activity_type) return res.status(400).json({ error: 'activity_type required' });
-    const r = await queryLocalPg(
-      `INSERT INTO app.suite_activity_log (activity_type, title, description, status, task_id, agent_id, metadata) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [activity_type, title||'', description||'', status||'completed', task_id||null, agent_id||null, metadata ? JSON.stringify(metadata) : '{}']
-    );
-    res.status(201).json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// A third POST /api/suite/activity-log used to live here. It was the only one
+// that wrote the fields the Suite SPA actually sends (activity_type, title,
+// status, task_id, agent_id) and it would have been the right handler - but
+// app.suite_activity_log has none of those columns. Verified by measurement
+// (SELECT * returns id, type, company, description, metadata, created_at), so
+// enabling it as written would have thrown "column activity_type does not exist"
+// on every handoff. The live handler folds the unmodelled fields into metadata
+// instead; the proper fix is an additive migration.
 
 // ── Dashboard Stats ──────────────────────────────────────────────
 app.get('/api/suite/stats', async (req, res) => {
@@ -4959,15 +5288,23 @@ app.get('/api/suite/stats', async (req, res) => {
     const [tasks, agents, health, entities, workflows] = await Promise.all([
       queryLocalPg(`SELECT count(*)::int AS c FROM app.tasks WHERE status IN ('PENDING','IN_PROGRESS','CLAIMED','BLOCKED')`),
       queryLocalPg(`SELECT count(*)::int AS c FROM app.agents WHERE status IN ('IDLE','BUSY')`),
-      queryLocalPg(`SELECT metadata FROM app.suite_activity_log WHERE activity_type = 'system_health_check' ORDER BY created_at DESC LIMIT 1`).catch(() => ({ rows: [] })),
+      // 'type' is the column that exists; 'activity_type' never has, so this
+      // query threw on every call and the .catch below turned the throw into an
+      // empty result. Combined with the healthScore = 100 default further down,
+      // the dashboard reported a perfect health score forever, with no way to
+      // fail. Absent evidence of health, the honest answer is 'unknown'.
+      queryLocalPg(`SELECT metadata FROM app.suite_activity_log WHERE type = 'system_health_check' ORDER BY created_at DESC LIMIT 1`).catch(() => ({ rows: [] })),
       queryLocalPg(`SELECT count(*)::int AS c FROM app.knowledge_entities`).catch(() => ({ rows: [{ c: 0 }] })),
       queryLocalPg(`SELECT count(*)::int AS c FROM app.suite_campaigns WHERE is_active = true`).catch(() => ({ rows: [{ c: 0 }] })),
     ]);
 
-    let healthScore = 100, healthStatus = 'healthy', healthIssues = [];
+    // Default to 'unknown', not 'healthy'. No health row means nothing has
+    // reported in - which is a gap in the evidence, not a clean bill of health,
+    // and a monitoring surface that cannot fail is worse than no surface at all.
+    let healthScore = null, healthStatus = 'unknown', healthIssues = [];
     if (health.rows[0]?.metadata) {
       const m = typeof health.rows[0].metadata === 'string' ? JSON.parse(health.rows[0].metadata) : health.rows[0].metadata;
-      healthScore = m.health_score ?? 100;
+      healthScore = m.health_score ?? null;
       healthStatus = m.status === 'critical' ? 'critical' : m.status === 'degraded' ? 'degraded' : 'healthy';
       if (m.issues_count && m.issues_count > 0) healthIssues = [`${m.issues_count} issue(s) detected`];
     }
@@ -5299,11 +5636,12 @@ app.get('/api/supervisor/status', async (req, res) => {
       }
     } catch (e) { /* state file unavailable */ }
 
-    // Cheap PID liveness check — process.kill(pid, 0) throws if pid is dead
-    function isProcessRunningByPid(pid) {
-      if (!pid || pid <= 0) return false;
-      try { process.kill(pid, 0); return true; } catch { return false; }
-    }
+    // isProcessRunningByPid used to be defined HERE, inside this handler. That made
+    // it invisible to the sibling POST /api/supervisor/restart endpoint, which
+    // called it and died with a ReferenceError — surfacing as HTTP 500 with an
+    // empty body and a UI that read "HTTP 500" instead of a restart. It is now
+    // module-level (see below the status endpoint); the call inside this handler
+    // resolves to the same function.
 
     // Supervisor status: the relay's built-in service manager handles all services.
     // The XMRT-LocalSupervisor scheduled task (--once mode) is an optional health monitor.
@@ -5455,6 +5793,225 @@ app.get('/api/supervisor/status', async (req, res) => {
   } catch (e) {
     return res.json({ ok: false, error: e.message, services: [], tasks: [], recentLog: [] });
   }
+});
+
+/**
+ * Cheap PID liveness check — process.kill(pid, 0) throws if the pid is dead.
+ *
+ * Module-level on purpose. It was defined inside the /api/supervisor/status
+ * handler, which made it unreachable from POST /api/supervisor/restart: that
+ * endpoint called it, got a ReferenceError, and answered 500 with no body. The
+ * button then read "HTTP 500" and nothing restarted. Kept here so both routes
+ * and anything added later share one definition.
+ */
+function isProcessRunningByPid(pid) {
+  if (!pid || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/**
+ * The supervised services, read from the supervisor's own state file.
+ *
+ * The same source /api/supervisor/status uses, deliberately. This endpoint
+ * resolves pids from here rather than from a list written out locally, because
+ * that local mirror already drifted once: the dashboard showed 11 services
+ * while the supervisor was watching 14.
+ */
+async function listSupervisedServices() {
+  try {
+    const STATE_FILE = join(DATA_DIR, 'supervisor-state.json');
+    if (!existsSync(STATE_FILE)) return [];
+    const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    const svc = state?.services || {};
+    // Field is `childPid`, not `pid` — assumed wrong on the first attempt and
+    // caught by reading a real state file. `isExternal` services (tunnel, pg)
+    // are attached rather than spawned, so a SIGTERM there is the supervisor's
+    // business, not ours.
+    return Object.entries(svc).map(([name, s]) => ({
+      name,
+      pid: s?.childPid ?? null,
+      healthy: Boolean(s?.healthy),
+      isExternal: Boolean(s?.isExternal),
+      startedAt: s?.startedAt ?? null,
+      failures: s?.failures ?? 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MANUAL SERVICE RESTART — the owner gets the supervisor's powers from the UI.
+//
+// This does NOT signal the process itself. It enqueues a `restart` action in
+// service-actions.json, which is the queue the supervisor already drains at the
+// top of every one of its 30-second ticks, and the supervisor performs the real
+// stop-then-start. That was not the first design.
+//
+// The first design sent SIGTERM to the child pid and waited. It worked, and it
+// took about ninety seconds, and for most of that the UI showed a red bar
+// reading "pid never changed" — while the service was in fact on its way back.
+// Two ticks are needed for a dead EXTERNAL service: one to notice the death and
+// drop it from state, one to start it. An endpoint that reports honestly ("new
+// pid or it did not happen") has to wait for that, so the timeout has to cover
+// it.
+//
+// NO HAND-COPIED SERVICE LIST. The names and pids come from the same state file
+// /api/supervisor/status already reads above. That mirror drifted once already
+// — the dashboard showed 11 services while the supervisor watched 14 — and the
+// comment at that endpoint explains why. Adding a service here would recreate
+// the exact bug this code documents.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Per-service restart timestamps, for the same reason the supervisor keeps its
+// own: a double-click or an impatient repeat must not be able to thrash Postgres.
+const manualRestarts = new Map();   // service -> [epochMs]
+const MAX_MANUAL_RESTARTS = 3;      // per service
+const MANUAL_WINDOW_MS = 3600000;   // per hour
+
+function manualRestartAllowed(service) {
+  const now = Date.now();
+  const hits = (manualRestarts.get(service) || []).filter((t) => now - t < MANUAL_WINDOW_MS);
+  manualRestarts.set(service, hits);
+  return hits.length < MAX_MANUAL_RESTARTS;
+}
+
+function noteManualRestart(service) {
+  const hits = manualRestarts.get(service) || [];
+  hits.push(Date.now());
+  manualRestarts.set(service, hits);
+}
+
+app.post('/api/supervisor/restart', express.json(), async (req, res) => {
+  // Gate: a restart is a kill switch on the database and on the edge-function
+  // layer fifteen files depend on. It takes the same authority the fleet-chat
+  // send path requires, so this is not an open POST from anything that can
+  // reach 8080.
+  const key = req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+  const certed = Boolean(req.certAuth?.agent_id);
+  const keyed = key && key === process.env.RELAY_API_KEY;
+  if (!certed && !keyed) {
+    return res.status(401).json({
+      error: 'restart requires a verified agent certificate or the relay API key',
+    });
+  }
+
+  const service = String(req.body?.service || '').trim();
+  if (!service) {
+    return res.status(400).json({ error: 'service is required', services: await listSupervisedServices() });
+  }
+  if (!/^[a-z0-9-]{1,40}$/i.test(service)) {
+    return res.status(400).json({ error: `illegal service name ${JSON.stringify(service.slice(0, 40))}` });
+  }
+
+  if (!manualRestartAllowed(service)) {
+    return res.status(429).json({
+      error: `${service} has been restarted ${MAX_MANUAL_RESTARTS} times in the last hour`,
+      service,
+    });
+  }
+
+  const known = await listSupervisedServices();
+  const entry = known.find((s) => s.name === service);
+  if (!entry) {
+    return res.status(404).json({
+      error: `no supervised service named "${service}"`,
+      services: known.map((s) => s.name),
+    });
+  }
+
+  const oldPid = entry.pid || null;
+  const who = req.certAuth?.agent_id || 'api-key';
+
+  // ── HOW THE RESTART IS ACTUALLY PERFORMED ────────────────────────────────
+  //
+  // This used to SIGTERM the child and wait for the supervisor to notice. That
+  // worked, and it took 90 seconds and showed the user a red bar saying
+  // "pid never changed" while the service was in fact coming back — because the
+  // supervisor's daemon loop sleeps 30s between ticks and only starts a dead
+  // EXTERNAL service on the tick AFTER it notices the death. Two ticks.
+  //
+  // It now enqueues an action in service-actions.json, which is the queue the
+  // supervisor already drains at the top of every tick. That path does a real
+  // stop-then-start (including killing the port owner first, so a fresh spawn
+  // cannot die on EADDRINUSE) and records a result the caller can read back.
+  // One tick instead of two, and no hand-rolled signalling that could disagree
+  // with what the supervisor considers a service.
+  const queueFile = join(DATA_DIR, 'service-actions.json');
+  let queue = [];
+  try {
+    if (existsSync(queueFile)) {
+      const parsed = JSON.parse(readFileSync(queueFile, 'utf8'));
+      if (Array.isArray(parsed)) queue = parsed;
+    }
+  } catch (e) {
+    return res.status(500).json({ error: `service-actions.json is unreadable: ${e.message}` });
+  }
+
+  // Drop entries that are old AND already processed. Pruning on age alone would
+// be wrong — an unprocessed action is still a promise the supervisor has not
+// kept, and deleting it would silently drop a restart someone asked for. Pruning
+// on processedAt alone would be wrong the other way: the queue would keep only
+// the newest result. Both conditions, so the file stays bounded and nothing
+// pending is ever discarded.
+  const cutoff = Date.now() - 3600000;
+  const stampOf = (a) => a?.queuedAt || a?.requestedAt || 0;
+  queue = queue.filter((a) => {
+    if (!a) return false;
+    if (a.processedAt) return stampOf(a) > cutoff;
+    return true;                       // never processed: keep it
+  });
+
+  const already = queue.find(
+    (a) => a && !a.processedAt && a.service === service && a.action === 'restart'
+  );
+  if (already) {
+    return res.status(409).json({
+      error: `a restart of ${service} is already queued (pid ${already.queuedPid ?? '?'})`,
+      service, queuedAt: already.queuedAt,
+    });
+  }
+
+  const action = {
+    action: 'restart',
+    service,
+    requestedBy: who,
+    queuedAt: Date.now(),
+    queuedPid: oldPid,
+    source: 'dashboard-restart-button',
+  };
+  queue.push(action);
+  noteManualRestart(service);
+
+  try {
+    writeFileSync(queueFile, JSON.stringify(queue, null, 2));
+  } catch (e) {
+    return res.status(500).json({ error: `could not write the service action queue: ${e.message}` });
+  }
+
+  console.log(
+    `[manual-restart] ${service} (pid ${oldPid ?? 'none'}) queued by ${who}; ` +
+    `the supervisor drains it on its next tick (within 30s)`
+  );
+
+  // Respond AFTER the queue write, so a client that gets an OK knows the action
+  // is durably recorded. This matters for `relay` too: the supervisor restarts
+  // the relay on the next tick, not in this handler, so this reply still arrives
+  // and the page does not have to survive the connection dropping.
+  res.json({
+    ok: true,
+    service,
+    queued: true,
+    oldPid,
+    queuedAt: action.queuedAt,
+    // Told plainly so the UI does not have to invent a message: the work is
+    // queued, not done. Success is still judged by a new pid.
+    note: 'queued for the supervisor; it drains service-actions.json once every 30s. ' +
+          'Poll /api/supervisor/status and treat a NEW pid as the restart.',
+    ...(oldPid && !isProcessRunningByPid(oldPid)
+      ? { warning: 'the recorded pid was already not running; the supervisor will start it fresh' }
+      : {}),
+  });
 });
 
 // Hostname-based redirect: agency.31harbor.com → /harbor/
@@ -5990,6 +6547,48 @@ app.get('/', (req, res) => {
     /* Selection */
     ::selection { background: var(--lumen-accent-bg); color: var(--lumen-text); }
 
+    /* ── Owner restart control ──────────────────────────────────────────────
+       One row per supervised service, with the button the owner did not have
+       until now.
+
+       Deliberately NOT inside #qds-services-tracker. updateQDSupervisor
+       rewrites that element's innerHTML every 10 seconds, which would wipe a
+       button out from under a click and destroy any in-flight progress bar.
+       These rows are built once per service and mutated in place.
+
+       The bar uses visibility rather than display so the row does not reflow
+       when progress starts — a bar appearing should not move the button the
+       pointer is already travelling toward. */
+    .qd-svc { display: grid; grid-template-columns: 8px minmax(0,1fr) auto 56px auto auto;
+              align-items: center; gap: 5px; padding: 2px 3px; border-radius: 4px;
+              font-size: 0.62rem; line-height: 1.5; }
+    .qd-svc.danger { background: rgba(248,113,113,0.07); box-shadow: inset 2px 0 0 rgba(248,113,113,0.45); }
+    .qd-svc.busy { background: rgba(251,191,36,0.08); }
+    .qd-dot { width: 6px; height: 6px; border-radius: 50%; background: #4a4a5e; }
+    .qd-dot.ok { background: #4ade80; box-shadow: 0 0 5px rgba(74,222,128,0.7); }
+    .qd-dot.bad { background: #f87171; box-shadow: 0 0 5px rgba(248,113,113,0.7); }
+    .qd-name { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .qd-pid { color: var(--text-dim); font-family: var(--font-mono); font-size: 0.55rem; }
+    .qd-bar { visibility: hidden; width: 56px; height: 3px; border-radius: 2px;
+              background: rgba(255,255,255,0.09); overflow: hidden; }
+    .qd-bar.show { visibility: visible; }
+    .qd-bar i { display: block; height: 100%; width: 4%; border-radius: 2px;
+                background: #fbbf24; animation: qd-fill 1.1s ease-in-out infinite; }
+    /* A resolved bar stops animating and sits full. Full is not decoration: it
+       is the only visual that distinguishes "confirmed" from "still trying". */
+    .qd-svc.done .qd-bar i { background: #4ade80; animation: none; width: 100%; }
+    .qd-svc.fail .qd-bar i { background: #f87171; animation: none; width: 100%; }
+    @keyframes qd-fill { 0% { width: 4%; } 50% { width: 62%; } 100% { width: 4%; } }
+    .qd-state { color: #6b6b80; font-size: 0.55rem; white-space: nowrap; }
+    .qd-state.work { color: #fbbf24; }
+    .qd-state.done { color: #4ade80; }
+    .qd-state.fail { color: #f87171; }
+    .qd-btn { background: transparent; border: 1px solid #3a3a5a; color: #a1a1b5;
+              border-radius: 3px; font-size: 0.55rem; padding: 1px 6px; cursor: pointer;
+              white-space: nowrap; font-family: inherit; }
+    .qd-btn:hover:not(:disabled) { border-color: var(--accent-orange); color: var(--accent-orange); }
+    .qd-btn:disabled { opacity: 0.35; cursor: default; }
+
 </style>
 </head>
 <body>
@@ -6080,6 +6679,19 @@ app.get('/', (req, res) => {
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:var(--text-dim);">
           <div style="margin-bottom:2px;color:#8b8ba0;">Consolidated Services</div>
           <div id="qds-services-tracker" style="line-height:1.6;">-</div>
+        </div>
+        <!-- Owner restart control. Rows are built by dashboard.js from the same
+             /api/supervisor/status payload as the chips above, so this list can
+             never name a service the supervisor is not actually watching. -->
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1e1e2e;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+            <span style="color:#8b8ba0;font-size:0.6rem;letter-spacing:0.05em;">RESTART CONTROL</span>
+            <span style="color:#4a4a5e;font-size:0.55rem;">owner</span>
+            <span style="margin-left:auto;font-size:0.55rem;color:#6b6b80;">3/hour/service</span>
+          </div>
+          <div id="qds-restart-list" style="display:flex;flex-direction:column;gap:1px;">
+            <div style="color:#6b6b80;font-size:0.6rem;">loading services&hellip;</div>
+          </div>
         </div>
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.65rem;color:var(--text-dim);">
           <span style="color:#60a5fa;">⚡ relay</span> v7.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
@@ -6517,7 +7129,7 @@ app.get('/', (req, res) => {
             </div>
             </div><!-- /fn-catalog -->
 
-            <script src="/static/dashboard.js"></script>
+            <script src="/static/dashboard.js?v=${dashboardJsVersion()}"></script>
 
             <script src="/static/markdown.js"></script>
   
@@ -6708,8 +7320,8 @@ app.get('/api/hermes/context', async (req, res) => {
     const [memories, tasks, agents, trustEvents, fleetMsgs, pgHealth] = await Promise.all([
       queryLocalPg("SELECT title, body, agent_id, created_at FROM app.fleet_memory ORDER BY created_at DESC LIMIT 10").catch(() => ({ rows: [] })),
       queryLocalPg("SELECT id, title, status, assignee_agent_id, priority, stage FROM app.tasks WHERE status NOT IN ('completed','cancelled') ORDER BY priority DESC LIMIT 10").catch(() => ({ rows: [] })),
-      queryLocalPg("SELECT did, name, role, trust_score, trust_band, status, lifecycle_status FROM app.cuttlefish_agents ORDER BY trust_score DESC").catch(() => ({ rows: [] })),
-      queryLocalPg("SELECT count(*)::int AS c FROM app.cuttlefish_trust_events").catch(() => ({ rows: [{ c: 0 }] })),
+      queryLocalPg("SELECT did, name, role, trust_score, trust_band, status, lifecycle_status FROM public.registry_agents ORDER BY trust_score DESC").catch(() => ({ rows: [] })),
+      queryLocalPg("SELECT count(*)::int AS c FROM public.trust_events").catch(() => ({ rows: [{ c: 0 }] })),
       queryLocalPg("SELECT agent_id, message, created_at FROM public.fleet_messages ORDER BY created_at DESC LIMIT 10").catch(() => ({ rows: [] })),
       queryLocalPg("SELECT 1 AS ok").then(() => true).catch(() => false),
     ]);
@@ -7354,41 +7966,97 @@ app.post('/api/auth/cert-login', express.json({ limit: '16kb' }), async (req, re
     return res.status(400).json({ success: false, error: 'Unable to parse certificate from JWT' });
   }
 
-  // 1. Check in-memory state first (fast, no external calls)
-  const certs = state.get('xmrt-university-certs') || {};
-  const ingested = certs[certId];
-  if (ingested) {
-    certData = {
-      certificate_id: certId,
-      agent_id: ingested.agent_id,
-      agent_name: ingested.agent_name,
-      tier: ingested.tier,
-      permissions: ingested.permissions,
-    };
+  // 1. The authoritative table.
+  //
+  // This route used to verify in two steps that could both miss: process memory
+  // (`state['xmrt-university-certs']`, which nothing populates in practice) and a
+  // fallback POST to /functions/v1/xmrt-university, which 502s because local
+  // Supabase does not serve it. It never read public.agent_certifications, where
+  // all fourteen certificates live with agent_id, tier, permissions and
+  // expires_at — so nothing in this path ever checked a real expiry date, and a
+  // lapsed certificate produced the same answer as one that was never issued.
+  //
+  // The three failure modes are now distinct, because they send the caller to
+  // different places:
+  //
+  //   not_found            -> they never graduated; go to XMRT University
+  //   expired              -> they graduated; re-take the modules
+  //   revoked              -> it was taken away; ask whoever revoked it
+  //   verifier_unavailable -> the relay is broken; retry, do not re-graduate
+  //
+  // That last one is the reason this matters. When the verifier was down the old
+  // code returned "Please graduate from XMRT University first" to an agent with a
+  // valid certificate, and that message is what sent this investigation after
+  // Hermes's graduation instead of after the relay.
+  let verdict = null;
+  try {
+    const { verifyCertificate } = await import('./jobby/certs.mjs');
+    verdict = await verifyCertificate(certId);
+  } catch (e) {
+    return res.status(503).json({
+      success: false,
+      error: 'Certificate verification is temporarily unavailable. Retry shortly.',
+      code: 'verifier_unavailable',
+    });
   }
 
-  // 2. Fallback: verify against the local xmrt-university edge function
-  if (!certData) {
-    try {
-      const verifyRes = await fetch(`http://localhost:${PORT}/functions/v1/xmrt-university`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', agent_id: jwtSub, cert_id: certId }),
-        signal: AbortSignal.timeout(5000),
+  if (!verdict.ok) {
+    if (verdict.reason === 'verifier_unavailable') {
+      return res.status(503).json({
+        success: false,
+        error: 'Certificate verification is temporarily unavailable. Retry shortly.',
+        code: 'verifier_unavailable',
       });
-      if (verifyRes.ok) {
-        const verified = await verifyRes.json();
-        if (verified?.valid && verified?.certificate) {
-          certData = verified.certificate;
-        }
-      }
-    } catch (e) {
-      // Verify failed silently
     }
+    const messages = {
+      not_found: 'No certificate was found for that credential. Graduate from XMRT University first.',
+      expired: `This certificate expired on ${String(verdict.expires_at || '').slice(0, 10)}. Graduate again from XMRT University to renew it.`,
+      revoked: 'This certificate has been revoked.',
+      no_certificate: 'Unable to read a certificate from that credential.',
+    };
+    return res.status(401).json({
+      success: false,
+      error: messages[verdict.reason] || 'Invalid XMRT-DAO-CERT.',
+      code: verdict.reason,
+      // Only when we actually know — a candidate is told to re-graduate when the
+      // relay is at fault often enough.
+      agent_id: verdict.agent_id || null,
+      expired_at: verdict.expires_at || null,
+    });
   }
 
-  if (!certData) {
-    return res.status(401).json({ success: false, error: 'Invalid or expired XMRT-DAO-CERT. Please graduate from XMRT University first.' });
+  certData = {
+    certificate_id: certId,
+    agent_id: verdict.agent_id,
+    agent_name: verdict.agent_name,
+    tier: verdict.tier,
+    permissions: verdict.permissions,
+    expires_at: verdict.expires_at,
+  };
+
+  // Record it in the in-memory maps too, so the fleet board and peer list see this
+  // agent as certified without a second query on every render.
+  try {
+    const byId = state.get('xmrt-university-certs') || {};
+    byId[certId] = {
+      agent_id: certData.agent_id, agent_name: certData.agent_name,
+      tier: certData.tier, permissions: certData.permissions,
+    };
+    state.set('xmrt-university-certs', byId);
+
+    const agents = state.get('fleet.agents') || {};
+    agents[certData.agent_id] = {
+      ...(agents[certData.agent_id] || {}),
+      name: certData.agent_name || agents[certData.agent_id]?.name,
+      cert_id: certId,
+      cert_tier: certData.tier,
+      cert_permissions: certData.permissions,
+      cert_expires_at: certData.expires_at || null,
+      last_heartbeat: new Date().toISOString(),
+    };
+    state.set('fleet.agents', agents);
+  } catch (e) {
+    // The login succeeded; failing to warm the caches must not undo it.
   }
 
   // Set the relay_api_key cookie with a special cert:verified: prefix
@@ -7790,6 +8458,32 @@ app.get('/api/fleet/agents', async (req, res) => {
         const registryData = await registryRes.json();
         if (registryData.peers) {
           for (const peer of registryData.peers) {
+            // LIVENESS GATE.
+            //
+            // The registry is a persistent list of every agent ever certified, so
+            // it keeps returning agents that stopped running weeks ago - the
+            // Hermes family has last_heartbeat between 2026-08-27 and 2026-09-16.
+            // The relay merged them all in on every boot, stamped last_seen = now,
+            // and prompted them. A month-dead agent answers that prompt with no
+            // grounding and posts confidently wrong numbers into fleet chat: CPU
+            // at 99% against an actual 3%, a trust score of 3 against an actual
+            // 96.26.
+            //
+            // `peer.last_heartbeat` is the real liveness signal and is left
+            // alone. `last_seen` was NOT usable: it was overwritten with now() on
+            // every registration, so every agent looked permanently fresh and a
+            // staleness check against it could never fail.
+            const hb = peer.last_heartbeat ? new Date(peer.last_heartbeat).getTime() : 0;
+            const hoursSinceHb = hb ? (Date.now() - hb) / 3600000 : Infinity;
+            const STALE_HOURS = 6;
+            if (hoursSinceHb > STALE_HOURS) {
+              const when = hb ? new Date(hb).toISOString().slice(0, 16) : 'never';
+              console.log(
+                `[agentRegistry] skipping stale peer ${peer.agent_name || peer.agent_id}: last heartbeat ${when}`
+              );
+              continue;
+            }
+
             // Check if this peer matches an existing agent by name (avoid duplicates)
             const existingKey = Object.keys(agents).find(
               (k) => agents[k].name?.toLowerCase() === peer.agent_name?.toLowerCase()
@@ -8504,6 +9198,92 @@ const CURATED_TOOL_SCHEMAS = {
     },
     required: ['op'],
   },
+  // video-brief returns `measured` (exact, from ffmpeg) and `read` (a model's
+  // opinion of the contact sheet) as separate fields, so a caller can trust them
+  // to different degrees and can tell when only one of them exists.
+  //
+  // Media is addressed by media_id. There is deliberately no `input` path here:
+  // media-register is the single place a path or URL is accepted.
+  'video-brief': {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string', description: 'An id from media-register or media-list' },
+      frames: { type: 'number', description: 'Contact-sheet frames, 2-48. Default 12' },
+      cols: { type: 'number', description: 'Contact-sheet columns. Default 4' },
+      from: { type: 'number', description: 'Start of the range to review, in seconds' },
+      to: { type: 'number', description: 'End of the range to review, in seconds' },
+      scene_threshold: { type: 'number', description: 'scdet cut sensitivity, default 12. Lower finds more cuts' },
+      transcript: { type: 'string', description: 'Optional transcript text to include' },
+      model: { type: 'string', description: 'Vision model. Only space-bunny-free is reachable from the relay' },
+      shots: { type: 'boolean', description: 'Set false to skip cut detection' },
+      loudness: { type: 'boolean', description: 'Set false to skip EBU R128 measurement' },
+      waveform: { type: 'boolean', description: 'Also render an audio waveform PNG' },
+    },
+    required: ['media_id'],
+  },
+  'media-register': {
+    type: 'object',
+    properties: {
+      source: { type: 'string', description: 'A URL, or a local path. The bytes are copied into the managed media root and addressed by id from then on.' },
+      label: { type: 'string', description: 'Short human name' },
+      note: { type: 'string', description: 'What this is and where it came from' },
+      agent: { type: 'string', description: 'Who is registering it. Recorded on the entry.' },
+    },
+    required: ['source'],
+  },
+  'media-list': {
+    type: 'object',
+    properties: { kind: { type: 'string', enum: ['video', 'image', 'audio'] } },
+  },
+  'media-get': {
+    type: 'object',
+    properties: { media_id: { type: 'string' } },
+    required: ['media_id'],
+  },
+  'media-remove': {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string' },
+      purge: { type: 'boolean', description: 'Also delete the managed file' },
+    },
+    required: ['media_id'],
+  },
+  'media-probe': {
+    type: 'object',
+    properties: { media_id: { type: 'string' } },
+    required: ['media_id'],
+  },
+  'media-shots': {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string' },
+      threshold: { type: 'number', description: 'scdet sensitivity, default 12' },
+    },
+    required: ['media_id'],
+  },
+  'media-contact-sheet': {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string' },
+      frames: { type: 'number' },
+      cols: { type: 'number' },
+      out: { type: 'string', description: 'Write the PNG here instead of a temp path' },
+    },
+    required: ['media_id'],
+  },
+  'media-loudness': {
+    type: 'object',
+    properties: { media_id: { type: 'string' } },
+    required: ['media_id'],
+  },
+  'media-waveform': {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string' },
+      out: { type: 'string' },
+    },
+    required: ['media_id'],
+  },
   'paragraph-publish': {
     type: 'object',
     properties: {
@@ -8691,6 +9471,16 @@ function getToolDescription(name) {
     'video-editor': 'Edit video from the command line via FFmpeg. Ops: info, trim (start/duration), concat (files[]), text-overlay, thumbnail (at, out), audio-extract, watermark (image, position), speed (factor), gif. Args: op (required), input/input2/files/output as needed. Returns the output path and ffprobe metadata.',
     'paragraph-publish': 'Publish an article to Paragraph.com. Args: title (required), markdown (required), status (default "published"), categories[], subtitle, imageUrl, slug. Returns the published URL. Use for the daily-news pipeline.',
     'muapi-generate-image': 'Generate an image with MuAPI. Args: prompt (required), and optional size/style. Returns the resulting image URL.',
+    'media-register': 'Ingest a video, image or audio file and get an id for it. Args: source (a URL or local path - the only place either is accepted), label, note, agent. The bytes are copied into the managed media root, so the id cannot be swapped out later. Use this before any other media tool.',
+    'media-list': 'List registered media: id, kind, size, label, who registered it, and whether the file is still present. Args: kind (video/image/audio).',
+    'media-get': 'Details for one registered media id. Args: media_id (required).',
+    'media-remove': 'Forget a media id. Args: media_id (required), purge (also delete the managed file).',
+    'video-brief': 'LOOK AT a video or image before editing it. Returns measured facts from ffmpeg (duration, resolution, fps, real cut points, shot lengths, EBU R128 loudness, true peak) plus a contact sheet read by a vision model: shots, pace, framing, look, continuity, and one verdict. Args: media_id (required, from media-register), frames, cols, from, to, scene_threshold, transcript. Use this BEFORE video-editor, which cuts what it has not seen.',
+    'media-probe': 'Technical facts about registered media: duration, resolution, fps, codecs, audio channels, and whether it is really a still image. Args: media_id (required).',
+    'media-shots': 'Detect real cut points with scdet. Returns shot count, cut timestamps and shot lengths. Args: media_id (required), threshold (default 12; lower finds more cuts).',
+    'media-contact-sheet': 'Tile evenly sampled frames into one PNG so a whole spot can be seen at once. Args: media_id (required), frames, cols, out.',
+    'media-loudness': 'Measure EBU R128 integrated loudness, loudness range and true peak, with a delivery verdict. Args: media_id (required).',
+    'media-waveform': 'Render an audio waveform PNG for registered media. Args: media_id (required), out.',
     'page-agent-task': 'Create or inspect a browser page-agent task. Args: action (list/get/run), task fields. Drives the page-agent MCP worker.',
     'task-artifact': 'Read or write artifacts attached to a task. Args: task_id, artifact name/content. Use to get files a task produced.',
     'token-usage-avg': 'Average token usage and cost per agent/model over a window. Args: agent, model, hours. Use to answer "what is X costing us per day".',
@@ -8738,6 +9528,14 @@ function getToolDescription(name) {
     'vault-update': 'Rewrite the managed block of an existing vault note; fails if the note does not exist. Args: name (required), plus any of description/entity_type/aliases/related/confidence_score. Use this when asked to "update"/"refresh" a note.',
     'vault-sync-entities': 'Mirror entities from public.knowledge_entities (what Eliza extracts from conversation) into vault notes. Args: limit (default 300). Run this after a batch of conversation to fold new knowledge into the wiki. Notes whose content is unchanged are skipped, so a no-op sync does not touch git history.',
   };
+
+// PFP financial tools are registered by the async block at the top of
+// toolHandlers, which runs before this object exists. Adding the descriptions
+// here is the earliest point where `descriptions` is in scope.
+if (globalThis.__PFP_MONEY_TOOL_DESCRIPTIONS) {
+  Object.assign(descriptions, globalThis.__PFP_MONEY_TOOL_DESCRIPTIONS);
+  delete globalThis.__PFP_MONEY_TOOL_DESCRIPTIONS;
+}
 
   if (descriptions[name]) return descriptions[name];
 
@@ -8900,10 +9698,10 @@ app.get('/api/dao/health', async (req, res) => {
       // 2) Aggregate the dashboard fields from local tables using pool.query()
       // (pool.query acquires+releases a connection per query — safe for parallel use)
       const queries = [
-        // Count the real fleet agents (app.cuttlefish_agents) — agent.agents only
+        // Count the real fleet agents (public.registry_agents) — agent.agents only
         // holds the legacy Eliza-Dev row and undercounts the actual fleet.
-        pgPool.query("SELECT COUNT(*)::int AS c FROM app.cuttlefish_agents").catch(() => ({ rows: [{ c: 0 }] })),
-        pgPool.query("SELECT COUNT(*)::int AS c FROM app.cuttlefish_agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.registry_agents").catch(() => ({ rows: [{ c: 0 }] })),
+        pgPool.query("SELECT COUNT(*)::int AS c FROM public.registry_agents WHERE status = 'busy'").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM app.tasks WHERE status IN ('completed','done','DONE','COMPLETED')").catch(() => ({ rows: [{ c: 0 }] })),
         pgPool.query("SELECT COUNT(*)::int AS c FROM public.eliza_function_usage WHERE invoked_at > NOW() - INTERVAL '24 hours'").catch(() => ({ rows: [{ c: 0 }] })),
@@ -9313,6 +10111,53 @@ app.post('/api/leads/pfp', async (req, res) => {
   }
 });
 
+// ── PFP checkout ───────────────────────────────────────────────────────────
+//
+// Create a Stripe Checkout Session for a lead. The lead id goes into the
+// session's metadata, and that is the whole mechanism: when Stripe tells us the
+// session completed, the webhook reads the lead id back out and turns the lead
+// into a booking. There is no other link, and none is guessed.
+//
+// The caller supplies an idempotency key. Without one, an agent retrying this
+// call after a timeout would present the client with a second payment page, and
+// the client would see two charges for one event.
+//
+// This endpoint creates a session. It does not take money - the client does that
+// on Stripe's own page, and the amount is settled by Stripe, not by this relay.
+app.post('/api/pfp/checkout', async (req, res) => {
+  trackRequest('POST /api/pfp/checkout');
+  try {
+    const { lead_id, amountCents, currency, description, idempotencyKey, successUrl, cancelUrl } = req.body || {};
+    if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
+    if (!STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe is not configured on this relay' });
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        error: 'idempotencyKey is required',
+        detail: 'Without it a retry could charge the client twice. Use a stable key per lead and attempt, e.g. "pfp-" + lead_id + "-" + YYYYMMDD.',
+      });
+    }
+    const stripe = require('stripe')(STRIPE_SECRET_KEY);
+    const { createCheckoutForLead } = await import('./lib/pfp-checkout.mjs');
+    const { session, lead } = await createCheckoutForLead(
+      { stripe, query: queryLocalPg, log: logActivity },
+      lead_id,
+      { amountCents, currency, description, idempotencyKey, successUrl, cancelUrl }
+    );
+    res.json({
+      success: true,
+      lead_id: lead.id,
+      lead_status: lead.status,
+      session_id: session.id,
+      url: session.url,
+      amount: session.amount_total != null ? (session.amount_total / 100).toFixed(2) : null,
+      currency: session.currency,
+    });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ success: false, error: e.message });
+  }
+});
+
 // ── Web Search ──────────────────────────────────────────────
 app.post('/web-search', async (req, res) => {
   const { query, maxResults } = req.body;
@@ -9684,6 +10529,21 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
       .replace(/^\s*\{\s*"tool"\s*:\s*"[a-z_-]+"[\s\S]*?\}\s*$/im, '')    // bare JSON tool call
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+
+    // A message that WAS ONLY a tool call is now empty. Posting it anyway puts
+    // a blank from that agent on the bus, and every agent polls this channel -
+    // so a silent, content-free message reaches the whole fleet.
+    //
+    // Observed 2026-10-02 21:44:28: a blank from `eliza` eight seconds after a
+    // shell-exec timeout. The stripper did its job perfectly: the tool call was
+    // removed, and the removal left nothing behind.
+    //
+    // The tool card above already reports the call and its result, so the empty
+    // message adds no information - it only adds noise. Drop it.
+    if (!message) {
+      console.log(`[addFleetMessage] ${agent} message was empty after tool-call stripping; not posting`);
+      return null;
+    }
   }
   // Dedup: skip if we've seen this message in the last 5 minutes
   if (checkAndMarkDuplicated(agent, message)) return null;
@@ -9699,7 +10559,7 @@ function addFleetMessage(agent, message, channel = 'fleet', opts = {}) {
           // Write trust event for each violation
           try {
             await queryLocalPg(
-              `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, reference, note)
+              `INSERT INTO public.trust_events (agent_did, event_type, delta, reference, note)
                VALUES ($1, $2, $3, $4, $5)`,
               [agent, v.type, v.delta, `Pre-flight: ${v.claim}`, `Corrected: ${v.reality}`]
             );
@@ -9803,7 +10663,7 @@ function canAgentSpeak(agent, parentEntry) {
   setImmediate(async () => {
     try {
       const rows = await localQuery(
-        `SELECT trust_score, lifecycle_status FROM app.cuttlefish_agents WHERE did = $1 LIMIT 1`,
+        `SELECT trust_score, lifecycle_status FROM public.registry_agents WHERE did = $1 LIMIT 1`,
         [agent]
       );
       if (rows && rows.length > 0) {
@@ -10121,7 +10981,7 @@ async function gatherFleetContext() {
       try {
         const rows = await localQuery(
           `SELECT did, name, trust_score, trust_band, lifecycle_status, cac_tier
-           FROM app.cuttlefish_agents
+           FROM public.registry_agents
            WHERE lifecycle_status = 'active' OR lifecycle_status = 'suspended'
            ORDER BY trust_score DESC
            LIMIT 20`
@@ -10430,10 +11290,29 @@ async function routeFleetMessage(entry) {
     } catch (e) { /* best-effort */ }
 
     // Execute via relay's own /tools/run with retry on transient failures
-    // Vision tools need much longer timeouts (up to 3 min for cloud inference)
-    const isVisionTool = toolName && (toolName.includes('vision') || toolName.includes('screenshot'));
-    const toolTimeout = isVisionTool ? 180000 : 30000;  // 30s for chained tool calls
-    const MAX_RETRIES = isVisionTool ? 1 : 4;  // Don't retry vision — already takes long enough
+    //
+    // Three tiers, because "everything that is not vision gets 30s" was wrong for
+    // more than vision. Eliza lost a whole cycle to a `shell-exec` that timed out
+    // at 30s doing real filesystem work; the retry then succeeded against warm
+    // caches, which made it look intermittent rather than misconfigured.
+    //
+    //   vision    180s - cloud inference, already knew this
+    //   shell     120s - a directory walk or a build legitimately takes minutes
+    //   database  120s - same, and a query that would not finish in 30s was
+    //                       being reported as a failure rather than a timeout
+    //   default    30s - unchanged, and still right for the short tools
+    //
+    // The trade is real: a hung tool holds its slot 4x longer, and MAX_RETRIES is
+    // 4 for the non-vision tiers, so a genuinely wedged tool can occupy up to
+    // ~8 minutes. That is the cost of not killing work that was going to finish.
+    const toolName_l = String(toolName || '');
+    const isVisionTool = /vision|screenshot/i.test(toolName_l);
+    const isLongTool = /shell|python|sql|db|query|db-query|edge-function|generate/i.test(toolName_l);
+    const toolTimeout = isVisionTool ? 180000 : (isLongTool ? 120000 : 30000);
+    // Vision is slow but not flaky. Shell and database are the opposite: a
+    // timeout there is usually a slow first run, and the retry is what succeeds.
+    // Both keep 4 attempts; only vision is pinned to 1.
+    const MAX_RETRIES = isVisionTool ? 1 : 4;
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -10517,7 +11396,7 @@ async function routeFleetMessage(entry) {
     // still succeeds.
     try {
       await queryLocalPg(
-        `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note, reference)
+        `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, note, reference)
          VALUES ($1, 'FLEET_REPLY', 0.5, NULL, $2, $3)`,
         [agent, `Replied in #${channel} channel (msg ${reply.id ? reply.id.slice(0,12) : '?'})`, entry.id || null]
       ).catch(err => console.log(`[trust-log] insert error for ${agent}:`, err.message));
@@ -11538,7 +12417,7 @@ app.post('/api/footlocker/reclassify', async (req, res) => {
   try {
     // Reclassify supervisor/service stale-data events
     const result = await queryLocalPg(
-      `UPDATE app.cuttlefish_trust_events
+      `UPDATE public.trust_events
        SET event_type = 'INCORRECT_REFERENCE', delta = -1
        WHERE event_type = 'FABRICATION_DETECTED'
          AND (note ILIKE '%supervisor%' OR note ILIKE '%services are actually up%'
@@ -11667,7 +12546,39 @@ app.options('/api/fleet-chat/send', (req, res) => {
 app.post('/api/fleet-chat/send', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('/api/fleet-chat/send');
-  const { agent, message, channel, attachments } = req.body || {};
+  const { agent: claimedAgent, message, channel, attachments } = req.body || {};
+
+  // Tie the speaker to the certificate.
+  //
+  // `agent` is a string in the request body and that used to be the entire
+  // authorisation: anyone could post as vex, eliza or hermes, and the board
+  // renders whatever name it is handed. On localhost there was no auth at all.
+  // Over the tunnel a shared RELAY_API_KEY or a cert cookie was accepted for any
+  // claimed name, so a certificate belonging to Hermes could post as Vex.
+  //
+  // When the request carries a verified certificate, the speaker is taken from
+  // THAT, and a mismatch is refused rather than quietly honoured.
+  let agent = claimedAgent;
+  let speakerVerified = false;
+  if (req.certAuth?.agent_id) {
+    speakerVerified = true;
+    const claimed = String(claimedAgent || '').trim().toLowerCase();
+    const certified = String(req.certAuth.agent_id).trim().toLowerCase();
+    // Accept the short form as well: certificates are issued as "hermes-001" and
+    // people write "hermes".
+    const aliases = new Set([certified, certified.replace(/-001$/, '')]);
+    if (claimed && !aliases.has(claimed)) {
+      return res.status(403).json({
+        error: `This certificate belongs to ${req.certAuth.agent_id}, not ${claimedAgent}.`,
+        code: 'agent_cert_mismatch',
+        certified_as: req.certAuth.agent_id,
+      });
+    }
+    agent = req.certAuth.agent_id;
+  } else if (req.agentAuth?.agent_id) {
+    speakerVerified = true;
+    agent = req.agentAuth.agent_id;
+  }
 
   if (!agent || message == null || message === '') {
     return res.status(400).json({ error: 'agent and message are required', usage: { agent: 'vex|eliza|hermes', message: '...', channel: 'fleet|all|vex|eliza|hermes', attachments: '[...]' } });
@@ -11679,7 +12590,13 @@ app.post('/api/fleet-chat/send', async (req, res) => {
   }
 
   // Let addFleetMessage handle sanitization
-  const entry = addFleetMessage(agent, message, channel || 'fleet', { attachments: attachments || [] });
+  const entry = addFleetMessage(agent, message, channel || 'fleet', {
+    attachments: attachments || [],
+    // speaker_verified is carried through so a reader of the board can tell a proved
+    // speaker from one that merely named itself. Nothing enforced a certificate
+    // before this, so the board has never had that information.
+    speaker_verified: speakerVerified,
+  });
 
   // Store attachment references in DB (link to message) — synchronous to ensure persistence
   if (attachments && Array.isArray(attachments) && attachments.length > 0) {
@@ -11812,6 +12729,29 @@ function readSession(req) {
   return match ? decodeURIComponent(match.slice(JOBBY_COOKIE.length + 1)) : null;
 }
 
+/**
+ * The dossier view that best frames these active tracks.
+ *
+ * Ordered by how specifically the track frames a dossier, not by track number.
+ * FIFO is an environment — camp, rotation, equipment — and it is the most
+ * specific thing a dossier can be read through. Consulting is a way of working
+ * that most tracks also suit, so it is the fallback rather than the winner.
+ */
+const VIEW_PREFERENCE_BY_TRACK = [
+  [5, 'fifo'],
+  [3, 'technical'],
+  [4, 'technical'],
+  [2, 'contract_consulting'],
+  [1, 'contract_consulting'],
+];
+
+function defaultViewForTracks(tracks) {
+  for (const [track, view] of VIEW_PREFERENCE_BY_TRACK) {
+    if (Array.isArray(tracks) && tracks.includes(track)) return view;
+  }
+  return null;
+}
+
 async function resolveJobbyClient(req, res, { create = true, email = null } = {}) {
   let sid = readSession(req);
   // First contact: mint a session and return the cookie.
@@ -11820,6 +12760,31 @@ async function resolveJobbyClient(req, res, { create = true, email = null } = {}
     res.setHeader('Set-Cookie', sessionCookieHeader(sid));
   }
   if (!sid) return { error: 'no session', status: 401 };
+
+  // Record where this request came from, so a candidate's sessions, dossier and
+  // profile stay attached to one row that can also be recognised across devices.
+  // Best-effort on purpose: a failure here must never stop someone reaching the
+  // dossier they came for.
+  //
+  // The address is recorded, never used to decide who someone is. Two candidates
+  // behind one office or campus NAT share an address, and treating that as proof
+  // of identity would union two employment histories into one invented tenure.
+  // `jobbyStore.findIdentityCandidates` reports IP matches as context for that
+  // reason; only a proved address or a stated phone number identifies a person.
+  const clientIp = requestIp(req);
+  const recordClientSession = async (client) => {
+    if (!client?.id) return client;
+    try {
+      await jobbyStore.recordSession(client.id, {
+        sessionKey: sid,
+        ip: clientIp,
+        userAgent: req.headers['user-agent'] || null,
+      });
+    } catch (e) {
+      console.warn(`[jobby] session/IP record failed for client ${client.id}: ${e.message}`);
+    }
+    return client;
+  };
 
   // An email makes this person identifiable across browsers. A session id does
   // not: it is minted fresh whenever the cookie is absent, so the same human
@@ -11832,15 +12797,14 @@ async function resolveJobbyClient(req, res, { create = true, email = null } = {}
   // person's record to the wrong dossier.
   if (email) {
     const { findClaimedPeers } = await import('./jobby/claim.mjs');
-    const peers = await findClaimedPeers(email);
-    if (peers.length) {
+    const peers = await findClaimedPeers(email);    if (peers.length) {
       const known = peers.find(p => p.session_key === sid) || peers[0];
       // Adopt the established record. The new session is pointed at it rather
       // than becoming another copy, and the cookie is rewritten so the next
       // request does not have to work it out again.
       res.setHeader('Set-Cookie', sessionCookieHeader(known.session_key));
       return {
-        client: await jobbyStore.getOrCreateClient(known.session_key),
+        client: await recordClientSession(await jobbyStore.getOrCreateClient(known.session_key)),
         sid: known.session_key,
         adopted: true,
       };
@@ -11848,7 +12812,7 @@ async function resolveJobbyClient(req, res, { create = true, email = null } = {}
   }
 
   const client = await jobbyStore.getOrCreateClient(sid);
-  return { client, sid };
+  return { client: await recordClientSession(client), sid };
 }
 
 /**
@@ -11877,7 +12841,15 @@ app.post('/api/jobby/claim', async (req, res) => {
     // Sent from the candidate's own jobby mailbox, so the code arrives somewhere
     // only they can read. A code mailed from a system address would prove
     // nothing: anyone who can ask for one can ask for a code to go with it.
-    const sender = resolveJobbySender();
+    //
+    // The client is passed in, and it was not before. resolveJobbySender() reads
+    // its argument to decide whether to send as the candidate, and called with no
+    // argument `client` is null, so the candidate branch was unreachable and every
+    // code went out from the hardcoded fallback - jobby@31harbor.com, a system
+    // address on a different domain, which is the exact thing the comment above
+    // says must not happen. The comment was right and the call contradicted it,
+    // which is only findable by sending a real one and reading where it came from.
+    const sender = resolveJobbySender(client);
     const from = sender.from;
     const sent = await sendViaResend({
       from,
@@ -11890,8 +12862,20 @@ app.post('/api/jobby/claim', async (req, res) => {
         'Give it to Jobby to prove this address is yours, and your dossier will be',
         'the same on your phone as on this computer.',
         '',
+        // Say which address this came from, and why it might not be the address
+        // being verified. A candidate who receives a login code from a sender
+        // that is not the service they are signing up to will reasonably assume
+        // phishing, and the first-claim code ALWAYS comes from the system
+        // address - you cannot send from an address whose control is exactly what
+        // is being proved.
+        `This message came from ${sender.address || 'the Jobby service address'}.`,
+        sender.source === 'candidate'
+          ? 'That is your own Jobby address.'
+          : 'It is the service address, because this is your first code - we cannot',
+        sender.source === 'candidate' ? '' : 'write to your own address until we know it is yours.',
+        '',
         'If you did not ask for this, nothing has happened and you can ignore it.',
-      ].join('\n'),
+      ].filter((line, i, a) => !(line === '' && a[i - 1] === '')).join('\n'),
     });
 
     if (sent?.error) {
@@ -11956,6 +12940,52 @@ app.post('/api/jobby/claim/verify', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/jobby/source-company — who should this candidate approach, and how
+ * do we know.
+ *
+ * READ-ONLY with respect to the candidate's identity: nothing here sends
+ * anything, contacts anyone, or authenticates anywhere. It fetches public pages
+ * and reports what they say, with the source of every claim.
+ *
+ * The LinkedIn route to this answer costs $69/seat/month and hands a third party
+ * a credential for someone's professional identity. This costs nothing and holds
+ * no credential, and it is correspondingly narrower: it finds what a company
+ * publishes, and it says when that is nothing.
+ */
+app.post('/api/jobby/source-company', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/jobby/source-company');
+  try {
+    // Same resolver every other /api/jobby route uses, so this honours the
+    // session cookie and the same client identity. Re-deriving the cookie here
+    // would mint a second client per request and split the candidate's record,
+    // which is the bug this function exists in part to avoid.
+    const client = await resolveJobbyClient(req, res);
+    const result = await sourceCompany({
+      company: req.body?.company || req.body?.name || '',
+      urls: req.body?.urls,
+      roleHint: req.body?.role || req.body?.roleHint || null,
+      limit: Math.min(Number(req.body?.limit) || 5, 15),
+      clientId: client.id,
+    }, {
+      // Discovery reuses the relay's own web-search rather than reaching for a
+      // network client. Without this the endpoint had no way to find pages and
+      // answered "no way to find pages" for every company — which reads as a
+      // broken feature rather than as a missing dependency.
+      searchFn: async ({ query, limit }) => {
+        if (typeof toolHandlers['web-search'] !== 'function') return { results: [] };
+        const out = await toolHandlers['web-search']({ query, limit });
+        return { results: out?.results || [] };
+      },
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[jobby] source-company error:', e.message);
+    res.status(500).json({ error: 'Sourcing failed: ' + String(e.message || e).slice(0, 160) });
+  }
+});
+
 /** GET /api/jobby/session — who am I, and what state am I in? */
 app.get('/api/jobby/session', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11966,18 +12996,85 @@ app.get('/api/jobby/session', async (req, res) => {
     const dossierRow = await jobbyStore.getDossier(client.id);
     const actions = await jobbyStore.listActions(client.id, { limit: 60 });
     const sending = await jobbyStore.canSend(client.id);
+
+    // Whether this person has proved an address, and whether a code is sitting
+    // in their inbox waiting to be typed in.
+    //
+    // Both were invisible, which is the whole reason the verification flow could
+    // be completely broken without anybody noticing. The site had no way to show
+    // "prove your email", and Jobby had no way to warn the candidate before they
+    // reached the apply gate - so the first sign of trouble was a refusal to send
+    // an application, on the one action that cannot be undone.
+    const claimState = await (await import('./jobby/claim.mjs')).claimState(client.id);
+
+    // The candidate's own details, and which record each was read from.
+    //
+    // These used to be `client.display_name`, `client.phone` and
+    // `client.location` and nothing else, so the mission card was a second,
+    // independently-stored copy of facts the dossier already held, with nothing
+    // keeping the two in step. The observable result: a candidate told Jobby their
+    // name, watched the dossier panel update, and found the mission card still
+    // reading the old one — and for 12 clients, whose details arrived inside their
+    // resume rather than at onboarding, the card read "not set" for the name and
+    // "not given" for a phone number they had already supplied.
+    //
+    // Read from the dossier, with the columns as the per-field fallback, and the
+    // source sent so the card can say which record it is showing.
+    const who = jobbyStore.effectiveContact(client, dossierRow?.dossier);
+
     res.json({
       client: {
         id: client.id,
-        displayName: client.display_name,
+        displayName: who.name.value,
+        // 'dossier' | 'client' | 'not_stated'. The page shows this, because a
+        // candidate who edits their dossier and watches the card not move needs
+        // to be told which record won rather than left to work it out.
+        nameSource: who.name.source,
+        // The same three-way provenance for the rest, so the edit form can pre-fill
+        // from what is actually on file instead of what a stale column holds.
+        phone: who.phone.value,
+        phoneSource: who.phone.source,
+        location: who.location.value,
+        locationSource: who.location.source,
         tracks: client.tracks,
         trackReasons: client.track_reasons,
         missionState: client.mission_state,
         autonomy: client.autonomy,
         killSwitch: client.kill_switch,
         dailySendCap: client.daily_send_cap,
+        // The candidate's own address on our domain, assigned at onboarding. Sent
+        // so the page can show it before they apply, which is the whole point of
+        // having one: a recruiter replies to this, not to an agent.
+        //
+        // Assigned lazily in the send path until now, so it was null for every new
+        // candidate and only appeared after a first application — the one moment
+        // where showing it is too late to be reassuring.
+        mailbox: client.mailbox || null,
+        mailboxDomain: client.mailbox ? MAILBOX_DOMAIN : null,
       },
+      email: claimState,
       tracks: Object.values(JOBBY_TRACKS),
+      // Track 5's roster shape, so the page can say what is actually in it
+      // instead of asserting "88 roles" from a constant that might not match.
+      // Only sent when there is a dossier to have decided against.
+      fifo: dossierRow ? await fifoBrief() : null,
+      // Every view of the one dossier, sent whole.
+      //
+      // All of them, not just the one matching the active track, because the
+      // switch is the interaction: a candidate flicking between "FIFO" and
+      // "journalism" to see what changes should not wait on a request each time,
+      // and the whole point is that they *can* switch. Each view carries what it
+      // cannot show, so a thin one reads as thin rather than as broken.
+      views: dossierRow ? buildAllViews(dossierRow.dossier) : null,
+      // The view the current track set implies, for the initial selection.
+      //
+      // The most specialised active track wins, not the first one. Picking
+      // tracks[0] meant a candidate with [1,2,3,4,5] — which is what a FIFO
+      // trades candidate resolves to, since track 1 opens on consulting signals —
+      // landed on the consulting view first. Ranking so the narrowest relevant
+      // track leads: FIFO (5) is a specific environment, consulting (1) is a way
+      // of working, and the environment is what frames the dossier.
+      defaultView: dossierRow ? defaultViewForTracks(client.tracks) : null,
       hasDossier: !!dossierRow,
       dossierRevision: dossierRow?.revision ?? 0,
       actions: actions.map(a => ({
@@ -12241,8 +13338,86 @@ app.patch('/api/jobby/client', async (req, res) => {
       patch.tracks = [...new Set(tracks)].sort((a, b) => a - b);
       patch.track_reasons = patch.track_reasons || {};
     }
+    // The candidate's own details, edited on the mission card, go to the dossier.
+    //
+    // The card used to read columns nothing else wrote, so the page and the chat
+    // had two ways to change a name and one of them changed a copy — and the same
+    // was true of the phone and the location, which is worse, because a candidate
+    // who gave both on their resume saw "not given" and was asked again by an edit
+    // form that pre-filled from the wrong place. All three now go through one call
+    // that writes the dossier and mirrors the columns.
+    let details = null;
+    let fieldErrors = null;
+    const wanted = {};
+    if ('display_name' in patch) {
+      const name = typeof patch.display_name === 'string' ? patch.display_name.trim() : '';
+      if (!name) return res.status(400).json({ error: 'display_name cannot be blank' });
+      if (name.length > 200) return res.status(400).json({ error: 'display_name is over 200 characters' });
+      wanted.name = name;
+    }
+    for (const key of ['phone', 'location']) {
+      if (!(key in patch)) continue;
+      const v = patch[key];
+      if (v === null) { wanted[key] = null; continue; }
+      const s = String(v).trim();
+      const max = key === 'phone' ? 120 : 200;
+      if (s.length > max) { fieldErrors = fieldErrors || []; fieldErrors.push({ field: key, error: `${key} is over ${max} characters` }); continue; }
+      wanted[key] = s || null;
+    }
+    if (Object.keys(wanted).length) {
+      delete patch.display_name;
+      delete patch.phone;
+      delete patch.location;
+      details = await jobbyStore.setCandidateDetails(client.id, wanted, { updatedBy: 'dashboard' });
+    }
     const updated = await jobbyStore.updateClient(client.id, patch);
-    res.json({ success: true, client: updated });
+    const dossierRow = await jobbyStore.getDossier(client.id);
+    const who = jobbyStore.effectiveContact(updated || client, dossierRow?.dossier);
+
+    // Every field that actually moved, from both halves of the write.
+    //
+    // Two versions of this were wrong in opposite directions, and both are the
+    // same mistake — reporting what was *sent* rather than what *changed*:
+    //
+    //   the first reported only the dossier's changes, so a save that renamed
+    //   nobody and switched the send mode answered `changed: ["name"]`;
+    //
+    //   the second reported every key in the request body, so a form that always
+    //   submits all seven fields claimed the cap and the send mode had moved when
+    //   the candidate had touched neither. A confirmation that lists changes that
+    //   did not happen teaches someone to stop reading confirmations.
+    //
+    // So it is compared against what was on file, per field, and a field that came
+    // back the same is not reported. The comparison is on the client row, because
+    // the dossier half already does exactly this in setCandidateDetails.
+    const clientChanged = Object.keys(patch).filter((k) => {
+      const before = client[k];
+      const after = updated ? updated[k] : patch[k];
+      if (typeof before === 'string' || typeof after === 'string') {
+        return String(before ?? '') !== String(after ?? '');
+      }
+      return before !== after;
+    });
+    const dossierChanged = details?.changed || [];
+    const changed = [...new Set([...dossierChanged, ...clientChanged])];
+
+    res.json({
+      success: true,
+      client: {
+        ...(updated || client),
+        display_name: who.name.value,
+        name_source: who.name.source,
+        phone: who.phone.value,
+        location: who.location.value,
+      },
+      changed,
+      // Sent when a save was partly refused, so the page can name the field that
+      // did not take rather than reporting a whole-form success.
+      ...(fieldErrors ? { fieldErrors } : {}),
+      // Sent so the page can re-render the dossier panel from the same call that
+      // changed the card, rather than showing a stale dossier beside a fresh card.
+      dossierRevision: dossierRow?.revision ?? 0,
+    });
   } catch (e) {
     console.error('[jobby] client update error:', e.message);
     res.status(500).json({ error: 'could not update client' });
@@ -12266,8 +13441,687 @@ app.get('/api/jobby/outreach', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/jobby/applications — the candidate's pipeline, packet by packet.
+ *
+ * This exists because the packet work was otherwise a feature no human could
+ * reach. `jobby_prepare_packet` writes six columns of tailored content and
+ * eligibility findings to app.job_applications, and the agent reads it back only
+ * in the turn it wrote it. Nothing listed them, nothing showed the gaps, and a
+ * candidate had no way to see a per-application note the agent had produced for
+ * them — the same "an endpoint no page calls is not a feature" shape this repo
+ * keeps hitting.
+ *
+ * The shape of the response is deliberate. It does not lead with a count of
+ * applications, because a count of applications tells a candidate nothing about
+ * whether any of them can actually be sent. It leads with `needsYou`, the notes
+ * that are blocking or waiting on an answer, because that is the list a person
+ * can act on. `prepared` counts packets written; it never implies they were sent.
+ */
+app.get('/api/jobby/applications', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/jobby/applications');
+  try {
+    const { client, error, status } = await resolveJobbyClient(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const rows = await listApplications(client.id, { limit });
+
+    // A jsonb column is handed back parsed by pg, but these are written as text
+    // by the packet path and read defensively anyway. A row that will not parse
+    // is reported as unreadable rather than thrown, because one malformed packet
+    // must not take out the whole pipeline list — the opposite of the
+    // { raw: text } convention used for chat rows, where the text is still worth
+    // showing.
+    const read = (v) => {
+      if (v === null || v === undefined) return null;
+      if (typeof v !== 'string') return v;
+      try { return JSON.parse(v); } catch { return { unreadable: true }; }
+    };
+    const applications = rows.map((r) => {
+      const packet = read(r.packet);
+      const eligibility = read(r.eligibility);
+      const notes = read(r.notes);
+      return {
+        id: r.id,
+        url: r.url,
+        company: r.company,
+        role: r.role,
+        // 'pending' means a packet exists. It does not mean an application was
+        // made, and the UI must not render it as one.
+        status: r.status,
+        attempts: r.attempts,
+        viewUsed: r.view_used ?? null,
+        // Null unless a live check actually confirmed the posting is open.
+        validatedAt: r.validated_at ?? null,
+        packet,
+        eligibility,
+        notes: Array.isArray(notes) ? notes : [],
+        // Only a real run moves this, so it is the honest answer to "did I apply".
+        submittedAt: r.submitted_at ?? null,
+      };
+    });
+
+    // The actionable list, sorted so blocking beats needs-answer beats info.
+    const weight = { blocking: 0, needs_answer: 1, info: 2 };
+    const needsYou = applications
+      .flatMap((a) => a.notes.map((n) => ({ ...n, applicationId: a.id, url: a.url, role: a.role })))
+      .filter((n) => n.severity === 'blocking' || n.severity === 'needs_answer')
+      .sort((x, y) => (weight[x.severity] ?? 3) - (weight[y.severity] ?? 3));
+
+    res.json({
+      applications,
+      needsYou,
+      // Counts, labelled so none of them can be misread as submissions.
+      counts: {
+        prepared: applications.filter((a) => a.packet).length,
+        submitted: applications.filter((a) => a.submittedAt).length,
+        blocked: needsYou.filter((n) => n.severity === 'blocking').length,
+        unconfirmedOpenings: applications.filter(
+          (a) => a.packet?.validation && a.packet.validation.verdict !== 'direct_posting').length,
+      },
+    });
+  } catch (e) {
+    console.error('[jobby] applications error:', e.message);
+    res.status(500).json({ error: 'could not load applications' });
+  }
+});
+
 /** OPTIONS preflight for the portal's cross-origin calls. */
 app.options('/api/jobby/:which', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(204).end();
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Jobby — employer side
+// ═══════════════════════════════════════════════════════════════════════
+//
+// A separate cookie, deliberately. Sharing `jobby_sid` would mean one browser
+// carries one identity across both surfaces: an HR person who opened the
+// candidate page in a second tab would find a job-seeker dossier they never
+// created, and a candidate who clicked "post a job" would find their client row
+// attached to postings. Two products, two identities, two cookies — the cost is
+// a second session; the alternative is the wrong person's data on the wrong page.
+
+const EMPLOYER_COOKIE = 'jobby_employer_sid';
+
+/** Read the employer session, minting one on first contact when allowed. */
+function readEmployerSession(req, res, { create = true } = {}) {
+  const raw = req.headers.cookie || '';
+  const match = raw.split(';').map((s) => s.trim())
+    .find((s) => s.startsWith(EMPLOYER_COOKIE + '='));
+  let sid = match ? decodeURIComponent(match.slice(EMPLOYER_COOKIE.length + 1)) : null;
+
+  if (!sid && create) {
+    sid = 'je_' + randomBytes(24).toString('hex');
+    res.setHeader('Set-Cookie', `${EMPLOYER_COOKIE}=${encodeURIComponent(sid)}; `
+      + `Max-Age=${SESSION_COOKIE_DAYS * 24 * 3600}; Expires=${SESSION_COOKIE_EXPIRES}; `
+      + 'Path=/; HttpOnly; SameSite=Lax');
+  }
+  return sid;
+}
+
+/**
+ * Resolve the employer behind this request.
+ *
+ * Returns `{ employer }` on success. Reads never create a row: a crawler hitting
+ * the board once must not become an employer, or the "N employers" figure is
+ * fiction.
+ */
+async function resolveEmployer(req, res, { create = true, displayName = null } = {}) {
+  const sid = readEmployerSession(req, res, { create });
+  if (!sid) return { error: 'no session', status: 401 };
+  const employer = await employerStore.getOrCreateEmployer(sid, displayName, { create });
+  if (!employer) return { error: 'no session', status: 401 };
+  return { employer };
+}
+
+/** GET /api/employer/session — who the employer is and what they have written. */
+app.get('/api/employer/session', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/employer/session');
+  try {
+    // No row on a plain GET. The page calls this on load, and every visitor to
+    // the employers page would otherwise become an employer row.
+    const { employer, error, status } = await resolveEmployer(req, res, { create: false });
+    if (error) {
+      return res.status(status === 401 && !readEmployerSession(req, res, { create: false }) ? 404 : status)
+        .json({ error, employer: null, needsSession: true });
+    }
+    res.json({
+      employer: {
+        id: employer.id,
+        displayName: employer.display_name,
+        company: employer.company,
+        email: employer.email,
+        // Said as a fact, because it is one, and because the page must label
+        // their postings from it rather than assuming.
+        verified: employer.verified,
+        website: employer.website,
+      },
+      stats: await employerStore.employerStats(employer.id),
+      postings: (await employerStore.listEmployerPostings(employer.id, { limit: 50 }))
+        .map((r) => ({ id: r.id, title: r.title, status: r.status, needsReview: r.needs_review })),
+    });
+  } catch (e) {
+    console.error('[employer] session error:', e.message);
+    res.status(500).json({ error: 'could not load your employer session' });
+  }
+});
+
+/**
+ * POST /api/employer/parse — parse a job description, create the employer, save a draft.
+ *
+ * This is the employer equivalent of the resume drop zone. It accepts raw text
+ * from the page (the Python service has already turned a PDF or DOCX into text)
+ * and returns the parse, including the review queue.
+ *
+ * It returns the parse even when it is incomplete. The employer needs to see what
+ * could not be read in order to fix it, and a 400 that only said "could not
+ * parse" would leave them with nothing to act on.
+ */
+app.post('/api/employer/parse', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/employer/parse');
+  try {
+    const body = req.body || {};
+    const text = typeof body.text === 'string' ? body.text
+      : (typeof body.description === 'string' ? body.description : '');
+    if (!text.trim()) {
+      return res.status(400).json({ error: 'Paste the job description first, or upload the file.' });
+    }
+    if (text.length > 200000) {
+      return res.status(413).json({ error: 'That description is longer than 200,000 characters. Trim it to the actual posting.' });
+    }
+
+    const parsed = parseJobDescription(text, {
+      titleHint: body.title || null,
+      companyHint: body.company || null,
+    });
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+
+    const { employer, error, status } = await resolveEmployer(req, res, {
+      create: true, displayName: body.company || null,
+    });
+    if (error) return res.status(status).json({ error });
+
+    const saved = await employerStore.savePosting(employer.id, parsed, {
+      applyUrl: body.apply_url || null,
+      contactEmail: body.contact_email || null,
+      status: 'draft',
+    });
+
+    const verdict = employerStore.assessForPublication(saved);
+    res.json({
+      ok: true,
+      // The whole parse, minus the source text, which the page already holds.
+      parse: { ...parsed, sourceText: undefined, sourceChars: parsed.sourceText.length },
+      posting: {
+        id: saved.id, title: saved.title, status: saved.status,
+        location: saved.location_text, locationSpecificity: saved.location_specificity,
+        pay: saved.pay_stated
+          ? { stated: true, min: Number(saved.pay_min), max: saved.pay_max === null ? null : Number(saved.pay_max), basis: saved.pay_basis }
+          : { stated: false, vague: saved.pay_vague, note: parsed.compensation.note },
+        needsReview: saved.needs_review,
+        titleRecognised: saved.title_recognised,
+        requiredTickets: saved.required_tickets,
+        preferredTickets: saved.preferred_tickets,
+        unstatedTickets: saved.unstated_tickets,
+        requirementsComplete: saved.requirements_complete,
+      },
+      canPublish: verdict.canPublish,
+      summary: verdict.summary,
+      reviewNotes: verdict.blockers.concat(verdict.warnings),
+    });
+  } catch (e) {
+    console.error('[employer] parse error:', e.message);
+    res.status(500).json({ error: 'could not read that job description' });
+  }
+});
+
+/**
+ * POST /api/employer/chat — the HR conversation.
+ *
+ * Separate history, separate session, separate tool set. A model call with the
+ * employer tool list only: there is no code path from this endpoint to
+ * jobby_send, jobby_apply, or any other irreversible candidate action, which is
+ * enforced by the tool list rather than by a check that could be forgotten.
+ */
+app.post('/api/employer/chat', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/employer/chat');
+  try {
+    const message = (req.body?.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    if (message.length > 8000) return res.status(413).json({ error: 'message is too long' });
+
+    const { employer, error, status } = await resolveEmployer(req, res, {
+      create: true, displayName: req.body?.company || null,
+    });
+    if (error) return res.status(status).json({ error });
+
+    const postingId = Number(req.body?.posting_id) || null;
+
+    // The whole conversation, its own tool set and its own prompt, live in
+    // employer-chat.mjs. The handler's only job is to resolve the employer and
+    // hand over — because a second copy of the model loop is a second copy of
+    // every provider quirk, and the first one written here invented a
+    // `callModel` function that does not exist in this codebase.
+
+    const out = await employerChat({
+      employer, message, postingId,
+      // The same inline adapter shape the candidate chat uses, over the same
+      // ollamaChat transport. Flattened into one prompt because that is what the
+      // transport takes; the system prompt is prepended rather than sent as a
+      // separate message.
+      //
+      // A distinct sessionId, so an employer's conversation cannot bleed into a
+      // candidate's context cache or vice versa. They are different people.
+      llmChat: {
+        chat: async (messages, opts = {}) => {
+          const system = messages.find((m) => m.role === 'system')?.content || '';
+          const prompt = messages[messages.length - 1]?.content || '';
+          const history = messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .slice(-10)
+            .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'Employer'}: ${m.content}`)
+            .join('\n\n');
+          const full = `${system}\n\n---\n\n${history}\n\nEmployer: ${prompt}\n\nAssistant:`;
+          const r = await ollamaChat(full, {
+            agent: 'jobby',
+            // Lower than the candidate side. An employer document is read by
+            // strangers, and a creative pass over a list of requirements is how a
+            // requirement the employer never wrote gets into it.
+            temperature: 0.3,
+            maxTokens: opts.maxTokens || 1400,
+            sessionId: `employer-${employer.id}`,
+          });
+          if (r?.error) throw new Error(r.error);
+          return { content: r?.response ?? r?.content ?? '', provider: r?.provider, model: r?.model };
+        },
+        search: async (query) => {
+          const r = await webSearch(query, { maxResults: 8 });
+          return r?.results ?? [];
+        },
+      },
+    });
+
+    // Whatever the model said about saving, the client is told what is actually
+    // on the server. The reply is not evidence of a write.
+    res.json({
+      reply: out.reply,
+      toolCalls: out.toolCalls,
+      // Non-null when the provider failed. The page shows the failure rather
+      // than an empty thread, so a blank conversation is never read as "nothing
+      // to do here".
+      providerError: out.providerError,
+      employer: {
+        id: employer.id, displayName: employer.display_name,
+        company: employer.company, verified: employer.verified,
+      },
+      stats: out.stats,
+      postings: out.postings,
+    });
+  } catch (e) {
+    console.error('[employer] chat error:', e.message);
+    res.status(500).json({ error: 'the posting assistant is not reachable right now' });
+  }
+});
+
+/** GET /api/employer/postings — the employer's own list. */
+app.get('/api/employer/postings', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/employer/postings');
+  try {
+    const { employer, error, status } = await resolveEmployer(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    res.json({
+      postings: await employerStore.listEmployerPostings(employer.id, { limit: 100 }),
+      stats: await employerStore.employerStats(employer.id),
+    });
+  } catch (e) {
+    console.error('[employer] postings error:', e.message);
+    res.status(500).json({ error: 'could not load your postings' });
+  }
+});
+
+/** PATCH /api/employer/postings/:id — apply a correction. */
+app.patch('/api/employer/postings/:id', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('PATCH /api/employer/postings/:id');
+  try {
+    const { employer, error, status } = await resolveEmployer(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad posting id' });
+
+    const body = req.body || {};
+    if (body.description !== undefined) {
+      const parsed = parseJobDescription(body.description, {
+        titleHint: body.title || null, companyHint: body.company || null,
+      });
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const saved = await employerStore.updatePostingContent(id, employer.id, parsed, {
+        applyUrl: body.apply_url, contactEmail: body.contact_email,
+      });
+      if (!saved) return res.status(404).json({ error: 'that posting is not on your account' });
+      const v = employerStore.assessForPublication(saved);
+      return res.json({ ok: true, canPublish: v.canPublish, summary: v.summary,
+        blockers: v.blockers, warnings: v.warnings });
+    }
+
+    const saved = await employerStore.updatePostingContent(id, employer.id, {
+      sourceText: '', // unchanged: only the fields below are being set
+      title: { title: body.title, recognised: true },
+      company: { name: body.company },
+    }, { applyUrl: body.apply_url, contactEmail: body.contact_email });
+    if (!saved) return res.status(404).json({ error: 'that posting is not on your account' });
+    const v = employerStore.assessForPublication(saved);
+    res.json({ ok: true, canPublish: v.canPublish, summary: v.summary,
+      blockers: v.blockers, warnings: v.warnings });
+  } catch (e) {
+    console.error('[employer] patch error:', e.message);
+    res.status(500).json({ error: 'could not update that posting' });
+  }
+});
+
+/**
+ * POST /api/employer/postings/:id/publish
+ *
+ * Refuses with the reasons when the posting is not fit to be read by strangers,
+ * and says so in the response rather than only in the log.
+ */
+app.post('/api/employer/postings/:id/publish', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/employer/postings/:id/publish');
+  try {
+    const { employer, error, status } = await resolveEmployer(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad posting id' });
+
+    const result = await employerStore.publishPosting(id, employer.id);
+    if (!result.ok) {
+      return res.status(409).json({
+        error: result.alreadyOnBoard ? 'already on the board' : 'not ready to publish',
+        summary: result.summary,
+        blockers: result.blockers,
+        warnings: result.warnings,
+      });
+    }
+    res.json({
+      ok: true, published: true,
+      alreadyPublished: !!result.alreadyPublished,
+      summary: result.summary,
+      warnings: result.warnings,
+    });
+  } catch (e) {
+    console.error('[employer] publish error:', e.message);
+    res.status(500).json({ error: 'could not publish that posting' });
+  }
+});
+
+/** POST /api/employer/postings/:id/close — take it down, keeping the record. */
+app.post('/api/employer/postings/:id/close', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/employer/postings/:id/close');
+  try {
+    const { employer, error, status } = await resolveEmployer(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    const id = Number(req.params.id);
+    const row = await employerStore.closePosting(id, employer.id);
+    if (!row) return res.status(404).json({ error: 'that posting is not live on your account' });
+    res.json({ ok: true, closed: true, postingId: id });
+  } catch (e) {
+    console.error('[employer] close error:', e.message);
+    res.status(500).json({ error: 'could not close that posting' });
+  }
+});
+
+/**
+ * GET /api/employer/jobs — the public board.
+ *
+ * Public on purpose, and the reason is specific: a job board with a login in
+ * front of it is a job board nobody checks. What it does not expose is the
+ * employer's session, the description until a posting is opened, or anything
+ * about other employers' drafts.
+ */
+app.get('/api/employer/jobs', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/employer/jobs');
+  try {
+    const q = req.query || {};
+    const filters = {
+      ticket: q.ticket || null,
+      family: q.family || null,
+      q: q.q || null,
+      remote: q.remote === '1' || q.remote === 'true',
+      arrangement: q.arrangement || null,
+    };
+    const limit = Math.min(Number(q.limit) || 50, 100);
+    const offset = Math.max(Number(q.offset) || 0, 0);
+    const rows = await employerStore.listPublishedPostings({ ...filters, limit, offset });
+    res.json({
+      jobs: rows.map((r) => ({
+        id: r.id, title: r.title, company: r.company,
+        location: r.location_text, locationSpecificity: r.location_specificity,
+        arrangement: r.arrangement,
+        // Candidates are told the pay is not stated, rather than shown nothing,
+        // because a blank pay field reads as an oversight and not as a statement.
+        pay: r.pay_stated
+          ? { stated: true, min: Number(r.pay_min), max: r.pay_max === null ? null : Number(r.pay_max), basis: r.pay_basis }
+          : { stated: false, note: 'No pay figure stated' },
+        tickets: r.required_tickets,
+        preferredTickets: r.preferred_tickets,
+        titleRecognised: r.title_recognised,
+        requirementsComplete: r.requirements_complete,
+        verified: r.verified,
+        publishedAt: r.published_at,
+        views: r.view_count,
+        applications: r.application_count,
+      })),
+      total: await employerStore.countPublishedPostings(filters),
+      limit,
+      offset,
+    });
+  } catch (e) {
+    console.error('[employer] board error:', e.message);
+    res.status(500).json({ error: 'could not load the board' });
+  }
+});
+
+/** GET /api/employer/jobs/:id — one posting, in full. Counts the view. */
+app.get('/api/employer/jobs/:id', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/employer/jobs/:id');
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad posting id' });
+    const row = await employerStore.getPublishedPosting(id);
+    if (!row) return res.status(404).json({ error: 'that job is not on the board' });
+    res.json({
+      job: {
+        id: row.id, title: row.title, company: row.company,
+        description: row.description,
+        location: row.location_text, locationSpecificity: row.location_specificity,
+        arrangement: row.arrangement,
+        pay: row.pay_stated
+          ? { stated: true, min: Number(row.pay_min), max: row.pay_max === null ? null : Number(row.pay_max), basis: row.pay_basis }
+          : { stated: false, note: 'No pay figure stated' },
+        requirements: row.requirements,
+        requiredTickets: row.required_tickets,
+        preferredTickets: row.preferred_tickets,
+        unstatedTickets: row.unstated_tickets,
+        applyUrl: row.apply_url,
+        contactEmail: row.contact_email,
+        verified: row.verified,
+        website: row.website,
+        publishedAt: row.published_at,
+        views: row.view_count,
+        applications: row.application_count,
+      },
+    });
+  } catch (e) {
+    console.error('[employer] job error:', e.message);
+    res.status(500).json({ error: 'could not load that job' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Jobby — the public job board, read from feeds
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/jobby/board — jobs read from public feeds.
+ *
+ * Public, like the employer board, for the same reason: a job board behind a
+ * login is one nobody checks.
+ *
+ * Every row is a third-party document. The response says so in a field rather
+ * than leaving a reader to assume these are listings Jobby checked — they are
+ * not, and the difference matters to somebody deciding whether to apply.
+ */
+app.get('/api/jobby/board', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/jobby/board');
+  try {
+    const q = req.query || {};
+    const opts = {
+      limit: Math.min(Number(q.limit) || 50, 200),
+      offset: Math.max(Number(q.offset) || 0, 0),
+      feedId: q.feed || null,
+      company: q.company || null,
+      q: q.q || null,
+      // Off by default. A board that mixes careers pages into a list of jobs is
+      // the exact failure the FIFO roster taught, and 160 of the 168 entries the
+      // original source list contained were links that would have failed it.
+      worthBuildingOnly: q.all !== '1' && q.all !== 'true',
+      remoteOnly: q.remote === '1' || q.remote === 'true',
+      includeStale: q.stale === '1' || q.stale === 'true',
+    };
+    const [rows, count, bySource, health] = await Promise.all([
+      readFeedBoard(opts), feedBoardCount(opts),
+      feedBoardBySource(), feedBoardHealth(),
+    ]);
+    res.json({
+      jobs: rows.map((r) => ({
+        id: r.id,
+        role: r.role,
+        company: r.company,
+        url: r.url,
+        location: r.location_stated,
+        // "Remote" is an arrangement, not a place. Carried separately so a client
+        // cannot render it as a location and match it against a city filter.
+        arrangement: r.arrangement_stated,
+        publishedAt: r.published_at,
+        worthBuilding: r.worth_building,
+        source: {
+          feed: r.feed_name,
+          feedId: r.feed_id,
+          // Whether the employer was a field or read out of the title. A reader
+          // deciding whether to trust a company name gets to know which.
+          companyProvenance: r.company_provenance,
+          validation: r.validation?.verdict || null,
+        },
+        // Said on every response, not only in a footer.
+        trust: r.trust,
+        firstSeenAt: r.first_seen_at,
+      })),
+      count,
+      note: 'These come from public job feeds. Nobody here has read or verified them, '
+        + 'and the employer named is sometimes read out of the posting title. '
+        + 'Confirm the opening is still live before you apply.',
+      // Per-feed, with how much of each feed is evidenced. Sent on every response
+      // because a list of links cannot show it: a source that names the employer on
+      // every row and one that names it on none look identical until you count.
+      bySource,
+      // The registry summary and the health problems — including the feeds that
+      // were measured and switched off, so a dead source is visible as dead rather
+      // than absent.
+      registry: health.registry,
+      healthProblems: health.problems,
+      lastRun: health.lastRun
+        ? { at: health.lastRun.at, ok: health.lastRun.ok, feedsOk: health.lastRun.feeds_ok, feedsFailed: health.lastRun.feeds_failed }
+        : null,
+    });
+  } catch (e) {
+    console.error('[board] error:', e.message);
+    res.status(500).json({ error: 'could not load the board' });
+  }
+});
+
+/**
+ * POST /api/jobby/board/poll — run a poll now.
+ *
+ * Authenticated as the service, not for the browser. A candidate cannot make
+ * this fire: it is 40 outbound requests to other people's servers, and an
+ * endpoint that lets anyone trigger it is a way to be a nuisance with someone
+ * else's infrastructure.
+ */
+app.post('/api/jobby/board/poll', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/jobby/board/poll');
+  if (process.env.JOBBY_BOARD_POLL_TOKEN) {
+    const given = req.headers['x-poll-token'];
+    if (given !== process.env.JOBBY_BOARD_POLL_TOKEN) {
+      return res.status(401).json({ error: 'poll token required' });
+    }
+  } else {
+    // No token configured, so the endpoint stays closed rather than open.
+    return res.status(503).json({
+      error: 'polling is not available',
+      detail: 'Set JOBBY_BOARD_POLL_TOKEN and restart to enable it. The endpoint is '
+        + 'closed by default because a poll is 40 outbound requests to other people\'s servers.',
+    });
+  }
+  try {
+    const run = await pollFeeds({
+      limit: Math.min(Number(req.body?.limit) || 60, 200),
+      only: Array.isArray(req.body?.feeds) ? req.body.feeds : null,
+    });
+    res.json({
+      ok: true,
+      runId: run.runId,
+      elapsedMs: run.elapsedMs,
+      feedsOk: run.feedsOk,
+      feedsFailed: run.feedsFailed,
+      disabledSkipped: run.disabledSkipped,
+      itemsSeen: run.itemsSeen,
+      itemsNew: run.itemsNew,
+      duplicatesSeen: run.duplicatesSeen,
+      failures: run.results.filter((r) => !r.ok).map((r) => ({ feed: r.feedName, error: r.error })),
+    });
+  } catch (e) {
+    console.error('[board] poll error:', e.message);
+    res.status(500).json({ error: 'the poll failed' });
+  }
+});
+
+/** GET /api/jobby/board/health — is the poller working, and what is broken. */
+app.get('/api/jobby/board/health', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const h = await feedBoardHealth();
+    res.json({
+      ok: h.ok,
+      count: h.count,
+      lastRun: h.lastRun,
+      registry: h.registry,
+      // Always present, never omitted when things are fine. A health check that
+      // says nothing when there is something to say is a health check nobody reads.
+      problems: h.problems,
+    });
+  } catch (e) {
+    console.error('[board] health error:', e.message);
+    res.status(500).json({ error: 'could not read board health' });
+  }
+});
+
+/** OPTIONS preflight for the employer surface. */
+app.options('/api/employer/:which', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -12889,7 +14743,7 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
   try {
     // Store user message in DB
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_chat_messages (agent_id, conversation_id, user_message, created_at) VALUES ($1, $2, $3, NOW())`,
+      `INSERT INTO public.chat_transcripts (agent_id, conversation_id, user_message, created_at) VALUES ($1, $2, $3, NOW())`,
       [agentId, convId, message]
     );
 
@@ -12932,7 +14786,7 @@ app.post('/api/contact/cuttlefishclaws/chat', express.json(), async (req, res) =
 
     // Store agent response in DB
     await queryLocalPg(
-      `UPDATE app.cuttlefish_chat_messages SET agent_response = $1 WHERE conversation_id = $2 AND user_message = $3`,
+      `UPDATE public.chat_transcripts SET agent_response = $1 WHERE conversation_id = $2 AND user_message = $3`,
       [agentResponse, convId, message]
     );
 
@@ -12976,13 +14830,13 @@ app.get('/api/cuttlefishclaws/trust-score', async (req, res) => {
   try {
     const agent = await queryLocalPg(
       `SELECT did, trust_score, status, agent_type, agent_subtype, created_at
-       FROM app.cuttlefish_agents WHERE did = $1`, [did]
+       FROM public.registry_agents WHERE did = $1`, [did]
     );
     if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
 
     const events = await queryLocalPg(
       `SELECT event_type, delta, score_after, note, created_at
-       FROM app.cuttlefish_trust_events WHERE agent_did = $1
+       FROM public.trust_events WHERE agent_did = $1
        ORDER BY created_at DESC LIMIT 5`, [did]
     );
 
@@ -13018,13 +14872,13 @@ app.get('/api/cuttlefishclaws/cac-status', async (req, res) => {
     if (cacId) {
       const r = await queryLocalPg(
         `SELECT id, tier, status, usdc_prepaid, token_balance, issued_at, expires_at
-         FROM app.cuttlefish_cac_credentials WHERE id::text = $1`, [cacId]
+         FROM public.cac_credentials WHERE id::text = $1`, [cacId]
       );
       rows = r.rows;
     } else {
       const r = await queryLocalPg(
         `SELECT id, tier, status, usdc_prepaid, token_balance, issued_at, expires_at
-         FROM app.cuttlefish_cac_credentials WHERE agent_did = $1
+         FROM public.cac_credentials WHERE agent_did = $1
          ORDER BY created_at DESC LIMIT 1`, [did]
       );
       rows = r.rows;
@@ -13066,13 +14920,13 @@ app.get('/api/cuttlefishclaws/capital-stack', async (req, res) => {
       queryLocalPg(
         `SELECT layer_key, name, sub_label, amount_m, pct_of_total, color, seniority,
                 yield_score, coverage, description, details, display_order, is_open
-         FROM app.cuttlefish_capital_stack WHERE is_active = 1
+         FROM public.capital_stack WHERE is_active = 1
          ORDER BY display_order ASC`
       ),
       queryLocalPg(
         `SELECT program_key, name, category, administering_entity, applies_to, headline,
                 amount_range, rate_or_credit, term_years, eligibility, application_url, contact, notes, display_order
-         FROM app.cuttlefish_financing_programs WHERE is_active = 1
+         FROM public.financing_programs WHERE is_active = 1
          ORDER BY display_order ASC`
       ),
     ]);
@@ -13099,7 +14953,7 @@ app.get('/api/cuttlefishclaws/financing-programs', async (req, res) => {
   const { layer, category } = req.query;
 
   try {
-    let sql = `SELECT * FROM app.cuttlefish_financing_programs WHERE is_active = 1`;
+    let sql = `SELECT * FROM public.financing_programs WHERE is_active = 1`;
     const params = [];
     let paramIdx = 1;
 
@@ -13159,7 +15013,7 @@ app.post('/api/cuttlefishclaws/agent-onboard', express.json(), async (req, res) 
 
   try {
     const existing = await queryLocalPg(
-      `SELECT id, status FROM app.cuttlefish_agents WHERE did = $1`, [did]
+      `SELECT id, status FROM public.registry_agents WHERE did = $1`, [did]
     );
     if (existing.rows.length && existing.rows[0].status === 'active') {
       return res.status(409).json({ error: 'DID already registered and active. Use /cac-status to check your credential.' });
@@ -13173,7 +15027,7 @@ app.post('/api/cuttlefishclaws/agent-onboard', express.json(), async (req, res) 
 
     const agentName = (metadata && metadata.name) || did.slice(0, 24);
     const agent = await queryLocalPg(
-      `INSERT INTO app.cuttlefish_agents (did, name, agent_type, trust_score, status, metadata, updated_at)
+      `INSERT INTO public.registry_agents (did, name, agent_type, trust_score, status, metadata, updated_at)
        VALUES ($1,$2,$3,$4,'active',$5,NOW())
        ON CONFLICT (did) DO UPDATE SET name=EXCLUDED.name, agent_type=EXCLUDED.agent_type, trust_score=EXCLUDED.trust_score, status='active', metadata=EXCLUDED.metadata, updated_at=NOW()
        RETURNING id, trust_score, status`,
@@ -13181,19 +15035,19 @@ app.post('/api/cuttlefishclaws/agent-onboard', express.json(), async (req, res) 
     );
 
     const cac = await queryLocalPg(
-      `INSERT INTO app.cuttlefish_cac_credentials (agent_did, tier, usdc_prepaid, status, expires_at)
+      `INSERT INTO public.cac_credentials (agent_did, tier, usdc_prepaid, status, expires_at)
        VALUES ($1,$2,$3,$4,$5) RETURNING id, tier, status`,
       [did, tier, prepaid, prepaid > 0 ? 'active' : 'pending', expiresAt]
     );
 
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+      `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, note)
        VALUES ($1,'onboard',$2,$3,$4)`,
       [did, rules.trust_floor, rules.trust_floor, `KYA passed. agentType=${agentType} tier=${tier} prepaid=$${prepaid}`]
     );
 
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority)
+      `INSERT INTO public.work_queue (task_type, assigned_to, payload, priority)
        VALUES ('kya_check','trib',$1,3)`,
       [JSON.stringify({ agent_id: agent.rows[0].id, did, agent_type: agentType, tier, prepaid_usdc: prepaid, name: agentName })]
     );
@@ -13203,7 +15057,7 @@ app.post('/api/cuttlefishclaws/agent-onboard', express.json(), async (req, res) 
 
     // Also register in the in-memory trustedAgents Map so the tool access
     // middleware recognizes this agent as TRUSTED (not UNTRUSTED).
-    // This was the gap: graduation wrote to app.cuttlefish_agents in the DB
+    // This was the gap: graduation wrote to public.registry_agents in the DB
     // but never called registerTrustedAgent(), so graduated agents showed as
     // "untrusted" and couldn't use TRUSTED-level tools.
     try {
@@ -13255,7 +15109,7 @@ app.post('/api/cuttlefishclaws/proposal-submit', express.json(), async (req, res
 
   try {
     const agent = await queryLocalPg(
-      `SELECT id, trust_score, status FROM app.cuttlefish_agents WHERE did = $1`, [submitterDid]
+      `SELECT id, trust_score, status FROM public.registry_agents WHERE did = $1`, [submitterDid]
     );
     if (!agent.rows.length) return res.status(403).json({ error: 'Submitter DID not found. Complete agent onboarding first.' });
     const ag = agent.rows[0];
@@ -13264,7 +15118,7 @@ app.post('/api/cuttlefishclaws/proposal-submit', express.json(), async (req, res
     if (trustScore < 40) return res.status(403).json({ error: `Trust score too low (${trustScore}/100). Minimum 40 required.` });
 
     const prior = await queryLocalPg(
-      `SELECT id, version FROM app.cuttlefish_proposals
+      `SELECT id, version FROM public.submitted_proposals
        WHERE submitter_did = $1 AND title = $2 ORDER BY version DESC LIMIT 1`,
       [submitterDid, title.trim()]
     );
@@ -13279,7 +15133,7 @@ app.post('/api/cuttlefishclaws/proposal-submit', express.json(), async (req, res
     const routedTo = ['trib', 'arch', 'dao-voters'];
 
     const proposal = await queryLocalPg(
-      `INSERT INTO app.cuttlefish_proposals (title, description, category, submitter_did, version, parent_id, status, ipfs_cid, chain_anchor_tx, combined_hash, routed_to, metadata)
+      `INSERT INTO public.submitted_proposals (title, description, category, submitter_did, version, parent_id, status, ipfs_cid, chain_anchor_tx, combined_hash, routed_to, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,'submitted',$7,$8,$9,$10,$11) RETURNING id, created_at`,
       [title.trim(), description, category, submitterDid, version, parentId, ipfsCid, chainTx, combinedHash, routedTo,
        JSON.stringify({ ...metadata, fileUrls, content_preview: content.slice(0, 200) })]
@@ -13287,15 +15141,15 @@ app.post('/api/cuttlefishclaws/proposal-submit', express.json(), async (req, res
 
     const taskPayload = JSON.stringify({ proposal_id: proposal.rows[0].id, title: title.trim(), category, version, submitter_did: submitterDid, ipfs_cid: ipfsCid, combined_hash: combinedHash });
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority) VALUES
+      `INSERT INTO public.work_queue (task_type, assigned_to, payload, priority) VALUES
        ('review_proposal','trib',$1,4), ('review_proposal','arch',$2,4)`,
       [taskPayload, taskPayload]
     );
 
     const newScore = Math.min(100, trustScore + 2);
-    await queryLocalPg(`UPDATE app.cuttlefish_agents SET trust_score = $1 WHERE did = $2`, [newScore, submitterDid]);
+    await queryLocalPg(`UPDATE public.registry_agents SET trust_score = $1 WHERE did = $2`, [newScore, submitterDid]);
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, reference, note)
+      `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, reference, note)
        VALUES ($1,'proposal_submit',2,$2,$3,$4)`,
       [submitterDid, newScore, proposal.rows[0].id, `Submitted: "${title.trim()}" v${version} · category=${category}`]
     );
@@ -13340,14 +15194,14 @@ app.post('/api/cuttlefishclaws/agent-x-post', express.json(), async (req, res) =
   try {
     if (!needsTrib && !operator_approved) {
       await queryLocalPg(
-        `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+        `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, note)
          VALUES ('did:ethr:global-communicator-v1','constitutional_block',-50,28,$1)`,
         [`Blocked post: ${flags.join('; ')}`]
       );
     }
 
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_agent_tasks (task_type, assigned_to, payload, priority)
+      `INSERT INTO public.work_queue (task_type, assigned_to, payload, priority)
        VALUES ($1,'trib',$2,$3)`,
       [needsTrib ? 'approve_post' : 'publish_post',
        JSON.stringify({ agent_did: 'did:ethr:global-communicator-v1', draft, constitutional_score: score, flags, needs_trib_approval: needsTrib, operator_approved }),
@@ -13355,7 +15209,7 @@ app.post('/api/cuttlefishclaws/agent-x-post', express.json(), async (req, res) =
     );
 
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, score_after, note)
+      `INSERT INTO public.trust_events (agent_did, event_type, delta, score_after, note)
        VALUES ('did:ethr:global-communicator-v1','post_queued',0,78,$1)`,
       [`Post queued. Score: ${score}. Trib approval: ${needsTrib}`]
     );
@@ -13383,7 +15237,7 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
   try {
     // Look up the agent
     const agent = await queryLocalPg(
-      `SELECT did, name, agent_type, status, greeting FROM app.cuttlefish_agents WHERE id::text = $1 OR did = $1 OR LOWER(name) = LOWER($1) LIMIT 1`,
+      `SELECT did, name, agent_type, status, greeting FROM public.registry_agents WHERE id::text = $1 OR did = $1 OR LOWER(name) = LOWER($1) LIMIT 1`,
       [agentId]
     );
     if (!agent.rows.length) return res.status(404).json({ error: 'Agent not found' });
@@ -13406,34 +15260,77 @@ app.post('/api/cuttlefishclaws/agent-chat', express.json(), async (req, res) => 
     // so routeFleetMessage picks it up without triggering the self-reply guard
     const entry = addFleetMessage('vex', message, agentName);
     if (!entry) {
-      // Duplicate or blocked — fallback to greeting
-      return res.json({ content: ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`, simulated: false, agentId: ag.did });
+      // Duplicate, or blocked by the self-reply guard. The agent was never
+      // actually asked, so this must not read as though it answered.
+      return res.json({
+        content: `The message was not posted to fleet chat (duplicate, or blocked by the self-reply guard), so ${ag.name} was never asked.`,
+        answered: false,
+        simulated: true,
+        reason: 'not-posted',
+        agentId: ag.did,
+      });
     }
+
+    const ROUTE_TIMEOUT_MS = 30000;
+    let timedOut = false;
     const routePromise = routeFleetMessage(entry).catch(e => ({ error: e.message }));
-    const timeout = new Promise(r => setTimeout(r, 30000));
-    const routes = await Promise.race([routePromise, timeout.then(() => ({}))]);
+    const timeout = new Promise((r) => setTimeout(() => { timedOut = true; r({}); }, ROUTE_TIMEOUT_MS));
+    const routes = await Promise.race([routePromise, timeout]);
 
-    const agentResponse = routes?.[agentName]?.message || ag.greeting || `Hello! I'm ${ag.name}. How can I assist you?`;
+    // A greeting is not an answer.
+    //
+    // This used to read `routes?.[agentName]?.message || ag.greeting`, then
+    // return `simulated: false` and INSERT with simulated = 0. So when an agent
+    // produced nothing — no route, a timeout, or a tool failure mid-reply — the
+    // caller got a 200 carrying that agent's canned greeting, and the database
+    // recorded it as a real answer. Asked Arch a question this way and the
+    // stored agent_response was byte-for-byte his greeting with simulated = 0:
+    // a durable claim that he had replied when he had said nothing.
+    const realReply = routes?.[agentName]?.message;
+    const answered = typeof realReply === 'string' && realReply.trim().length > 0;
 
-    // Store the chat message in the DB
+    let content;
+    let reason = null;
+    if (answered) {
+      content = realReply;
+    } else if (timedOut) {
+      reason = 'timeout';
+      content = `${ag.name} did not reply within ${ROUTE_TIMEOUT_MS / 1000}s. The question is in the ${agentName} channel of fleet chat and the reply may still land there.`;
+    } else if (routes && routes.error) {
+      reason = 'route-error';
+      content = `${ag.name} could not be reached: ${routes.error}`;
+    } else {
+      reason = 'no-reply';
+      content = `${ag.name} received the question but produced no reply. It is in the ${agentName} channel of fleet chat.`;
+    }
+
+    // Store the exchange honestly: agent_response is NULL when there was no
+    // answer, and simulated = 1 marks the row as unanswered. A record that says
+    // "no reply" is worth more than one that says "here is a greeting".
     await queryLocalPg(
-      `INSERT INTO app.cuttlefish_chat_messages (agent_id, user_message, agent_response, simulated, created_at)
-       VALUES ($1,$2,$3,0,NOW())`,
-      [ag.did, message, agentResponse]
+      `INSERT INTO public.chat_transcripts (agent_id, user_message, agent_response, simulated, created_at)
+       VALUES ($1,$2,$3,$4,NOW())`,
+      [ag.did, message, answered ? content : null, answered ? 0 : 1]
     );
 
     res.json({
-      content: agentResponse,
-      simulated: false,
+      content,
+      answered,
+      simulated: !answered,
+      reason,
       agentId: ag.did,
     });
   } catch (err) {
-    // Fallback: return a graceful error response
+    // Fallback: return a graceful error response. Already honest about being
+    // simulated; `answered` is added so a caller can rely on one field rather
+    // than inferring the outcome from a combination of flags.
     res.json({
       content: `I'm having trouble connecting to the fleet right now. Please try again shortly.`,
+      answered: false,
       simulated: true,
+      reason: 'error',
+      error: err?.message ? String(err.message).slice(0, 200) : true,
       agentId,
-      error: true,
     });
   }
 });
@@ -14138,7 +16035,13 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
   let event;
   try {
     const stripe = require('stripe')(STRIPE_SECRET_KEY);
-    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    // Sign the RAW bytes, not the parsed object. express.json() has already run
+    // by the time this route is reached, so req.body is a plain object and
+    // constructEvent rejects it outright with "payload must be provided as a
+    // string or a Buffer" - the signature check could never succeed, and every
+    // delivery was refused. req.rawBody is the exact bytes Stripe signed,
+    // captured by the verify hook on the global express.json().
+    event = stripe.webhooks.constructEvent(req.rawBody ?? req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.warn('[Stripe Webhook] Signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -14147,6 +16050,31 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (re
   const eventType = event.type;
   const data = event.data.object;
   logActivity('stripe-webhook', event.id, 'RECEIVED', eventType);
+
+  // A completed Checkout Session is the signal that a lead has paid. This is
+  // the only place a lead becomes a booking, and it works because createCheckoutForLead
+  // put the lead id in the session metadata. Without that link there was nothing
+  // to match on, and a paying client simply had no booking.
+  if (eventType === 'checkout.session.completed') {
+    try {
+      const { fulfilCheckoutSession } = await import('./lib/pfp-checkout.mjs');
+      // No Stripe client is passed: this step only records what the webhook
+      // already told us. It never calls the Stripe API, so a replayed event
+      // cannot move money.
+      const out = await fulfilCheckoutSession(
+        { query: queryLocalPg, log: logActivity }, data);
+      if (out.skipped) {
+        logActivity('pfp-checkout', 'SKIPPED', `${event.id}: ${out.skipped}`);
+      } else {
+        logActivity('pfp-checkout', out.alreadyDone ? 'ALREADY_BOOKED' : 'BOOKED',
+          `lead ${out.lead.id} -> booking ${out.booking.id} from ${event.id}`);
+      }
+    } catch (err) {
+      console.error('[Stripe] checkout.session.completed failed:', err.message);
+      logActivity('pfp-checkout', 'ERROR', err.message);
+    }
+    return res.json({ received: true });
+  }
 
   try {
     if (eventType === 'charge.succeeded') {
@@ -15659,7 +17587,12 @@ app.get('/api/obsidian-graph', async (req, res) => {
 });
 
 // ── Suite Dashboard API (31 Harbor multi-tenant app) ────────────────
-registerSuiteRoutes(app);
+// registerSuiteRoutes(app) used to be called here. It lived at the BOTTOM of
+// this file while every route it registered also existed up here, so all 29 of
+// its handlers were unreachable - this file's won every method+path. The Suite
+// Dashboard API is defined above, in this file, and is unchanged. What changed
+// is that there is no longer a second, plausible-looking copy of it to mislead
+// the next reader into fixing code that never runs.
 
 // ── PFP Bookings API (Party Favor Photo management platform) ────────
 registerPfpRoutes(app);
@@ -15709,7 +17642,7 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
   try {
     const result = await queryLocalPg(
       `SELECT agent_did, event_type, delta, score_after, reference, note, created_at
-       FROM app.cuttlefish_trust_events
+       FROM public.trust_events
        ORDER BY created_at ASC`
     );
     // Merge DIDs that represent the same agent into a single series
@@ -15717,7 +17650,7 @@ app.get('/api/trustgraph/trajectory', async (req, res) => {
     const didToAgent = {};
     // First pass: collect all DIDs and their agent names from cuttlefish_agents
     const nameRows = await queryLocalPg(
-      `SELECT did, name, trust_score FROM app.cuttlefish_agents WHERE name IS NOT NULL AND name != ''`
+      `SELECT did, name, trust_score FROM public.registry_agents WHERE name IS NOT NULL AND name != ''`
     );
     const agentTiers = {};
     for (const row of nameRows.rows) {
@@ -15848,7 +17781,7 @@ app.post('/api/trustgraph/event', express.json(), async (req, res) => {
   }
   try {
     const result = await queryLocalPg(
-      `INSERT INTO app.cuttlefish_trust_events (agent_did, event_type, delta, note, reference, created_at)
+      `INSERT INTO public.trust_events (agent_did, event_type, delta, note, reference, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id`,
       [agent_did, event_type, delta || 0, note || '', reference || '']
     );

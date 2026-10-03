@@ -235,13 +235,53 @@ export async function chat(clientId, userMessage, deps = {}) {
     // Apply dossier edits the model asked for directly from its message. Kept as
     // a second route: the user's own words are handled above, but a model can
     // still propose a structured change the phrasing rules do not cover.
+    //
+    // A turn that sends must not also write the dossier. See SEND_BLOCKING below.
     const results = [];
+
+    // Tools that put mail on its way, and tools that change the candidate's record.
+    const SEND_TOOLS = new Set(['jobby_send']);
+    const RECORD_WRITE_TOOLS = new Set([
+      'jobby_update_dossier', // employment, education, skills, achievements
+      'jobby_update_client',  // the mission card: name, phone, location, state
+    ]);
+
+    // Decided across the WHOLE batch, not as each call arrives, so the order the
+    // model chose its tools in cannot matter. A send is a send whether it was
+    // proposed first or last.
+    //
+    // Why this exists: a turn whose subject was "send this email" wrote six
+    // dossier mutations and sent nothing. Worse, the values it wrote were replayed
+    // out of the chat history — earlier messages in which a *test* had typed a
+    // fake diploma and a fake FIFO job — and they were recorded as though the
+    // candidate had said them. A send turn has no business mutating the record,
+    // and the two together turn "email this" into "rewrite my career".
+    //
+    // The rule is deliberately turn-scoped rather than intent-scoped. Inferring
+    // whether a write is wanted from a send request is guesswork, and guessing
+    // wrong here means a fabricated career, not a failed email. A candidate who
+    // wants both can say both, and the model can do the edit in this turn and the
+    // send in the next.
+    const turnSends = calls.slice(0, MAX_TOOL_ROUNDS)
+      .some((c) => SEND_TOOLS.has(String(c?.tool || '').replace(/^jobby[.:]/, 'jobby_')));
+
     for (const call of calls.slice(0, MAX_TOOL_ROUNDS)) {
       const name = String(call.tool || '').replace(/^jobby[.:]/, 'jobby_');
       const handler = tools[name];
       if (!handler) {
         results.push(`Tool "${call.tool}" does not exist. Available: ${Object.keys(tools).join(', ')}`);
         executed.push({ tool: call.tool, error: 'unknown tool' });
+        continue;
+      }
+      if (turnSends && RECORD_WRITE_TOOLS.has(name)) {
+        const msg =
+          `${name} was not run. This turn also sends an email, and a turn that sends ` +
+          `does not change the candidate's record. Nothing was written. If the ` +
+          `candidate genuinely asked for this change as well, apply it in a separate ` +
+          `turn with no send in it — and only from what they have just said, never ` +
+          `from earlier messages in the conversation.`;
+        executed.push({ tool: name, args: call.args, error: 'blocked: send turn' });
+        results.push(`${name} -> REFUSED. ${msg}`);
         continue;
       }
       try {
@@ -349,21 +389,63 @@ export async function onboardFromDossier(clientId, dossier, { sourceFilename = n
   const { decideTracks } = await import('./tracks.mjs');
   const { buildPlan, planSummary } = await import('./plan.mjs');
   const decision = decideTracks(dossier, { userOverride: client.tracks?.length ? client.tracks : null });
-  const plan = buildPlan(dossier, { tracks: decision.tracks });
+  const plan = await buildPlan(dossier, { tracks: decision.tracks });
   const actions = await store.replaceActions(clientId, plan.actions);
+  // The name to record, from the dossier first.
+  //
+  // This line used to read `client.display_name || dossier.name ||
+  // client.display_name` — the first and last operands were the same expression,
+  // so the middle one was unreachable whenever display_name was set, which is
+  // always after onboarding. A resume carrying a corrected name therefore updated
+  // the dossier and left the client column exactly as it was, and the write below
+  // then stamped that stale value back over the top. The fallback was there to
+  // cover exactly this case and was structurally incapable of running.
+  const { value: displayName } = store.effectiveName(client, dossier);
+
+  // Assign the candidate's own address at onboarding, not at first send.
+  //
+  // It used to be assigned lazily in the send path, which meant a new candidate
+  // had no address at all until they applied for something. So the one thing
+  // worth showing up front — "this is the address everything goes out from" —
+  // was invisible precisely when they would want to see it, and only 2 of 2,322
+  // clients had one.
+  //
+  // ensureMailbox is idempotent and holds an existing address, so correcting a
+  // name later cannot strand earlier applications on an address nobody reads.
+  let mailbox = null;
+  try {
+    const assigned = await store.ensureMailbox(clientId, displayName);
+    mailbox = assigned.address || null;
+  } catch (e) {
+    console.warn(`[jobby] could not assign an address to client ${clientId}: ${e.message}`);
+  }
+
+  // Only written when there is a name to write. Passing null would clear a name
+  // that is already on file — so a resume arriving with no name field on it, which
+  // is common, used to be able to erase the name the candidate had already given.
+  const namePatch = displayName ? { display_name: displayName } : {};
   await store.updateClient(clientId, {
     tracks: decision.tracks,
     track_reasons: decision.reasons,
-    display_name: client.display_name || dossier.name || client.display_name,
+    ...namePatch,
   });
 
   return {
     ok: true,
     revision,
+    // The candidate's own address, so the page can show it immediately rather
+    // than after their first application. null means assignment failed and the
+    // send path will fall back to the agent sender — worth saying, not hiding.
+    mailbox,
     tracks: decision.tracks,
     trackReasons: decision.reasons,
     signals: decision.signals,
     sellsServices: decision.sellsServices,
+    // Forwarded so the front end can render the closed-but-offered track 5
+    // case. Without it the UI cannot tell "track 5 does not apply to you" from
+    // "track 5 would suit you and you have not asked for it", which is exactly
+    // the distinction a candidate needs.
+    fifo: plan.fifo,
     actions: actions.length,
     summary: planSummary(plan, dossier),
   };

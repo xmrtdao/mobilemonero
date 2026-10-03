@@ -61,15 +61,235 @@
             }).join('');
           }
         }
+        // Hand the same payload to the restart control, so its rows come from
+        // the supervisor's real service list rather than a second one written
+        // out here. That mirror drifted once already.
+        QD_RESTART.note(d);
       }).catch(() => {
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
         if (supEl) supEl.textContent = '○ offline';
         if (supEl) supEl.style.color = '#6b6b80';
+        QD_RESTART.note(null);
               });
           }
 
           setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
+
+  // ── Owner restart control ─────────────────────────────────────────────────
+  // The supervisor's powers, in the page. POST /api/supervisor/restart sends
+  // SIGTERM to a service's child process; the supervisor respawns it.
+  //
+  // SUCCESS IS A NEW PID, NOT healthy:true. A flapping service reports healthy
+  // without ever having restarted, and "absence of a complaint is not evidence"
+  // has been the lesson of this whole system. The row goes green only when the
+  // pid actually changed.
+  const QD_RESTART = (function () {
+    // These take the stack down, so they ask first. Everything else is a single
+    // service and a stray click costs one service.
+    const DANGEROUS = {
+      'relay': 'Restarting the relay drops this page — you will be disconnected and it will reconnect on its own. Every other service stays up.',
+      'pg': 'Postgres is the database the whole campus runs on. Agents, chat, tasks and jobs all fail until it comes back.',
+      'local-sb': 'The local Supabase REST layer is what fifteen files call for edge functions. They fail until it comes back.',
+    };
+    const POLL_MS = 700;
+    // The supervisor sleeps 30s between ticks and only starts a dead EXTERNAL
+    // service on the tick AFTER it notices the death, so a restart takes up to
+    // two ticks plus process startup. The first version of this waited 60s and
+    // therefore showed a red "pid never changed" on roughly half of all
+    // restarts — while the service was in fact coming back. 150s is two ticks
+    // with room for a slow spawn.
+    const TIMEOUT_MS = 150000;
+    const TICK_SECONDS = 30;
+    const RESET_DONE_MS = 5000;
+    const RESET_FAIL_MS = 9000;
+
+    let status = null;
+    const rows = new Map();     // service name -> row record
+    const inFlight = new Set();
+
+    function makeRow(name) {
+      const row = document.createElement('div');
+      row.className = 'qd-svc';
+      row.dataset.svc = name;
+      row.innerHTML =
+        '<span class="qd-dot"></span>' +
+        '<span class="qd-name"></span>' +
+        '<span class="qd-pid"></span>' +
+        '<span class="qd-bar"><i></i></span>' +
+        '<span class="qd-state"></span>' +
+        '<button class="qd-btn" type="button">Restart</button>';
+      const rec = {
+        name: name, row: row,
+        dot: row.querySelector('.qd-dot'),
+        nameEl: row.querySelector('.qd-name'),
+        pidEl: row.querySelector('.qd-pid'),
+        bar: row.querySelector('.qd-bar'),
+        state: row.querySelector('.qd-state'),
+        btn: row.querySelector('.qd-btn'),
+        phase: 'idle', msg: '', resetTimer: null
+      };
+      rec.btn.addEventListener('click', function () { doRestart(name); });
+      return rec;
+    }
+
+    // Repaint a row from cached status + its own phase. Never rebuilds the DOM,
+    // so a click in progress is never interrupted.
+    function paint(rec) {
+      const svc = status ? (status.services || []).find(function (s) { return s.name === rec.name; }) : null;
+      const healthy = svc ? !!svc.healthy : false;
+      rec.dot.className = 'qd-dot' + (healthy ? ' ok' : ' bad');
+      rec.nameEl.textContent = rec.name;
+      rec.nameEl.title = DANGEROUS[rec.name] ? 'stack-critical: confirms before restarting' : rec.name;
+      rec.pidEl.textContent = (svc && svc.pid) ? String(svc.pid) : '—';
+      rec.pidEl.title = (svc && svc.pid) ? 'pid ' + svc.pid : 'no pid recorded';
+      rec.row.classList.toggle('danger', !!DANGEROUS[rec.name]);
+      rec.row.classList.toggle('busy', rec.phase === 'work');
+      rec.row.classList.toggle('done', rec.phase === 'done');
+      rec.row.classList.toggle('fail', rec.phase === 'fail');
+      rec.btn.disabled = (rec.phase !== 'idle');
+      rec.btn.textContent = (rec.phase === 'idle') ? 'Restart' : '…';
+      rec.state.className = 'qd-state' + ((rec.phase !== 'idle') ? ' ' + rec.phase : '');
+      rec.state.textContent = rec.msg;
+      rec.bar.classList.toggle('show', rec.phase !== 'idle');
+    }
+
+    function render() {
+      const host = document.getElementById('qds-restart-list');
+      if (!host) return;
+      if (!status || !status.services || !status.services.length) {
+        if (host.dataset.state !== 'empty') {
+          host.innerHTML = '<div style="color:#6b6b80;font-size:0.6rem;">no supervised services reported</div>';
+          host.dataset.state = 'empty';
+          rows.forEach(function (rec) { rec.row.remove(); });
+          rows.clear();
+        }
+        return;
+      }
+      // Clear whatever placeholder is in the host the first time rows arrive —
+      // the server-rendered "loading services…", or the "no services" note if a
+      // poll blipped. Previously only the empty path cleared anything, so the
+      // placeholder sat above the finished list for the life of the page.
+      if (host.dataset.state !== 'list') {
+        host.innerHTML = '';
+        host.dataset.state = 'list';
+      }
+
+      const names = status.services.map(function (s) { return s.name; });
+      // Drop rows for services the supervisor stopped reporting, so a renamed or
+      // removed service cannot leave a button that signals a stale pid.
+      rows.forEach(function (rec, n) {
+        if (names.indexOf(n) === -1) { rec.row.remove(); rows.delete(n); }
+      });
+      names.forEach(function (n) {
+        let rec = rows.get(n);
+        if (!rec) { rec = makeRow(n); rows.set(n, rec); }
+        // appendChild moves an existing node, so this also enforces order
+        // without rebuilding anything.
+        host.appendChild(rec.row);
+      });
+      rows.forEach(paint);
+    }
+
+    function scheduleReset(rec, phase, delay) {
+      if (rec.resetTimer) clearTimeout(rec.resetTimer);
+      rec.resetTimer = setTimeout(function () {
+        if (inFlight.has(rec.name)) return;
+        rec.phase = 'idle'; rec.msg = ''; paint(rec);
+      }, delay);
+    }
+
+    async function doRestart(name) {
+      if (inFlight.has(name)) return;
+      const rec = rows.get(name);
+      if (!rec) return;
+      const svc = status ? (status.services || []).find(function (s) { return s.name === name; }) : null;
+      const oldPid = svc ? (svc.pid || null) : null;
+
+      if (DANGEROUS[name]) {
+        const ok = window.confirm(
+          DANGEROUS[name] + '\n\nRestart ' + name + ' now?'
+        );
+        if (!ok) return;
+      }
+
+      inFlight.add(name);
+      if (rec.resetTimer) { clearTimeout(rec.resetTimer); rec.resetTimer = null; }
+      rec.phase = 'work'; rec.msg = 'signalling…'; paint(rec);
+
+      let accepted = false, why = '';
+      try {
+        const res = await window.apiFetch('/api/supervisor/restart', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ service: name })
+        });
+        let body = {};
+        try { body = await res.json(); } catch (e) { body = {}; }
+        if (!res.ok) {
+          why = body.error || ('HTTP ' + res.status);
+        } else {
+          accepted = true;
+          // Say what actually happened: the action is QUEUED. The supervisor
+          // drains it on its next tick. Claiming "restarting" here would be a
+          // promise the relay has not made yet.
+          rec.msg = body.warning
+            ? 'queued · ' + body.warning
+            : 'queued · supervisor ticks every ' + TICK_SECONDS + 's';
+        }
+      } catch (e) {
+        // Restarting the relay drops the connection this fetch is riding on.
+        // That is the expected outcome of the button, not a failure — keep
+        // polling and let the page reconnect on its own.
+        rec.msg = 'page dropped · reconnecting';
+      }
+      paint(rec);
+
+      if (!accepted) {
+        rec.phase = 'fail'; rec.msg = why || 'could not signal the service'; paint(rec);
+        inFlight.delete(name);
+        scheduleReset(rec, 'fail', RESET_FAIL_MS);
+        return;
+      }
+
+      const deadline = Date.now() + TIMEOUT_MS;
+      const tick = async function () {
+        if (Date.now() > deadline) {
+          rec.phase = 'fail';
+          // Name the likely reason rather than just "failed". A queued restart
+          // that never produced a new pid is usually the supervisor log, not the
+          // button.
+          rec.msg = 'no new pid in ' + Math.round(TIMEOUT_MS / 1000) + 's — check the supervisor log';
+          paint(rec); inFlight.delete(name);
+          scheduleReset(rec, 'fail', RESET_FAIL_MS);
+          return;
+        }
+        let snap = null;
+        try { snap = await (await window.apiFetch('/api/supervisor/status')).json(); }
+        catch (e) { snap = null; }
+        if (snap && snap.services) {
+          status = snap;                       // keep the shared cache fresh
+          const now = snap.services.find(function (s) { return s.name === name; });
+          const newPid = now ? (now.pid || null) : null;
+          if (newPid && newPid !== oldPid) {
+            rec.phase = 'done';
+            rec.msg = 'restarted · pid ' + newPid;
+            paint(rec); inFlight.delete(name);
+            scheduleReset(rec, 'done', RESET_DONE_MS);
+            render();                          // chips and dots agree immediately
+            return;
+          }
+          if (now && !now.healthy) { rec.msg = 'down · supervisor is respawning'; paint(rec); }
+        }
+        setTimeout(tick, POLL_MS);
+      };
+      setTimeout(tick, POLL_MS);
+    }
+
+    return {
+      note: function (payload) { status = payload; render(); }
+    };
+  })();
 
   // ── Security Tile — TrustGraph · CAC Tiers · Access Control ──
   function updateQDSSecurity() {
