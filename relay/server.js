@@ -6698,10 +6698,38 @@ app.get('/', (req, res) => {
 
        overflow-x:auto makes the overflow scroll INSIDE its own box instead of
        escaping, so it can no longer paint over a sibling tile. */
-    .intel-split, .intel-left, .intel-split > div,
-    .quarterdeck-mid > *, .quarterdeck-bottom > * { overflow: hidden; }
+    /* ── Email inbox columns ───────────────────────────────────────────────────
+       resendTileHtml() emitted bare <div>s into a flex column. A flex item's
+       automatic minimum is min-content, so each one sized itself to its content
+       and sat at a fixed 170px no matter how narrow the tile became - measured
+       reaching x=924, 1100 and 1276 in an 800px viewport, painting over their
+       neighbours.
+
+       Now a wrapping grid with minmax(0,1fr). minmax(0,...) rather than a bare
+       1fr so the floor really is zero: a bare 1fr track's automatic minimum is
+       min-content, which is the same trap one level down. No fixed width
+       anywhere, so the columns reflow at every viewport. */
+    .inbox-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+      gap: 8px;
+    }
+    .inbox-col { min-width: 0; }
+    .inbox-list { max-height: 80px; overflow-y: auto; overflow-x: hidden; font-size: 0.75rem; min-width: 0; }
+    .inbox-col .stat { flex-wrap: wrap; }
+    .inbox-col .label, .inbox-col .value { min-width: 0; overflow-wrap: anywhere; }
+
+    /* ── Page-level containment guard ───────────────────────────────────────
+       Last line of defence, and the reason the layout is now width-independent
+       rather than merely tested at a few widths: overflow-x:clip stops ANY
+       descendant from painting outside the page box, so a future fixed-width
+       element cannot hide a neighbouring tile or create a horizontal
+       scrollbar. 'clip' rather than 'hidden' on purpose - it does not create a
+       scroll container, so position:sticky keeps working. */
+    html, body { overflow-x: clip; max-width: 100%; }
+    .card, .card > div, .grid > * { min-width: 0; }
+
     #fn-catalog table { display: block; overflow-x: auto; max-width: 100%; }
-    #fn-catalog .card { overflow: hidden; }
 
     /* Campus Intelligence splits by CONTENT rather than by count: XMRT University
        and GitHub Activity are short fixed-height readouts and stack in the left
@@ -7302,7 +7330,7 @@ app.get('/', (req, res) => {
     <!-- 📬 Incoming Mail — right column, to itself -->
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.75rem;color:#f87171;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-family:var(--font-display);font-weight:600;">📬 Incoming Mail</div>
-      <div style="display:flex;flex-direction:column;gap:6px;">
+      <div class="inbox-grid">
         ${resendTileHtml()}
       </div>
     </div>
@@ -17328,9 +17356,9 @@ function resendTileHtml() {
     const label = String(entry.label)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const id = String(entry.tile).replace(/[^a-zA-Z0-9_-]/g, '');
-    return `          <div>
+    return `          <div class="inbox-col">
             <div style="font-size:0.6rem;color:#948d9e;margin-bottom:2px;">${label}</div>
-            <div id="${id}" style="max-height:80px;overflow-y:auto;font-size:0.65rem;">
+            <div id="${id}" class="inbox-list">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
           </div>`;
