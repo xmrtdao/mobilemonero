@@ -613,13 +613,25 @@ async function writeSharedContext(entry) {
 async function pruneScannerItems() {
   try {
     const pool = getSharedPool();
+    // The column is context_key, not key. Verified against the live table:
+    //   public.shared_context (id uuid, context_key text, context_type text,
+    //   value jsonb, description text, tags text[], last_updated_by text,
+    //   created_at, updated_at)
+    // Querying WHERE key = ... threw `column "key" does not exist` on every
+    // single tick - roughly every 30 seconds, forever - which is how a 53MB
+    // log file accumulated. The error was caught and warned, so the prune
+    // silently never ran rather than crashing anything.
     const scanRes = await pool.query(
-      `SELECT value FROM public.shared_context WHERE key = 'arch-ecosystem-scan'`
+      `SELECT value FROM public.shared_context WHERE context_key = 'arch-ecosystem-scan'`
     );
     let scanItems = [];
     if (scanRes.rows.length > 0) {
       try {
-        scanItems = JSON.parse(scanRes.rows[0].value || '[]');
+        // value is jsonb, so node-postgres already handed us a parsed object.
+        // JSON.parse would throw on anything that is not a string, which is why
+        // this accepts both rather than assuming one shape.
+        const v = scanRes.rows[0].value;
+        scanItems = typeof v === 'string' ? JSON.parse(v || '[]') : (Array.isArray(v) ? v : []);
       } catch (e) {
         log(`pruneScannerItems: failed to parse scan output: ${e.message}`, 'WARN');
         scanItems = [];
