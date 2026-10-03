@@ -6668,12 +6668,25 @@ app.get('/', (req, res) => {
     .quarterdeck-bottom > * { min-width: 0; }
     @media (min-width: 640px) { .quarterdeck-bottom { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; } }
     /* Responsive sub-grids for sections below the knowledge graph */
-    .subgrid-3 { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    @media (min-width: 480px) { .subgrid-3 { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 768px) { .subgrid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 12px; } }
-    .subgrid-4 { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    @media (min-width: 480px) { .subgrid-4 { grid-template-columns: repeat(2, 1fr); } }
-    @media (min-width: 768px) { .subgrid-4 { grid-template-columns: repeat(4, 1fr); gap: 12px; } }
+    /* Sub-grids respond to their CONTAINER, not the viewport.
+       These used to be stepped by viewport media queries (1 col, then 2 at
+       480px, then 3 or 4 at 768px). That was fine while every tile was
+       full-bleed. It stopped being fine the moment the tiles became real grid
+       columns: Campus Intelligence is now one column of four, roughly 330px
+       wide inside a 1440px viewport, so at 768px+ the sub-grid still demanded
+       THREE columns and crushed XMRT University to about 100px - its labels
+       wrapped one character per line ("St at us", "14 modules availabl e")
+       and Incoming Mail spilled over the tile edge.
+
+       A viewport query cannot know how wide its container is. repeat(auto-fit,
+       minmax(Npx, 1fr)) can, with no query at all: it fits as many Npx columns
+       as the parent can actually hold. min-width:0 on the children stops a
+       wide child re-inflating its own track. */
+    .subgrid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+    .subgrid-3 > * { min-width: 0; }
+    .subgrid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+    .subgrid-4 > * { min-width: 0; }
+    @media (min-width: 768px) { .subgrid-3, .subgrid-4 { gap: 12px; } }
     .sec-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
     @media (min-width: 480px) { .sec-grid { grid-template-columns: 1fr 1fr; } }
   
