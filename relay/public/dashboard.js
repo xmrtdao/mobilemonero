@@ -44,14 +44,14 @@
           healthEl.style.color = color;
         } else if (healthEl) {
           healthEl.textContent = 'n/a';
-          healthEl.style.color = '#6b6b80';
+          healthEl.style.color = '#948d9e';
         }
 
         // ── Consolidated services tracker (per-service up/down chips) ──
         const svcTrackerEl = el('qds-services-tracker');
         if (svcTrackerEl) {
           if (!d.services || d.services.length === 0) {
-            svcTrackerEl.innerHTML = '<span style="color:#6b6b80;">no services</span>';
+            svcTrackerEl.innerHTML = '<span style="color:#948d9e;">no services</span>';
           } else {
             svcTrackerEl.innerHTML = d.services.map(function(s){
               const ok = s.healthy;
@@ -61,6 +61,29 @@
             }).join('');
           }
         }
+        // ── Status strip ──────────────────────────────────────────────────
+        // Mirrors the four headline readouts above the fold. Same payload, same
+        // numbers, separate ids (ss-*) so the strip and the Campus Watch panel
+        // can never disagree by being updated from different sources.
+        const ssUp = el('ss-up'), ssHealth = el('ss-health'),
+              ssDown = el('ss-down'), ssChecked = el('ss-checked');
+        if (ssUp) {
+          ssUp.textContent = up + '/' + d.services.length;
+          ssUp.style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
+        }
+        if (ssHealth) {
+          const sc = d.health ? d.health.score : null;
+          ssHealth.textContent = sc === null ? 'n/a' : sc + '/100';
+          ssHealth.style.color = sc === null ? '#948d9e' : (sc >= 80 ? '#4ade80' : sc >= 50 ? '#fbbf24' : '#f87171');
+        }
+        if (ssDown) {
+          ssDown.textContent = String(down);
+          ssDown.style.color = down > 0 ? '#f87171' : '#4ade80';
+        }
+        if (ssChecked) {
+          ssChecked.textContent = d.checkedAt ? new Date(d.checkedAt).toLocaleTimeString() : '-';
+        }
+
         // Hand the same payload to the restart control, so its rows come from
         // the supervisor's real service list rather than a second one written
         // out here. That mirror drifted once already.
@@ -69,7 +92,15 @@
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
         if (supEl) supEl.textContent = '○ offline';
-        if (supEl) supEl.style.color = '#6b6b80';
+        if (supEl) supEl.style.color = '#948d9e';
+        // The strip must not keep showing the last good reading when the poll
+        // itself is failing. A stale green "14/14" on a dead poll is worse than
+        // an honest dash: it says everything is fine precisely when we cannot
+        // tell.
+        ['ss-up', 'ss-health', 'ss-down'].forEach(function (id) {
+          const n = el(id); if (n) { n.textContent = '—'; n.style.color = '#f87171'; }
+        });
+        const cEl = el('ss-checked'); if (cEl) { cEl.textContent = 'no answer'; cEl.style.color = '#f87171'; }
         QD_RESTART.note(null);
               });
           }
@@ -159,7 +190,7 @@
       if (!host) return;
       if (!status || !status.services || !status.services.length) {
         if (host.dataset.state !== 'empty') {
-          host.innerHTML = '<div style="color:#6b6b80;font-size:0.6rem;">no supervised services reported</div>';
+          host.innerHTML = '<div style="color:#948d9e;font-size:0.6rem;">no supervised services reported</div>';
           host.dataset.state = 'empty';
           rows.forEach(function (rec) { rec.row.remove(); });
           rows.clear();
@@ -324,7 +355,7 @@
       if (el('sec-tg-status')) { el('sec-tg-status').textContent = '● online'; el('sec-tg-status').style.color = '#4ade80'; }
     }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
-      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#6b6b80'; }
+      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#948d9e'; }
     });
     apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
           var certs = certData.certHolders || certData.holders || certData.certs || [];
@@ -560,7 +591,7 @@
               ctx.globalAlpha = 0.6;
               ctx.font = '8px monospace';
               ctx.textAlign = 'right';
-              ctx.fillStyle = '#6b6b80';
+              ctx.fillStyle = '#948d9e';
               ctx.fillText('↻ ' + new Date().toLocaleTimeString(), canvas.width - 4, 10);
               ctx.globalAlpha = 1.0;
 
@@ -607,7 +638,7 @@
           if (deltaStr) html += ' (' + deltaStr + ')';
           if (nearest.event) html += '<br>⚡ ' + nearest.event;
           if (nearest.note) html += '<br><span style="color:#8b8ba0;font-size:10px;">' + nearest.note + '</span>';
-          if (nearest.ref) html += '<br><span style="color:#6b6b80;font-size:9px;">' + nearest.ref + '</span>';
+          if (nearest.ref) html += '<br><span style="color:#948d9e;font-size:9px;">' + nearest.ref + '</span>';
           tooltip.innerHTML = html;
           tooltip.style.display = 'block';
           tooltip.style.left = Math.min(nearest.px + 12, canvas.width - 250) + 'px';
@@ -667,7 +698,7 @@
     var url = '/api/activity-log?limit=50';
     if (typeFilter) url += '&activity_type=' + encodeURIComponent(typeFilter);
     apiFetch(url, { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
-          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">No activity yet</span></div>'; return; }
+          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">No activity yet</span></div>'; return; }
           // Filter out the noise: dashboard polling every 3s drowns the log
           rows = rows.filter(function(a) {
             var title = (a.title || '').toLowerCase();
@@ -681,7 +712,7 @@
         var status = a.status || 'info';
         var agent = a.agent_id || '';
         var time = a.created_at ? (function() { var d = new Date(a.created_at); var s = Math.floor((Date.now()-d)/1000); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; })() : '';
-        var color = '#6b6b80';
+        var color = '#948d9e';
         if (status === 'failed' || status === 'error') color = '#f87171';
         else if (status === 'success' || status === 'completed') color = '#4ade80';
         else if (status === 'in_progress' || status === 'pending') color = '#fbbf24';
@@ -713,7 +744,7 @@
       }).join('');
     }).catch(function() {
       var el = document.getElementById('qds-activity-log');
-      if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Activity feed unavailable</span></div>';
+      if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Activity feed unavailable</span></div>';
     });
   }
   function refreshLogViewer() { updateShipsLog(); }
@@ -738,7 +769,7 @@
       var mtPeers = document.getElementById('qds-mt-peers');
       var mtMsgs = document.getElementById('qds-mt-msgs');
       if (bridge) bridge.textContent = d.connected ? '🟢 connected' : '○ idle';
-      if (bridge) bridge.style.color = d.connected ? '#4ade80' : '#6b6b80';
+      if (bridge) bridge.style.color = d.connected ? '#4ade80' : '#948d9e';
       if (mtPeers) mtPeers.textContent = d.nodes || 0;
       if (mtMsgs) mtMsgs.textContent = d.messageCount || 0;
     }).catch(() => {});
@@ -757,13 +788,13 @@
       if (d.topics && d.topics.length > 0) {
         if (count) count.textContent = d.topics.length;
         list.innerHTML = d.topics.slice(0, 5).map(function(t) {
-          var statusColor = t.status === 'completed' ? '#4ade80' : t.status === 'in-progress' ? '#fbbf24' : t.status === 'archived' ? '#6b6b80' : '#60a5fa';
+          var statusColor = t.status === 'completed' ? '#4ade80' : t.status === 'in-progress' ? '#fbbf24' : t.status === 'archived' ? '#948d9e' : '#60a5fa';
           var statusIcon = t.status === 'completed' ? '✅' : t.status === 'in-progress' ? '🔄' : t.status === 'archived' ? '📦' : '📋';
           return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.65rem;border-bottom:1px solid #1a1a2e;"><span style="color:#e0e0e0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (t.title || 'untitled') + '</span><span style="color:' + statusColor + ';margin-left:6px;">' + statusIcon + ' ' + (t.status || 'active') + '</span></div>';
         }).join('');
       } else {
         if (count) count.textContent = '0';
-        list.innerHTML = '<div style="color:#6b6b80;font-size:0.65rem;">No resolutions yet</div>';
+        list.innerHTML = '<div style="color:#948d9e;font-size:0.65rem;">No resolutions yet</div>';
       }
     }).catch(function() {
       if (list.dataset.seq != seq) return;
@@ -840,8 +871,8 @@
         var canon = a.agent.toLowerCase().trim();
         var trust = trustMap[canon] || {};
         var type = fleetMap[canon] || 'unknown';
-        var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
-        var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
+        var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
+        var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
         var emoji = emojiMap[canon] || '🫡';
         rows.push({ agent: a.agent, emoji: emoji, calls: a.calls, tokens: a.tokens, pct: a.pct, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
@@ -854,8 +885,8 @@
         if (!seen[name]) {
           seen[name] = true;
           var trust = trustMap[name] || {};
-          var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#6b6b80';
-          var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#6b6b80';
+          var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
+          var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
           var emoji = emojiMap[name] || '🫡';
           rows.push({ agent: a.name, emoji: emoji, calls: 0, tokens: 0, pct: '0.0', trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
@@ -864,7 +895,7 @@
       rows.sort(function(a, b) { return b.calls - a.calls; });
 
       // Header with budget info
-      var html = '<div style="font-size:0.6rem;color:#6b6b80;margin-bottom:4px;">';
+      var html = '<div style="font-size:0.6rem;color:#948d9e;margin-bottom:4px;">';
       html += '🍺 <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used · ';
       html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
       html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum · ';
@@ -879,7 +910,7 @@
       html += '</div>';
 
       // Column headers
-      html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#6b6b80;padding:2px 0;border-bottom:1px solid #1e1e2e;margin-bottom:2px;">';
+      html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#948d9e;padding:2px 0;border-bottom:1px solid #1e1e2e;margin-bottom:2px;">';
       html += '<span style="width:16px;"></span>';
       html += '<span style="flex:1;">Crew</span>';
       html += '<span style="width:28px;text-align:center;">St</span>';
@@ -892,8 +923,8 @@
       // Agent rows
       html += '<div style="display:flex;flex-direction:column;gap:1px;">';
       rows.forEach(function(r) {
-        var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#6b6b80;">-</span>';
-        var statusDot = r.statusColor !== '#6b6b80' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
+        var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#948d9e;">-</span>';
+        var statusDot = r.statusColor !== '#948d9e' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
         // Check if agent is actively working
         var activity = activityMap[r.agent.toLowerCase().trim()];
         var isWorking = activity && activity.status === 'working';
@@ -905,8 +936,8 @@
         html += '<span style="width:28px;text-align:center;">' + (isWorking ? workingIndicator : statusDot) + '</span>';
         html += '<span style="width:32px;text-align:right;">' + trustStr + '</span>';
         html += '<span style="color:#a78bfa;width:40px;text-align:right;font-weight:500;">' + (r.calls || 0) + '</span>';
-        html += '<span style="color:#6b6b80;width:24px;text-align:right;">' + r.pct + '%</span>';
-        html += '<span style="color:#6b6b80;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
+        html += '<span style="color:#948d9e;width:24px;text-align:right;">' + r.pct + '%</span>';
+        html += '<span style="color:#948d9e;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
         html += '</div>';
       });
       html += '</div>';
@@ -928,7 +959,7 @@
         .then(function(d){
           var tasks = d.tasks || d.recent || [];
           var stages = ['PENDING','INTAKE','DISCUSS','PLANNING','EXECUTION','REVIEW','COMPLETION'];
-          var stageColors = {'PENDING':'#6b6b80','INTAKE':'#6b6b80','DISCUSS':'#fbbf24','PLANNING':'#60a5fa','EXECUTION':'#a78bfa','REVIEW':'#4ade80','COMPLETION':'#2dd4bf'};
+          var stageColors = {'PENDING':'#948d9e','INTAKE':'#948d9e','DISCUSS':'#fbbf24','PLANNING':'#60a5fa','EXECUTION':'#a78bfa','REVIEW':'#4ade80','COMPLETION':'#2dd4bf'};
           var catColors = {'code':'#3b82f6','infrastructure':'#f97316','research':'#a855f7','documentation':'#06b6d4','testing':'#10b981','bug':'#ef4444','feature':'#8b5cf6','design':'#ec4899'};
           // Organize tasks into stage buckets
           var buckets = {};
@@ -943,7 +974,7 @@
           var html = '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-height:180px;">';
           stages.forEach(function(stage) {
             var col = buckets[stage] || [];
-            var color = stageColors[stage] || '#6b6b80';
+            var color = stageColors[stage] || '#948d9e';
             html += '<div style="min-width:170px;max-width:170px;background:#0d0d18;border-radius:6px;border:1px solid #1a1a2a;padding:6px;flex-shrink:0;">';
             html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #1e1e2e;">';
             html += '<span style="color:'+color+';font-weight:600;font-size:0.6rem;text-transform:uppercase;">'+stage+'</span>';
@@ -951,7 +982,7 @@
             html += '</div>';
             col.forEach(function(t) {
               var pct = t.progress_percentage != null ? t.progress_percentage : 0;
-              var pctCls = pct >= 80 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#6b6b80';
+              var pctCls = pct >= 80 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#948d9e';
               var cat = t.category || '';
               var catColor = catColors[cat.toLowerCase()] || '';
               var assignee = t.assignee_agent_id || '';
@@ -962,7 +993,7 @@
               html += '<div style="color:#d0d0e0;font-size:0.55rem;margin:1px 0;word-break:break-word;">'+title+'</div>';
               // Progress bar
               html += '<div style="height:3px;background:#1e1e2e;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
-              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#6b6b80;">';
+              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#948d9e;">';
               if (assignee) html += '<span>👤 '+assignee.slice(0,8)+'</span>';
               else html += '<span></span>';
               html += '<span>'+pct+'%</span>';
@@ -1076,8 +1107,8 @@
         var h = a.hashrate ? ' \u00b7 ' + a.hashrate + ' H/s' : '';
         // Look up trust score
         var trustInfo = trustMap[agentName.toLowerCase()];
-        var trustStr = trustInfo ? ' <span style="font-size:0.65rem;color:' + (trustInfo.score >= 90 ? '#4ade80' : trustInfo.score >= 70 ? '#60a5fa' : trustInfo.score >= 50 ? '#fbbf24' : trustInfo.score >= 20 ? '#f87171' : '#6b6b80') + ';">\u25cf ' + trustInfo.score.toFixed(1) + ' ' + trustInfo.band + '</span>' : '';
-        return '<div class="stat"><span class="label">' + me + agentName + trustStr + '<br><span style="font-size:0.65rem;color:#6b6b80;">' + cleanRole + '</span>' + tun + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span>' + h + '</span></div>';
+        var trustStr = trustInfo ? ' <span style="font-size:0.65rem;color:' + (trustInfo.score >= 90 ? '#4ade80' : trustInfo.score >= 70 ? '#60a5fa' : trustInfo.score >= 50 ? '#fbbf24' : trustInfo.score >= 20 ? '#f87171' : '#948d9e') + ';">\u25cf ' + trustInfo.score.toFixed(1) + ' ' + trustInfo.band + '</span>' : '';
+        return '<div class="stat"><span class="label">' + me + agentName + trustStr + '<br><span style="font-size:0.65rem;color:#948d9e;">' + cleanRole + '</span>' + tun + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span>' + h + '</span></div>';
       }).join('');
       // Update heartbeat URL
       var hb = document.getElementById('heartbeat-url');
@@ -1195,7 +1226,7 @@ loadAgentExperienceCard();
                           var cardBg = isToolCard ? 'background:#0d0d1a;border-left:2px solid #4ade80;' : '';
                           return '<div style="margin-bottom:6px;padding:6px 4px;border-bottom:1px solid #1a1a2a;' + cardBg + 'border-radius:3px;">' +
                             '<span style="color:' + nameColor + ';font-weight:500;font-size:11px;">' + name + '</span> ' +
-                            '<span style="color:#6b6b80;font-size:10px;float:right;">' + time + '</span><br/>' +
+                            '<span style="color:#948d9e;font-size:10px;float:right;">' + time + '</span><br/>' +
                             '<span style="color:#c0c0d0;font-size:12px;line-height:1.45;word-break:break-word;">' + body + '</span>' +
                             '</div>';
                         }).join('');
@@ -1228,9 +1259,9 @@ loadAgentExperienceCard();
         var sb = status === 'online' ? 'badge-ok' : 'badge-err';
         var me = p.agent_name === 'vex' ? '\u2b50 ' : '';
         var eps = p.endpoint ? '<br><span style="font-size:0.65rem;color:#4a7cff;">' + p.endpoint + '</span>' : '';
-        var caps = p.capabilities ? '<br><span style="font-size:0.6rem;color:#6b6b80;">' + p.capabilities.slice(0,5).join(', ') + (p.capabilities.length > 5 ? ' +' + (p.capabilities.length-5) + ' more' : '') + '</span>' : '';
+        var caps = p.capabilities ? '<br><span style="font-size:0.6rem;color:#948d9e;">' + p.capabilities.slice(0,5).join(', ') + (p.capabilities.length > 5 ? ' +' + (p.capabilities.length-5) + ' more' : '') + '</span>' : '';
         var lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleTimeString() : '';
-        return '<div class="stat"><span class="label">' + me + p.agent_name + eps + caps + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span><br><span style="font-size:0.6rem;color:#6b6b80;">' + lastSeen + '</span></span></div>';
+        return '<div class="stat"><span class="label">' + me + p.agent_name + eps + caps + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span><br><span style="font-size:0.6rem;color:#948d9e;">' + lastSeen + '</span></span></div>';
       }).join('');
     }).catch(function(){
       // Mesh peers unavailable
@@ -1259,8 +1290,8 @@ loadAgentExperienceCard();
           nodesDiv.style.display = 'block';
           nodeList.innerHTML = d.nodeList.map(function(n){
             return '<div style="padding:1px 0;font-size:0.65rem;">🟢 ' + (n.name || n.id) +
-              (n.rssi ? ' <span style="color:#6b6b80;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
-              (n.snr ? ' <span style="color:#6b6b80;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
+              (n.rssi ? ' <span style="color:#948d9e;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
+              (n.snr ? ' <span style="color:#948d9e;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
               '</div>';
           }).join('');
         } else if (nodesDiv) {
@@ -1268,7 +1299,7 @@ loadAgentExperienceCard();
         }
       } else {
         status.textContent = '○ Disconnected';
-        status.style.color = '#6b6b80';
+        status.style.color = '#948d9e';
         if (peers) peers.textContent = (d.nodes || 0) + ' nodes tracked';
         if (messages) messages.textContent = d.messageCount || 0;
         if (uptime) uptime.textContent = '-';
@@ -1276,7 +1307,7 @@ loadAgentExperienceCard();
       }
     }).catch(function(){
       var status = document.getElementById('mt-bridge-status');
-      if (status) { status.textContent = '○ offline'; status.style.color = '#6b6b80'; }
+      if (status) { status.textContent = '○ offline'; status.style.color = '#948d9e'; }
     });
   }
   setTimeout(function() { updateMeshtasticBridge(); setInterval(updateMeshtasticBridge, 5000); }, 4500);
@@ -1296,11 +1327,11 @@ loadAgentExperienceCard();
         var lastSeen = new Date(w.last_seen).getTime();
         var minutesAgo = Math.round((now - lastSeen) / 60000);
         var isOnline = minutesAgo < 10;
-        var statusDot = isOnline ? '<span style="color:#4ade80;">●</span>' : '<span style="color:#6b6b80;">○</span>';
+        var statusDot = isOnline ? '<span style="color:#4ade80;">●</span>' : '<span style="color:#948d9e;">○</span>';
         var hashDisplay = w.current_hash > 0 ? w.current_hash + ' H/s' : '-';
         var sharesDisplay = w.total_shares > 0 ? w.total_shares.toLocaleString() : '0';
         var timeAgo = minutesAgo < 1 ? 'just now' : minutesAgo + 'm ago';
-        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#6b6b80;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
+        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#948d9e;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
       }).join('');
     }).catch(function(){
       var el = document.getElementById('miner-leaderboard');
@@ -1545,7 +1576,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
               var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
               var dd = new Date(c.commit.author.date).toLocaleDateString();
               var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
-              return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#6b6b80;">(' + dd + ')</span></div>';
+              return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#948d9e;">(' + dd + ')</span></div>';
             }).join('');
           }
         }
@@ -1939,7 +1970,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       'active': 'background:#1a3a2a;color:#4ade80;',
       'in-progress': 'background:#3a2a1a;color:#fbbf24;',
       'completed': 'background:#1a2a3a;color:#60a5fa;',
-      'archived': 'background:#2a2a2a;color:#6b6b80;'
+      'archived': 'background:#2a2a2a;color:#948d9e;'
     };
     var label = status === 'in-progress' ? 'in progress' : status;
     return '<span style="' + (colors[status] || colors.active) + 'padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;">' + label + '</span>';
@@ -1953,7 +1984,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       filtered = filtered.filter(function(t) { return t.status === boardStatusFilter; });
     }
     if (!filtered || filtered.length === 0) {
-      var emptyMsg = '<div style="color:#6b6b80;text-align:center;padding:20px 0;font-size:12px;">' +
+      var emptyMsg = '<div style="color:#948d9e;text-align:center;padding:20px 0;font-size:12px;">' +
         (boardStatusFilter !== 'all' ? 'No ' + boardStatusFilter + ' topics.' : 'No topics yet. Create one to start tracking progress.') +
         '</div>';
       if (list) list.innerHTML = emptyMsg;
@@ -2046,7 +2077,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   function renderBoardPosts() {
     var list = document.getElementById('board-posts-list');
     if (!boardCurrentTopic || !boardCurrentTopic.posts || boardCurrentTopic.posts.length === 0) {
-      list.innerHTML = '<div style="color:#6b6b80;text-align:center;padding:15px 0;font-size:12px;">No posts yet. Be the first!</div>';
+      list.innerHTML = '<div style="color:#948d9e;text-align:center;padding:15px 0;font-size:12px;">No posts yet. Be the first!</div>';
       return;
     }
     var html = '';
@@ -2055,7 +2086,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var agentClass = 'board-agent-' + (p.agent || 'vex').toLowerCase();
       html += '<div class="board-post">';
       html += '<div class="board-post-header"><span class="board-agent-badge ' + agentClass + '">' + (p.agent || 'agent').toUpperCase() + '</span> ' + timeAgo(p.ts);
-      html += '<span style="float:right;font-size:9px;color:#6b6b80;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">✕</span>';
+      html += '<span style="float:right;font-size:9px;color:#948d9e;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">✕</span>';
       html += '</div>';
       html += '<div class="board-post-body">' + renderMarkdown(p.message) + '</div>';
       html += '</div>';
@@ -2464,12 +2495,12 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     github: '#c084fc', tunnel: '#fcd34d', campaign: '#fdba74',
     memory: '#f472b6', 'shared-context': '#2dd4bf', catalog: '#fcd34d',
     knowledge: '#a3e635',
-    other: '#6b6b80'
+    other: '#948d9e'
   };
 
   const TRUST_BAND_COLORS = {
     Trusted: '#4ade80', Standard: '#60a5fa', Monitored: '#fbbf24',
-    Cautious: '#f87171', Suspended: '#6b6b80'
+    Cautious: '#f87171', Suspended: '#948d9e'
   };
 
   // ── Coordinate transforms ──
@@ -2897,7 +2928,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       if (!effectCatalog && n.category === 'catalog') continue;
       if (!effectKnowledge && n.category === 'knowledge') continue;
 
-      var color = CAT_COLORS[n.category] || '#6b6b80';
+      var color = CAT_COLORS[n.category] || '#948d9e';
       var trustInfo = null;
       if (n.category === 'agent') {
         trustInfo = trustScores[n.label] || trustScores[n.id] || trustScores[n.label.toLowerCase()] || trustScores[n.id.toLowerCase()] || null;
@@ -3395,7 +3426,7 @@ function updateFootlocker() {
   apiFetch('/api/footlocker', { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var chests = d.chests || [];
     if (chests.length === 0) {
-      content.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;"><div class="stat"><span class="label" style="color:#6b6b80;">No completed task artifacts yet</span></div></div>';
+      content.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;"><div class="stat"><span class="label" style="color:#948d9e;">No completed task artifacts yet</span></div></div>';
       return;
     }
     var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">';
@@ -3410,7 +3441,7 @@ function updateFootlocker() {
       html += '<div class="stat" style="cursor:pointer;min-width:100px;" onclick="openFootlockerChest(\'' + agentName + '\', this)">';
       html += '<span class="label">' + emoji + ' <b style="color:#a78bfa;">' + agentName + '</b></span>';
       html += '<span class="value" style="color:#4ade80;font-size:0.65rem;">' + count + ' artifact' + (count !== 1 ? 's' : '') + '</span>';
-      if (lastUpd) html += '<span style="color:#6b6b80;font-size:0.5rem;">' + lastUpd + '</span>';
+      if (lastUpd) html += '<span style="color:#948d9e;font-size:0.5rem;">' + lastUpd + '</span>';
       html += '</div>';
     });
     html += '</div>';
@@ -3424,11 +3455,11 @@ function updateFootlocker() {
 window.openFootlockerChest = function(agent, el) {
   var artifactsDiv = document.getElementById('footlocker-artifacts');
   if (!artifactsDiv) return;
-  artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Loading ' + agent + '\'s chest...</span></div>';
+  artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Loading ' + agent + '\'s chest...</span></div>';
   apiFetch('/api/footlocker/' + encodeURIComponent(agent), { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var artifacts = d.artifacts || [];
     if (artifacts.length === 0) {
-      artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Chest is empty</span></div>';
+      artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Chest is empty</span></div>';
       return;
     }
     var html = '<div style="font-size:0.6rem;color:#a78bfa;margin-bottom:4px;">📂 ' + agent + '\'s Chest — ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
@@ -3441,8 +3472,8 @@ window.openFootlockerChest = function(agent, el) {
       html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #1a1a2e;cursor:pointer;" onclick="openFootlockerArtifact(\'' + agent + '\',\'' + a.id + '\', this)">';
       html += '<span style="color:#a78bfa;">📄</span>';
       html += '<span style="flex:1;color:#e0e0e0;font-size:0.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</span>';
-      html += '<span style="color:#6b6b80;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
-      html += '<span style="color:#6b6b80;font-size:0.5rem;">' + date + '</span>';
+      html += '<span style="color:#948d9e;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
+      html += '<span style="color:#948d9e;font-size:0.5rem;">' + date + '</span>';
       html += '<span style="color:#60a5fa;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">⬇</span>';
       html += '</div>';
       html += '<div id="fl-artifact-' + a.id.replace(/[^a-zA-Z0-9]/g,'') + '" style="display:none;padding:4px 8px;background:#0d0d18;border-radius:4px;margin:2px 0;font-size:0.55rem;"></div>';
@@ -3459,7 +3490,7 @@ window.openFootlockerArtifact = function(agent, artifactId, el) {
   if (!detailEl) return;
   if (detailEl.style.display !== 'none') { detailEl.style.display = 'none'; return; }
   detailEl.style.display = 'block';
-  detailEl.innerHTML = '<div class="stat"><span class="label" style="color:#6b6b80;">Loading...</span></div>';
+  detailEl.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Loading...</span></div>';
   apiFetch('/api/footlocker/' + encodeURIComponent(agent) + '/' + artifactId, { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var art = d.artifact || {};
     var files = d.files || [];
@@ -3471,12 +3502,12 @@ window.openFootlockerArtifact = function(agent, artifactId, el) {
     if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">🔗 <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#60a5fa;">Proof of Work</a></div>';
     html += '</div>';
     if (files.length > 0) {
-      html += '<div style="font-size:0.55rem;color:#6b6b80;margin-bottom:2px;">Files:</div>';
+      html += '<div style="font-size:0.55rem;color:#948d9e;margin-bottom:2px;">Files:</div>';
       files.forEach(function(f) {
         html += '<div style="display:flex;gap:4px;padding:1px 0;">';
         html += '<span style="color:#a78bfa;">📄</span>';
         html += '<span style="flex:1;color:#c0c0d0;">' + f.filename + '</span>';
-        html += '<span style="color:#6b6b80;">' + (f.file_size || 0) + 'b</span>';
+        html += '<span style="color:#948d9e;">' + (f.file_size || 0) + 'b</span>';
         html += '</div>';
       });
     }

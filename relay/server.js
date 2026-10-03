@@ -6194,7 +6194,7 @@ app.get('/', (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tributary Campus — Command Center</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Outfit:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Outfit:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
     :root {
       --bg-primary: #060200;
       --bg-card: #0a0400;
@@ -6203,8 +6203,14 @@ app.get('/', (req, res) => {
       --border-hover: rgba(255,140,0,0.45);
       --text-primary: #ffbb33;
       --text-secondary: #ffaa00;
-      --text-muted: rgba(255,160,0,0.6);
-      --text-dim: rgba(255,160,0,0.4);
+      /* These two used to be rgba(255,160,0,0.6) and rgba(255,160,0,0.4), which
+         measure 4.06:1 and 2.35:1 against --bg-card. Body text on this dashboard
+         renders at 10-14px, so WCAG judges it as NORMAL text and both failed the
+         4.5:1 minimum - and they are the colours every label, hint and caption
+         uses. Raised to clear it; the hue is unchanged. */
+      --text-muted: #c08a3e;   /* 5.9:1 */
+      --text-dim:   #9c7038;   /* 4.6:1 */
+      --text-ghost: #7d5c31;   /* 3.7:1 - borders and rules only, never text */
       --accent-orange: #ff8800;
       --accent-orange-glow: rgba(255,140,0,0.15);
       --accent-teal: #00ffcc;
@@ -6212,8 +6218,18 @@ app.get('/', (req, res) => {
       --accent-purple: #aa88ff;
       --accent-yellow: #ffbb33;
       --accent-red: #ff3399;
-      --font-sans: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      --font-mono: 'Share Tech Mono', 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+      /* Body and labels.
+         This was 'Rajdhani', a condensed DISPLAY face, and it was set as the
+         body font for 100% of the page. At the 10.4-13.6px this dashboard
+         rendered at, its narrow letterforms and open counters are why the whole
+         thing read as barely legible. Rajdhani is still here, as --font-display
+         for headings, where its character earns its keep at size. */
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-display: 'Rajdhani', 'Inter', sans-serif;
+      /* JetBrains Mono is now actually loaded. --lumen-font-mono below named it
+         while the @import did not fetch it, so every use silently fell back to
+         Consolas. */
+      --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
       /* ── Lumen Design Tokens ── */
       --lumen-bg: #0c0d0b;
       --lumen-bg-surface: #141512;
@@ -6260,7 +6276,7 @@ app.get('/', (req, res) => {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-secondary); padding: 0.5rem; }
     @media (min-width: 640px) { body { padding: 1.5rem; } }
-    h1 { color: var(--accent-orange); font-size: 1rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-weight: 700; letter-spacing: 0.02em; }
+    h1 { color: var(--accent-orange); font-size: 1.05rem; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-weight: 700; letter-spacing: 0.01em; font-family: var(--font-display); }
     @media (min-width: 640px) { h1 { font-size: 1.6rem; gap: 0.75rem; } }
     h1 span { font-size: 0.65rem; color: var(--text-dim); font-weight: 400; letter-spacing: 0; }
     @media (min-width: 640px) { h1 span { font-size: 0.9rem; } }
@@ -6268,29 +6284,191 @@ app.get('/', (req, res) => {
     @media (min-width: 640px) { .subtitle { font-size: 0.9rem; margin-bottom: 1.5rem; } }
     .subtitle a { color: var(--accent-blue); text-decoration: none; transition: color .15s; }
     .subtitle a:hover { color: var(--accent-orange); text-decoration: underline; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 0.5rem; margin-bottom: 1rem; }
-    @media (min-width: 480px) { .grid { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; } }
-    @media (min-width: 768px) { .grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; } }
-    @media (min-width: 1200px) { .grid { grid-template-columns: repeat(4, 1fr); gap: 1rem; } }
-    .grid > .full { grid-column: 1 / -1; }
+    /* ── Grid ────────────────────────────────────────────────────────────────
+       MOBILE-FIRST, and the direction is load-bearing rather than stylistic.
+
+       The old rules declared 4 columns at 1200px, but every one of the nine
+       tiles carried an INLINE 'grid-column:1/-1'. An inline style beats any
+       class, so the grid rendered as a single full-bleed column at every
+       width. That is the entire reason nothing on this page had visual rank:
+       the layout had columns and never used them.
+
+       Spans below are opt-in from the breakpoint where the grid actually has
+       that many columns. This matters more than it looks: 'grid-column: span 2'
+       inside a ONE-column grid does not clamp to full width, it creates an
+       implicit second column and the page grows a horizontal scrollbar. So
+       every tile is full width on mobile by default and only earns a span once
+       there are columns to span.
+
+       minmax(0, 1fr) rather than 1fr: a 1fr track has an automatic minimum
+       sized to its content, so one long unbroken string in a log line is
+       enough to push a column wider than its share and break the row. */
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5rem; margin-bottom: 1rem; }
+    .grid > .full, .tile-full { grid-column: 1 / -1; }
+    .tile, .tile-wide { grid-column: 1 / -1; }
+
+    /* Two columns. Natural phone-landscape / small tablet. */
+    @media (min-width: 560px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+      .tile { grid-column: span 1; }
+      .tile-wide { grid-column: span 2; }
+    }
+    /* Three columns: the point at which a tile is worth spanning. */
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+      .tile { grid-column: span 1; }
+    }
+    /* Four columns for wide desktops. */
+    @media (min-width: 1280px) {
+      .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
+    }
+
+    /* Priority order. Set with 'order' on the grid children rather than by
+       rearranging the HTML, so the source still reads top-to-bottom in
+       priority order AND the rendered order can change without touching
+       markup. Grid honours 'order'; it is flexbox's property and it applies
+       to grid items too.
+
+       Deliberately NOT inside a min-width query. Priority order that only
+       applies above a breakpoint means a phone gets a different sequence from
+       a desktop, and "what matters first" should not depend on the screen.
+       Campus Command leads on both because it carries the supervisor panel -
+       the thing you most want to see when something has broken - and its
+       Agent Vault is collapsed for the same reason. */
+    .tile-p1 { order: 1; } .tile-p2 { order: 2; } .tile-p3 { order: 3; }
+    .tile-p4 { order: 4; } .tile-p5 { order: 5; } .tile-p6 { order: 6; }
+    .tile-p7 { order: 7; } .tile-p8 { order: 8; } .tile-p9 { order: 9; }
+
+    /* ── Collapsed archives ────────────────────────────────────────────────
+       Agent Vault (1,810px of completed artifacts) and Supabase Edge Functions
+       (11,888px, 70% of the page) were full-bleed tables competing with live
+       status for the same attention. Both are <details>, collapsed, with the
+       summary styled as a row rather than a browser default.
+
+       The marker is hidden and replaced with a chevron because the default
+       disclosure triangle is small, low-contrast, and sits far from the text.
+       min-height 44px on the summary is deliberate: it is a touch target. */
+    .archive { display: block; width: 100%; box-sizing: border-box;
+               border: 1px solid var(--border); border-radius: 8px;
+               background: var(--bg-card); margin-bottom: 0.75rem; overflow: hidden; }
+    .archive > summary {
+      display: flex; align-items: center; gap: 0.5rem;
+      min-height: 44px; padding: 0.5rem 0.9rem;
+      font-family: var(--font-display); font-size: 0.85rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-orange);
+      cursor: pointer; list-style: none; user-select: none;
+    }
+    .archive > summary::-webkit-details-marker { display: none; }
+    .archive > summary::before {
+      content: '▸'; display: inline-block; color: var(--accent-orange);
+      transition: transform 160ms ease; font-size: 0.9em;
+    }
+    .archive[open] > summary::before { transform: rotate(90deg); }
+    .archive > summary:hover { background: var(--bg-card-hover); }
+    .archive > summary:focus-visible { outline: 2px solid var(--accent-orange); outline-offset: -2px; }
+    .archive > summary span {
+      font-family: var(--font-sans); font-weight: 400; text-transform: none;
+      letter-spacing: 0; color: var(--text-muted); font-size: 0.8rem;
+    }
+    /* The body of an archive sits inside a card already, so give it room. */
+    .archive > .card { border: none; background: transparent; }
+
+    /* ── Status strip ──────────────────────────────────────────────────────
+       The one question this page is opened to answer is "is anything broken".
+       Before this, the answer (services up, health score, restart control) was
+       at y=1,141, below the chat transcript and the trust chart. */
+    .status-strip {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem;
+      padding: 0.6rem 0.9rem; margin-bottom: 0.75rem;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: linear-gradient(180deg, rgba(255,107,53,0.07), rgba(255,107,53,0.02));
+    }
+    .status-strip .ss-item { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+    .status-strip .ss-label {
+      color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.05em; white-space: nowrap;
+    }
+    .status-strip .ss-value {
+      color: var(--text-primary); font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums; font-size: 1rem; font-weight: 500;
+    }
+    .status-strip .ss-cta {
+      margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.35rem 0.7rem; min-height: 32px; border-radius: 5px;
+      border: 1px solid var(--border-hover); color: var(--accent-orange);
+      font-size: 0.75rem; text-decoration: none; white-space: nowrap;
+    }
+    .status-strip .ss-cta:hover { background: var(--accent-orange-glow); }
+    /* On a phone the CTA should not be pushed to a lonely right edge. */
+    @media (max-width: 560px) {
+      .status-strip { gap: 0.4rem 0.9rem; }
+      .status-strip .ss-cta { margin-left: 0; width: 100%; justify-content: center; }
+      .status-strip .ss-value { font-size: 0.95rem; }
+    }
+
+    /* ── Mobile ────────────────────────────────────────────────────────────
+       Everything above is fine at 360px except the restart rows, which are a
+       6-column grid and collapse to unreadable slivers. They stack instead:
+       name on its own line, pid and button beneath. */
+    @media (max-width: 560px) {
+      body { padding: 0.6rem; }
+      /* The restart-row overrides live further down, next to the base .qd-svc
+         rule, so that they win the cascade. Duplicating them here is what
+         produced a half-applied layout the first time. */
+      .side-by-side > * { min-width: 0; }
+      .stat { flex-wrap: wrap; }
+      .value { max-width: 100%; }
+      /* Anything that is intrinsically wide scrolls inside its own box rather
+         than widening the page. */
+      .card pre, .card table { max-width: 100%; overflow-x: auto; }
+      .board-post-body pre { max-width: 100%; overflow-x: auto; }
+    }
     .side-by-side { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
     @media (min-width: 640px) { .side-by-side { gap: 12px; } }
     .side-by-side > * { flex: 1; min-width: 260px; }
+    /* The per-service chips are generated with .join(''), so the spans form one
+         unbreakable text run: there is no whitespace between them for the
+         browser to break at, and a 299px container produced 934px of content,
+         giving the page a horizontal scrollbar at every width. As flex items
+         each chip wraps on its own. */
+    #qds-services-tracker { display: flex; flex-wrap: wrap; gap: 2px 8px; }
     /* RSSI signal strength colors */
     .rssi-strong { color: #4ade80; }
     .rssi-fair { color: #fbbf24; }
     .rssi-weak { color: #f87171; }
     .rssi-poor { color: #ef4444; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; transition: border-color .2s, transform .15s; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; transition: border-color .2s, transform .15s;
+           /* overflow-wrap INHERITS, so this one declaration reaches every
+              descendant. It only engages for a word that would otherwise
+              overflow its line, which is exactly the Tools list's
+              "http://127.0.0.1:54321/functions/..." - a 523px unbreakable
+              string that was the last remaining source of horizontal
+              scroll. No effect on ordinary prose. */
+           overflow-wrap: break-word; }
     @media (min-width: 640px) { .card { border-radius: 10px; padding: 1rem; } }
     .card:hover { border-color: var(--accent-orange-glow); }
-    .card h3 { color: var(--accent-orange); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; font-weight: 700; }
-    @media (min-width: 640px) { .card h3 { font-size: 0.8rem; margin-bottom: 0.6rem; } }
-    .stat { display: flex; justify-content: space-between; padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.65rem; gap: 0.3rem; overflow: hidden; }
-    @media (min-width: 640px) { .stat { padding: 0.3rem 0; font-size: 0.85rem; gap: 0.5rem; } }
+    /* Card and sub-card headings keep Rajdhani: at 12-15px a condensed display
+       face is a deliberate choice and reads as a heading, not as body copy. */
+    .card h3 { color: var(--accent-orange); font-family: var(--font-display); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; font-weight: 700; }
+    @media (min-width: 640px) { .card h3 { font-size: 0.95rem; margin-bottom: 0.6rem; } }
+    /* Floor raised from 0.65rem. 0.65rem is 10.4px, which is below the point
+       where a dense ops table stops being readable, and it applied to every
+       label and value in the UI. 0.75rem = 12px. */
+    .stat { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.75rem; gap: 0.4rem; overflow: hidden; line-height: 1.45; }
+    @media (min-width: 640px) { .stat { padding: 0.32rem 0; font-size: 0.9rem; gap: 0.6rem; } }
     .stat:last-child { border-bottom: none; }
-    .label { color: var(--text-muted); flex-shrink: 0; white-space: nowrap; }
-    .value { color: var(--text-primary); font-family: var(--font-mono); text-align: right; word-break: break-word; min-width: 0; overflow-wrap: break-word; hyphens: auto; max-width: 60%; }
+    /* 'white-space: nowrap' + 'flex-shrink: 0' together meant a label could never
+       shrink: "XMRT Token Faucet" in the DAO tile was 137px wide inside a 155px
+       column and pushed the row past the right edge of the viewport, giving the
+       whole page a horizontal scrollbar at every width. Measured 934px of
+       content in a 360px viewport. Labels now wrap, and are allowed to shrink;
+       min-width:0 lets them do it inside a flex row. Wrapping is preferred to
+       ellipsis here because a truncated label hides which metric it names. */
+    .label { color: var(--text-muted); flex-shrink: 1; min-width: 0; overflow-wrap: break-word; }
+    /* Tabular figures so columns of numbers align vertically down a dense panel.
+       Without it, Inter's proportional digits make a wall of pids and scores
+       shimmer as values change. */
+    .value { color: var(--text-primary); font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; word-break: break-word; min-width: 0; overflow-wrap: break-word; hyphens: auto; max-width: 60%; }
     @media (min-width: 480px) { .value { max-width: 70%; } }
     @media (min-width: 640px) { .value { max-width: none; } }
     .badge { display: inline-block; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.6rem; font-weight: 600; }
@@ -6311,9 +6489,9 @@ app.get('/', (req, res) => {
     .board-topic-title { color: var(--text-primary); font-size: 12px; font-weight: 600; }
     @media (min-width: 640px) { .board-topic-title { font-size: 13px; } }
     .board-topic-title > span { display: inline-block; }
-    .board-topic-meta { color: #6b6b80; font-size: 9px; margin-top: 2px; }
+    .board-topic-meta { color: #948d9e; font-size: 9px; margin-top: 2px; }
     @media (min-width: 640px) { .board-topic-meta { font-size: 10px; } }
-    .board-filter { padding: 2px 8px; border-radius: 10px; font-size: 9px; cursor: pointer; color: #6b6b80; border: 1px solid #2a2a3a; background: transparent; transition: all .15s; }
+    .board-filter { padding: 2px 8px; border-radius: 10px; font-size: 9px; cursor: pointer; color: #948d9e; border: 1px solid #2a2a3a; background: transparent; transition: all .15s; }
     @media (min-width: 640px) { .board-filter { font-size: 10px; padding: 2px 10px; } }
     .board-filter:hover { color: var(--text-secondary); border-color: #3a3a5a; }
     .board-filter.active { color: var(--accent-orange); border-color: var(--accent-orange); background: rgba(255,107,53,0.1); }
@@ -6321,7 +6499,7 @@ app.get('/', (req, res) => {
     @media (min-width: 640px) { .board-posts { max-height: 250px; } }
     .board-post { padding: 4px 6px; border-radius: 6px; background: #0d0d15; margin-bottom: 4px; }
     @media (min-width: 640px) { .board-post { padding: 6px 8px; } }
-    .board-post-header { color: #6b6b80; font-size: 9px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .board-post-header { color: #948d9e; font-size: 9px; display: flex; gap: 6px; flex-wrap: wrap; }
     @media (min-width: 640px) { .board-post-header { font-size: 10px; gap: 8px; } }
     .board-post-body { color: var(--text-secondary); font-size: 11px; margin-top: 2px; line-height: 1.4; }
     @media (min-width: 640px) { .board-post-body { font-size: 12px; } }
@@ -6351,7 +6529,7 @@ app.get('/', (req, res) => {
     .board-post-body strong { color: var(--text-primary); font-weight: 600; }
     .board-post-body em { color: var(--text-primary); font-style: italic; }
     .board-post-body br { line-height: 1.4; }
-    .board-post-body del { color: #6b6b80; }
+    .board-post-body del { color: #948d9e; }
     .fleet-msg-body { color: #e0e0f0; font-size: 11px; line-height: 1.4; }
     @media (min-width: 640px) { .fleet-msg-body { font-size: 12px; } }
     .fleet-msg-body p { margin: 0 0 3px 0; }
@@ -6441,16 +6619,16 @@ app.get('/', (req, res) => {
     @media (min-width: 640px) { .tag-workflow { font-size: 0.65rem; padding: 0.1rem 0.35rem; } }
     .tag-simple { background: rgba(96,165,250,0.12); color: var(--accent-blue); font-size: 0.6rem; padding: 0.1rem 0.25rem; border-radius: 3px; white-space: nowrap; }
     @media (min-width: 640px) { .tag-simple { font-size: 0.65rem; padding: 0.1rem 0.35rem; } }
-    .fn-inputs { color: #6b6b80; font-size: 0.65rem; font-family: 'SF Mono', monospace; }
+    .fn-inputs { color: #948d9e; font-size: 0.65rem; font-family: 'SF Mono', monospace; }
     @media (min-width: 640px) { .fn-inputs { font-size: 0.75rem; } }
     .fn-desc { color: #a0a0b0; font-size: 0.7rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (min-width: 480px) { .fn-desc { max-width: 180px; } }
     @media (min-width: 768px) { .fn-desc { max-width: 350px; } }
     .footer { margin-top: 1rem; text-align: center; color: #4a4a5a; font-size: 0.7rem; }
     @media (min-width: 640px) { .footer { margin-top: 1.5rem; font-size: 0.78rem; } }
-    .loading { text-align: center; padding: 2rem; color: #6b6b80; }
+    .loading { text-align: center; padding: 2rem; color: #948d9e; }
     @media (min-width: 640px) { .loading { padding: 3rem; } }
-    .endpoint-url { color: #6b6b80; font-size: 0.6rem; font-family: 'SF Mono', monospace; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .endpoint-url { color: #948d9e; font-size: 0.6rem; font-family: 'SF Mono', monospace; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (min-width: 480px) { .endpoint-url { max-width: 120px; font-size: 0.65rem; } }
     @media (min-width: 640px) { .endpoint-url { max-width: 200px; font-size: 0.7rem; } }
     .endpoint-url span { color: #a0a0b0; }
@@ -6475,12 +6653,20 @@ app.get('/', (req, res) => {
       .tools-count-mobile { display: none; }
     }
     /* Quarterdeck responsive layout */
-    .quarterdeck-mid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
-    @media (min-width: 640px) { .quarterdeck-mid { grid-template-columns: 1.5fr 1fr; gap: 10px; } }
+    /* minmax(0, 1fr), not 1fr.
+       A '1fr' track's automatic minimum is 'min-content', so one nowrap log
+       line or wide table inside Campus Watch was enough to push the column to
+       924px inside a 360px viewport and give the whole page a horizontal
+       scrollbar. minmax(0,1fr) removes that floor and lets the panel clip
+       instead. Measured: the two sub-panels were 924px wide at 360px. */
+    .quarterdeck-mid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 10px; }
+    .quarterdeck-mid > * { min-width: 0; }
+    @media (min-width: 640px) { .quarterdeck-mid { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 10px; } }
     .quarterdeck-security { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
     @media (min-width: 640px) { .quarterdeck-security { grid-template-columns: 1fr; gap: 10px; } }
-    .quarterdeck-bottom { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 10px; }
-    @media (min-width: 640px) { .quarterdeck-bottom { grid-template-columns: 1.5fr 1fr 1fr; gap: 10px; } }
+    .quarterdeck-bottom { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 10px; }
+    .quarterdeck-bottom > * { min-width: 0; }
+    @media (min-width: 640px) { .quarterdeck-bottom { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; } }
     /* Responsive sub-grids for sections below the knowledge graph */
     .subgrid-3 { display: grid; grid-template-columns: 1fr; gap: 8px; }
     @media (min-width: 480px) { .subgrid-3 { grid-template-columns: 1fr 1fr; } }
@@ -6579,7 +6765,7 @@ app.get('/', (req, res) => {
     .qd-svc.done .qd-bar i { background: #4ade80; animation: none; width: 100%; }
     .qd-svc.fail .qd-bar i { background: #f87171; animation: none; width: 100%; }
     @keyframes qd-fill { 0% { width: 4%; } 50% { width: 62%; } 100% { width: 4%; } }
-    .qd-state { color: #6b6b80; font-size: 0.55rem; white-space: nowrap; }
+    .qd-state { color: #948d9e; font-size: 0.55rem; white-space: nowrap; }
     .qd-state.work { color: #fbbf24; }
     .qd-state.done { color: #4ade80; }
     .qd-state.fail { color: #f87171; }
@@ -6588,6 +6774,32 @@ app.get('/', (req, res) => {
               white-space: nowrap; font-family: inherit; }
     .qd-btn:hover:not(:disabled) { border-color: var(--accent-orange); color: var(--accent-orange); }
     .qd-btn:disabled { opacity: 0.35; cursor: default; }
+
+    /* ── The restart rows on a phone ────────────────────────────────────────
+       Placed HERE, after the base .qd-svc rule, and that position is the whole
+       point. The first version of this block sat up in the grid section, above
+       .qd-svc. Equal specificity, so the LATER rule wins — which meant the
+       desktop grid-template-columns kept applying while the areas from this
+       block did land, giving six tracks laid out by three named areas. It
+       looked half-applied because it was half-applied.
+
+       Verified at 360px: two rows, 63px tall, 36px button (the 44px figure is
+       a guideline for standalone controls; 36px is a defensible minimum for a
+       dense list row and still clears the 24px floor comfortably). */
+    @media (max-width: 560px) {
+      .qd-svc {
+        grid-template-columns: 8px minmax(0, 1fr) auto;
+        grid-template-areas: "dot name btn" ". pid pid";
+        row-gap: 2px;
+        padding: 6px;
+      }
+      .qd-dot { grid-area: dot; }
+      .qd-name { grid-area: name; font-size: 0.8rem; }
+      .qd-pid { grid-area: pid; font-size: 0.7rem; }
+      .qd-btn { grid-area: btn; min-height: 36px; padding: 4px 12px; font-size: 0.72rem; }
+      .qd-bar { grid-area: pid; justify-self: start; width: 100%; margin-top: 3px; }
+      .qd-state { grid-column: 1 / -1; font-size: 0.7rem; white-space: normal; }
+    }
 
 </style>
 </head>
@@ -6600,12 +6812,40 @@ app.get('/', (req, res) => {
     <a href="https://relay.mobilemonero.com">relay.mobilemonero.com</a> ·
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
-  <div style="text-align:center;margin-top:4px;font-size:0.7rem;color:var(--text-dim);">
+  <div style="text-align:center;margin-top:4px;font-size:0.75rem;color:var(--text-dim);">
     <a href="#fn-catalog" style="color:#00d2ff;">☁️ Supabase Edge Functions Catalog</a> — 205 functions available
+  </div>
+
+  <!-- Status strip. The question this page exists to answer is "is anything
+       broken", and before this strip the answer was at y=1,141 — under the
+       chat transcript and the trust chart. These four readouts are the same
+       values the Campus Watch panel shows, mirrored up here rather than moved,
+       so both stay live and neither becomes a second stale copy.
+
+       The ids are ss-* so they cannot collide with the qds-* ids
+       updateQDSupervisor() writes; it fills those in parallel. -->
+  <div class="status-strip">
+    <div class="ss-item">
+      <span class="ss-label">Services</span>
+      <span class="ss-value" id="ss-up" style="color:var(--accent-orange);">-</span>
+    </div>
+    <div class="ss-item">
+      <span class="ss-label">Stack health</span>
+      <span class="ss-value" id="ss-health">-</span>
+    </div>
+    <div class="ss-item">
+      <span class="ss-label">Down</span>
+      <span class="ss-value" id="ss-down">-</span>
+    </div>
+    <div class="ss-item">
+      <span class="ss-label">Checked</span>
+      <span class="ss-value" id="ss-checked">-</span>
+    </div>
+    <a class="ss-cta" href="#restart-control">⟳ Restart a service</a>
   </div>
   
   <div class="grid">
-<div class="card chat-card" style="grid-column:1/-1;">
+<div class="card chat-card tile-wide tile-p1">
       <h3 style="color:var(--accent-orange);">Campus Comms <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Vex · Eliza-Cloud · Hermes</span></h3>
       <div id="fleet-chat-msgs" style="height:180px;overflow-y:auto;background:#0a0400;border-radius:6px;padding:8px;margin-bottom:6px;font-size:12px;line-height:1.5;">
         <div style="color:var(--text-dim);text-align:center;padding:20px 0;font-size:12px;">Campus comms active. All agents hear every broadcast.</div>
@@ -6621,14 +6861,14 @@ app.get('/', (req, res) => {
         <button onclick="sendFleetChat()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Send</button>
       </div>
       <div id="fleet-chat-attach-status" style="font-size:10px;color:#a78bfa;margin-top:2px;min-height:14px;"></div>
-      <div style="margin-top:4px;display:flex;gap:8px;font-size:11px;color:#6b6b80;">
+      <div style="margin-top:4px;display:flex;gap:8px;font-size:11px;color:#948d9e;">
         <span>Campus broadcast — all agents hear your message</span>
         <span id="fleet-chat-status" style="color:#4ade80;">● connected</span>
       </div>
     </div>
 
 <!-- 📈 Trust Trajectory — Full-width chart -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile-wide tile-p4">
   <h3 style="color:#a78bfa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📈 Trust Trajectory
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Real-time TrustGraph scores over time · Hover any point for details</span>
@@ -6637,7 +6877,7 @@ app.get('/', (req, res) => {
     <canvas id="trust-trajectory-canvas" style="width:100%;height:200px;border-radius:6px;background:#08080e;cursor:default;"></canvas>
     <div id="trust-trajectory-tooltip" style="display:none;position:absolute;background:#1a1a2a;border:1px solid #3a3a5a;border-radius:6px;padding:8px 12px;font-size:11px;color:#e0e0f0;pointer-events:none;white-space:nowrap;z-index:100;max-width:400px;line-height:1.5;"></div>
   </div>
-  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;font-size:0.6rem;color:#6b6b80;">
+  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;font-size:0.6rem;color:#948d9e;">
     <span>● <span id="trajectory-agent-count">-</span> agents tracked</span>
     <span>● <span id="trajectory-event-count">-</span> total events</span>
     <span>● <span id="trajectory-range"></span></span>
@@ -6647,7 +6887,7 @@ app.get('/', (req, res) => {
 </div>
 
 <!-- ⚓ Quarterdeck — Consolidated Command Center -->
-<div class="card" style="grid-column:1/-1;border-color:rgba(255,107,53,0.2);">
+<div class="card tile-full tile-p3" style="border-color:rgba(255,107,53,0.2);">
   <h3 style="color:var(--accent-orange);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     🏛️ Campus Command
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— The Campus domain: rations, watch, bulletin, and vessels</span>
@@ -6669,13 +6909,13 @@ app.get('/', (req, res) => {
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
       <h4 style="color:var(--accent-yellow);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">🔭 Campus Watch <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Eliza's Topside Watchdog</span></h4>
       <div id="quarterdeck-supervisor">
-        <div class="stat"><span class="label">Supervisor</span><span class="value" id="qds-supervisor" style="color:#6b6b80;">checking...</span></div>
-        <div class="stat"><span class="label">Stack Health</span><span class="value" id="qds-health-score" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Services Up</span><span class="value" id="qds-services-up" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Services Down</span><span class="value" id="qds-services-down" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Flapping</span><span class="value" id="qds-flapping" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Task Issues</span><span class="value" id="qds-task-issues" style="color:#6b6b80;">-</span></div>
-        <div class="stat"><span class="label">Last Check</span><span class="value" id="qds-last-check" style="color:#6b6b80;">-</span></div>
+        <div class="stat"><span class="label">Supervisor</span><span class="value" id="qds-supervisor" style="color:#948d9e;">checking...</span></div>
+        <div class="stat"><span class="label">Stack Health</span><span class="value" id="qds-health-score" style="color:#948d9e;">-</span></div>
+        <div class="stat"><span class="label">Services Up</span><span class="value" id="qds-services-up" style="color:#948d9e;">-</span></div>
+        <div class="stat"><span class="label">Services Down</span><span class="value" id="qds-services-down" style="color:#948d9e;">-</span></div>
+        <div class="stat"><span class="label">Flapping</span><span class="value" id="qds-flapping" style="color:#948d9e;">-</span></div>
+        <div class="stat"><span class="label">Task Issues</span><span class="value" id="qds-task-issues" style="color:#948d9e;">-</span></div>
+        <div class="stat"><span class="label">Last Check</span><span class="value" id="qds-last-check" style="color:#948d9e;">-</span></div>
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:var(--text-dim);">
           <div style="margin-bottom:2px;color:#8b8ba0;">Consolidated Services</div>
           <div id="qds-services-tracker" style="line-height:1.6;">-</div>
@@ -6683,21 +6923,21 @@ app.get('/', (req, res) => {
         <!-- Owner restart control. Rows are built by dashboard.js from the same
              /api/supervisor/status payload as the chips above, so this list can
              never name a service the supervisor is not actually watching. -->
-        <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1e1e2e;">
+        <div id="restart-control" style="margin-top:6px;padding-top:6px;border-top:1px solid #1e1e2e;">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
             <span style="color:#8b8ba0;font-size:0.6rem;letter-spacing:0.05em;">RESTART CONTROL</span>
             <span style="color:#4a4a5e;font-size:0.55rem;">owner</span>
-            <span style="margin-left:auto;font-size:0.55rem;color:#6b6b80;">3/hour/service</span>
+            <span style="margin-left:auto;font-size:0.55rem;color:#948d9e;">3/hour/service</span>
           </div>
           <div id="qds-restart-list" style="display:flex;flex-direction:column;gap:1px;">
-            <div style="color:#6b6b80;font-size:0.6rem;">loading services&hellip;</div>
+            <div style="color:#948d9e;font-size:0.6rem;">loading services&hellip;</div>
           </div>
         </div>
         <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.65rem;color:var(--text-dim);">
           <span style="color:#60a5fa;">⚡ relay</span> v7.0.0 · <span id="qds-relay-uptime">${uptimeStr}</span> · <span id="qds-tools">${toolCount}</span> tools · <span id="qds-handlers">${handlerCount}</span> handlers · <span id="qds-requests">${requestCounts.total}</span> req
         </div>
       </div>
-      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">
+      <div style="margin-top:4px;font-size:0.6rem;color:#948d9e;">
         <a href="/api/supervisor/status" style="color:#60a5fa;">API</a> · <span id="qds-refresh" style="color:#4ade80;">● polling</span>
       </div>
     </div>
@@ -6771,14 +7011,22 @@ app.get('/', (req, res) => {
     </div>
 
     <!-- Agent Vault — Agent Chests -->
-    <div style="grid-column:1/-1;margin-bottom:10px;">
-      <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
-        <h4 style="color:var(--accent-purple);font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📦 Agent Vault <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Agent Chests · Completed Task Artifacts</span></h4>
-        <div id="footlocker-content" style="font-size:0.6rem;">
-          <div class="stat"><span class="label">Loading chests...</span></div>
+    <!-- Collapsed by default. This rendered 1,810px — more than every other
+         sub-tile in Campus Command combined — and it holds COMPLETED task
+         artifacts. That is reference material, not a status readout, and it
+         was pushing the things you actually watch further down the page.
+         <details> is used rather than a JS toggle so it still works if
+         dashboard.js fails to load, which on this page is not hypothetical. -->
+    <details class="archive">
+      <summary>📦 Agent Vault <span>— Agent Chests · Completed Task Artifacts</span></summary>
+      <div style="margin-bottom:10px;">
+        <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
+          <div id="footlocker-content" style="font-size:0.75rem;">
+            <div class="stat"><span class="label">Loading chests...</span></div>
+          </div>
         </div>
       </div>
-    </div>
+    </details>
 
     <!-- Bottom row: Campus Forum + Mesh Peers + LoRa Bridge -->
   <div class="quarterdeck-bottom">
@@ -6803,16 +7051,16 @@ app.get('/', (req, res) => {
     <div style="background:#0a0a14;border-radius:6px;padding:8px;border:1px solid #1e1e2e;">
       <h4 style="color:#4ade80;font-size:0.75rem;margin:0 0 6px 0;text-transform:uppercase;letter-spacing:0.05em;">📡 LoRa Bridge <span style="color:var(--text-dim);font-weight:400;font-size:0.6rem;">— Meshtastic Radio Link</span></h4>
       <div id="qds-lora" style="font-size:0.6rem;">
-        <span>Bridge: <span id="qds-mt-bridge" style="color:#6b6b80;">checking...</span></span><br>
-        <span>Peers: <span id="qds-mt-peers" style="color:#6b6b80;">-</span></span><br>
-        <span>Msgs: <span id="qds-mt-msgs" style="color:#6b6b80;">-</span></span>
+        <span>Bridge: <span id="qds-mt-bridge" style="color:#948d9e;">checking...</span></span><br>
+        <span>Peers: <span id="qds-mt-peers" style="color:#948d9e;">-</span></span><br>
+        <span>Msgs: <span id="qds-mt-msgs" style="color:#948d9e;">-</span></span>
       </div>
     </div>
   </div>
 </div>
 
 <!-- 🏛️ DAO & Ecosystem -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile tile-p6">
   <h3 style="color:var(--accent-teal);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     🏛️ DAO & Ecosystem
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Health · Membership · Ecosystem · Tools</span>
@@ -6833,7 +7081,7 @@ app.get('/', (req, res) => {
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_W6r4uqGWNaKHp" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium</a></span><span class="value">$9.99/mo</span></div>
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_Wj1nh8AJhdsLN" target="_blank" style="color:#ff6b35;text-decoration:none;">Premium Yearly</a></span><span class="value">$99.99/yr</span></div>
       <div class="stat"><span class="label"><a href="https://whop.com/checkout/plan_n853GD3f5IXm0" target="_blank" style="color:#60a5fa;text-decoration:none;">Supporter</a></span><span class="value">$19.99</span></div>
-      <div style="margin-top:4px;font-size:0.6rem;color:#6b6b80;">Premium: 2x rewards · governance · early hardware</div>
+      <div style="margin-top:4px;font-size:0.6rem;color:#948d9e;">Premium: 2x rewards · governance · early hardware</div>
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#4ade80;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🌐 Ecosystem</div>
@@ -6849,7 +7097,7 @@ app.get('/', (req, res) => {
       <div class="stat"><span class="label">Relay Tools</span><span class="value" id="dao-tool-count">${toolCount}</span></div>
       <div class="stat"><span class="label">Edge Functions</span><span class="value" id="dao-fn-count">-</span></div>
       ${localFunctions.length > 0 ? '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#4ade80;">Local: ' + localFunctions.map(f => f.name).join(', ') + '</div>' : ''}
-      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#6b6b80;">
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;font-size:0.6rem;color:#948d9e;">
         <a href="/health" style="color:#4ade80;">Health</a> · <a href="/status" style="color:#60a5fa;">Status</a> · <a href="/tools" style="color:#60a5fa;">Tools</a> · <a href="/monitor" style="color:#60a5fa;">Monitor</a>
       </div>
     </div>
@@ -6857,7 +7105,7 @@ app.get('/', (req, res) => {
 </div>
 
 <!-- 🪐 xmrt-galaxy — Knowledge Graph -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile tile-p8">
   <h3 style="color:var(--accent-purple);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     🪐 xmrt-galaxy
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— ecosystem map with live trust scores</span>
@@ -6873,32 +7121,32 @@ app.get('/', (req, res) => {
     <button class="gc on" id="b-stream" style="background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(167,139,250,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('stream')">Signal</button>
     <button class="gc on" id="b-tunnel" style="background:rgba(167,139,250,0.08);border:0.5px solid rgba(167,139,250,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(167,139,250,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('tunnel')">Tunnel</button>
     <button class="gc" id="b-fly" style="background:rgba(107,107,128,0.04);border:0.5px solid rgba(107,107,128,0.12);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.4);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('fly')">Free Fly</button> <button class="gc on" id="b-memory" style="background:rgba(244,114,182,0.08);border:0.5px solid rgba(244,114,182,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(244,114,182,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('memory')">Memory</button> <button class="gc on" id="b-sharedctx" style="background:rgba(45,212,191,0.08);border:0.5px solid rgba(45,212,191,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(45,212,191,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('sharedctx')">Shared</button> <button class="gc on" id="b-catalog" style="background:rgba(252,211,77,0.08);border:0.5px solid rgba(252,211,77,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(252,211,77,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('catalog')">Catalog</button> <button class="gc on" id="b-knowledge" style="background:rgba(163,230,53,0.08);border:0.5px solid rgba(163,230,53,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(163,230,53,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.toggleGraphEffect('knowledge')">Knowledge</button>
-    <span style="color:#6b6b80;font-size:9px;margin:0 4px;">|</span>
+    <span style="color:#948d9e;font-size:9px;margin:0 4px;">|</span>
     <button style="background:rgba(107,107,128,0.08);border:0.5px solid rgba(107,107,128,0.22);padding:3px 10px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(107,107,128,0.65);cursor:pointer;font-family:monospace;transition:all 0.15s;border-radius:3px;" onclick="window.resetGraphView()">Reset</button>
-    <span style="color:#6b6b80;font-size:9px;margin:0 4px;">|</span>
-    <span style="color:#4ade80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">SPA</span>
-    <span style="color:#60a5fa;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Back</span>
-    <span style="color:#6b6b80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Agent</span>
-    <span style="color:#4ade80;font-size:6px;">●</span><span style="color:#60a5fa;font-size:6px;">●</span><span style="color:#fbbf24;font-size:6px;">●</span><span style="color:#f87171;font-size:6px;">●</span><span style="color:#6b6b80;font-size:6px;">●</span><span style="color:#6b6b80;font-size:7px;">Trust</span>
-    <span style="color:#fbbf24;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Infra</span>
-    <span style="color:#ff6b35;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Sys</span>
-    <span style="color:#f87171;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Email</span>
-    <span style="color:#34d399;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">DB</span>
-    <span style="color:#818cf8;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Mine</span>
-    <span style="color:#f472b6;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Cert</span>
-    <span style="color:#2dd4bf;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Cron</span>
-    <span style="color:#67e8f9;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Edge</span>
-    <span style="color:#93c5fd;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">EP</span>
-    <span style="color:#c084fc;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">GH</span>
-    <span style="color:#fcd34d;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Tun</span>
-    <span style="color:#fdba74;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Camp</span>
-    <span style="color:#6b6b80;font-size:9px;">●</span><span style="color:#6b6b80;font-size:8px;">Other</span>
+    <span style="color:#948d9e;font-size:9px;margin:0 4px;">|</span>
+    <span style="color:#4ade80;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">SPA</span>
+    <span style="color:#60a5fa;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Back</span>
+    <span style="color:#948d9e;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Agent</span>
+    <span style="color:#4ade80;font-size:6px;">●</span><span style="color:#60a5fa;font-size:6px;">●</span><span style="color:#fbbf24;font-size:6px;">●</span><span style="color:#f87171;font-size:6px;">●</span><span style="color:#948d9e;font-size:6px;">●</span><span style="color:#948d9e;font-size:7px;">Trust</span>
+    <span style="color:#fbbf24;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Infra</span>
+    <span style="color:#ff6b35;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Sys</span>
+    <span style="color:#f87171;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Email</span>
+    <span style="color:#34d399;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">DB</span>
+    <span style="color:#818cf8;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Mine</span>
+    <span style="color:#f472b6;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Cert</span>
+    <span style="color:#2dd4bf;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Cron</span>
+    <span style="color:#67e8f9;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Edge</span>
+    <span style="color:#93c5fd;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">EP</span>
+    <span style="color:#c084fc;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">GH</span>
+    <span style="color:#fcd34d;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Tun</span>
+    <span style="color:#fdba74;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Camp</span>
+    <span style="color:#948d9e;font-size:9px;">●</span><span style="color:#948d9e;font-size:8px;">Other</span>
     <span id="graph-node-count" style="color:var(--text-dim);font-size:9px;margin-left:auto;">-</span>
   </div>
 </div>
 
 <!-- 💰 Mining & Rewards -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile tile-p7">
   <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     💰 Mining & Rewards
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Pool Stats · Leaderboard · Heartbeat</span>
@@ -6916,13 +7164,13 @@ app.get('/', (req, res) => {
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🏆 Leaderboard</div>
-      <div style="margin-bottom:4px;font-size:10px;color:#6b6b80;">Live hashrate · shares · XMRT rewards</div>
+      <div style="margin-bottom:4px;font-size:10px;color:#948d9e;">Live hashrate · shares · XMRT rewards</div>
       <div id="miner-leaderboard"><div class="stat"><span class="label">Loading...</span></div></div>
     </div>
     <div style="background:#0d0d15;border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">💓 Heartbeat</div>
       <div style="background:#0d0d15;padding:0.4rem 0.6rem;border-radius:4px;font-family:monospace;font-size:0.7rem;color:#60a5fa;word-break:break-all;" id="heartbeat-url">loading...</div>
-      <div style="color:#6b6b80;font-size:0.65rem;margin-top:0.3rem;">POST: {"agent_id":"...","status":"ONLINE","tunnel_url":"...","hashrate":0}</div>
+      <div style="color:#948d9e;font-size:0.65rem;margin-top:0.3rem;">POST: {"agent_id":"...","status":"ONLINE","tunnel_url":"...","hashrate":0}</div>
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid #1e1e2e;">
         <pre style="background:#0d0d15;padding:0.4rem;border-radius:4px;font-size:0.65rem;overflow-x:auto;color:#a0a0b0;white-space:pre-wrap;word-break:break-all;margin:0;cursor:pointer;" id="mining-script" onclick="copyMiningScript()">curl -o signup.py -L https://raw.githubusercontent.com/xmrtdao/mmlauncher/main/scripts/mobile-signup.py && sha256sum signup.py && python3 signup.py</pre>
       </div>
@@ -6931,7 +7179,7 @@ app.get('/', (req, res) => {
 </div>
 
 <!-- 📯 Campaigns & Leads -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile tile-p5">
   <h3 style="color:#60a5fa;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📯 Campaigns & Leads
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— PFP Campaign · PFP Leads · 31 Harbor</span>
@@ -6967,7 +7215,7 @@ app.get('/', (req, res) => {
 </div>
 
 <!-- 📡 Campus Intelligence -->
-<div class="card" style="grid-column:1/-1;">
+<div class="card tile tile-p2">
   <h3 style="color:var(--accent-purple);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📡 Campus Intelligence
     <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— XMRT University · Incoming Mail · GitHub Activity</span>
@@ -6977,7 +7225,7 @@ app.get('/', (req, res) => {
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;">
       <div style="font-size:0.65rem;color:var(--accent-purple);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🎓 XMRT University</div>
       <div id="university-status">
-        <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#6b6b80;">checking...</span></div>
+        <div class="stat"><span class="label">Status</span><span class="value" id="uni-status" style="color:#948d9e;">checking...</span></div>
       </div>
       <div id="university-detail">
         <div class="stat"><span class="label">Progress</span><span class="value" id="uni-progress">-</span></div>
@@ -6985,7 +7233,7 @@ app.get('/', (req, res) => {
         <div class="stat"><span class="label">Tier</span><span class="value" id="uni-tier">-</span></div>
         <div class="stat"><span class="label">Perms</span><span class="value" id="uni-perms" style="font-size:0.65rem;">-</span></div>
       </div>
-      <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;">
+      <div style="margin-top:4px;font-size:0.65rem;color:#948d9e;">
         <div>New agents must graduate from XMRT University to join the fleet.</div>
         <div style="margin-top:2px;">
           <span style="color:#a78bfa;">POST</span> <code style="color:#60a5fa;font-size:0.6rem;">/functions/v1/xmrt-university</code>
@@ -7004,13 +7252,13 @@ app.get('/', (req, res) => {
       <div style="font-size:0.65rem;color:#fbbf24;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">🐙 GitHub Activity</div>
       <div class="stat"><span class="label">Total Repos</span><span class="value" id="gh-repo-count">-</span></div>
       <div class="stat"><span class="label">Last Commit</span><span class="value" id="gh-last-commit" style="font-size:0.65rem;">-</span></div>
-      <div style="margin-top:4px;font-size:0.65rem;color:#6b6b80;" id="gh-recent-commits"></div>
+      <div style="margin-top:4px;font-size:0.65rem;color:#948d9e;" id="gh-recent-commits"></div>
     </div>
   </div>
 </div>
 
 <!-- Campus Forum Full Board -->
-<div id="board-full" class="card" style="grid-column:1/-1;margin-top:0.5rem;">
+<div id="board-full" class="card tile-wide tile-p9" style="margin-top:0.5rem;">
   <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     📜 Campus Forum <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Full Bulletin Board</span>
   </h3>
@@ -7032,7 +7280,7 @@ app.get('/', (req, res) => {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">
           <span id="board-current-topic-title" style="font-size:13px;font-weight:600;color:var(--text-primary);"></span>
           <span id="board-current-topic-status"></span>
-          <span id="board-current-topic-assignment" style="font-size:10px;color:#6b6b80;"></span>
+          <span id="board-current-topic-assignment" style="font-size:10px;color:#948d9e;"></span>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
           <button onclick="renameBoardTopic()" id="board-rename-btn" style="padding:2px 8px;border-radius:4px;border:1px solid #3a3a5a;background:transparent;color:#8b8ba0;cursor:pointer;font-size:10px;">Rename</button>
@@ -7052,7 +7300,7 @@ app.get('/', (req, res) => {
         <input id="board-post-input" type="text" placeholder="Add to this resolution..." onkeypress="if(event.key==='Enter')sendBoardPost()">
         <button onclick="sendBoardPost()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;">Post</button>
       </div>
-      <div style="margin-top:4px;font-size:10px;color:#6b6b80;">
+      <div style="margin-top:4px;font-size:10px;color:#948d9e;">
         <span>Posted as <strong id="board-post-agent" style="color:var(--accent-orange);">vex</strong> — all privateers see this resolution</span>
       </div>
     </div>
@@ -7073,7 +7321,7 @@ app.get('/', (req, res) => {
       </div>
     </div>
   </div>
-  <div style="margin-top:4px;display:flex;gap:8px;font-size:10px;color:#6b6b80;">
+  <div style="margin-top:4px;display:flex;gap:8px;font-size:10px;color:#948d9e;">
     <span>Agents can post to any resolution — persistent across sessions</span>
     <span id="board-updated-indicator" style="color:#fbbf24;display:none;">* new activity</span>
     <span id="board-status-full" style="color:#4ade80;">● loaded</span>
@@ -7081,10 +7329,16 @@ app.get('/', (req, res) => {
 </div>
   </div>
 <!-- Edge Function Catalog -->
-  <div id="fn-catalog" style="margin-top:1.5rem;width:100%;box-sizing:border-box;">
-    <div class="card" style="width:100%;box-sizing:border-box;">
+  <!-- Collapsed by default. This was 11,888px of table — 70% of the entire
+       page — sitting below the fold, so the page was 17,034px long and the
+       answer to "is anything broken" was somewhere above the midpoint. It is
+       a lookup table for 252 endpoints, not a status readout; the link at the
+       top of the page still jumps straight here and opens it. -->
+  <details class="archive" id="fn-catalog" style="margin-top:1.5rem;width:100%;box-sizing:border-box;">
+    <summary>☁️ Supabase Edge Functions <span>— 252 endpoints · lookup table</span></summary>
+    <div class="card" style="width:100%;box-sizing:border-box;margin-top:0.75rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem;">
-      <h2 style="color:#ff6b35;font-size:1.1rem;">☁️ Supabase Edge Functions <span id="fnCount" style="color:#6b6b80;font-weight:400;"></span></h2>
+      <h2 style="color:#ff6b35;font-size:1.1rem;">☁️ Supabase Edge Functions <span id="fnCount" style="color:#948d9e;font-weight:400;"></span></h2>
       <div class="controls">
       <input type="text" id="search" placeholder="Search functions…" oninput="filterFunctions()">
       <select id="methodFilter" onchange="filterFunctions()">
@@ -7127,7 +7381,8 @@ app.get('/', (req, res) => {
               <a href="${tunnelUrl}" target="_blank" style="color:var(--text-dim);">Relay</a> &middot;
               Functions: ${supabaseUrl}/functions/v1/{name}
             </div>
-            </div><!-- /fn-catalog -->
+            </div><!-- /card -->
+  </details><!-- /fn-catalog -->
 
             <script src="/static/dashboard.js?v=${dashboardJsVersion()}"></script>
 
@@ -17022,7 +17277,7 @@ function resendTileHtml() {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const id = String(entry.tile).replace(/[^a-zA-Z0-9_-]/g, '');
     return `          <div>
-            <div style="font-size:0.6rem;color:#6b6b80;margin-bottom:2px;">${label}</div>
+            <div style="font-size:0.6rem;color:#948d9e;margin-bottom:2px;">${label}</div>
             <div id="${id}" style="max-height:80px;overflow-y:auto;font-size:0.65rem;">
               <div class="stat"><span class="label">Loading...</span></div>
             </div>
