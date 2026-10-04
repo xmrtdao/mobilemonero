@@ -12348,30 +12348,38 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
   // Guarded against self-trigger. Alice's own replies carry agent
   // 'alice-daemon', and without this her answer would re-enter here, produce
   // another mention, and she would answer that forever.
-  const mentionsAlice = /@alice-daemon|@alice\b/i.test(entry.message || '');
-  const aliceShouldAnswer =
-    entry.channel === 'all' || entry.channel === 'alice' ||
-    (entry.channel === 'fleet' && mentionsAlice) ||
-    mentionsAlice;
-  if (aliceShouldAnswer &&
+    const mentionsAlice = /@alice-daemon|@alice\b/i.test(entry.message || '');
+
+    // An explicit mention needs NO relay at all.
+    //
+    // Alice's poller reads fleet chat and matches the mention in the message text,
+    // so she already sees the original. Re-posting it produced a SECOND message
+    // carrying the same mention, which her poller then treated as fresh work and
+    // answered. Her answer did not itself mention Alice, so it was relayed again,
+    // and the pair repeated until both fell out of the 5 minute window. Deduping
+    // by message id could not stop it, because every relay minted a new id - the
+    // duplicates were genuinely distinct messages, not repeats of one.
+    //
+    // So the relay stays out of the way whenever the message already names her.
+    // Only a blanket broadcast, which names nobody, needs the relay to synthesise
+    // a mention - and that path cannot feed itself, because Alice's own answer
+    // contains no mention.
+    const needsAliceRelay =
+      !mentionsAlice &&
+      (entry.channel === 'all' || entry.channel === 'alice') &&
       entry.agent !== 'alice-daemon' && entry.agent !== 'alice' &&
       (entry.agentLabel || '') !== 'alice-daemon' &&
-      !/^system$/i.test(entry.agent || '')) {
-    try {
-      // Alice's poller keys off an @alice-daemon mention in the last 5 minutes,
-      // so the mention IS the delivery. No endpoint to forward to.
-      //
-      // Do not re-prefix a message that already carries the mention. Prefixing
-      // unconditionally produced "@alice-daemon @alice-daemon ..." and doubled
-      // every relayed line in the channel.
-      const body = String(entry.message || '');
-      const text = mentionsAlice ? body : '@alice-daemon ' + body;
-      await postAndReRoute('alice-daemon', text.slice(0, 800), 'fleet');
-      results.alice_notified = true;
-    } catch (e) {
-      results.alice = { error: e.message };
+      !/^system$/i.test(entry.agent || '');
+
+    if (needsAliceRelay) {
+      try {
+        await postAndReRoute('alice-daemon',
+          ('@alice-daemon ' + String(entry.message || '')).slice(0, 800), 'fleet');
+        results.alice_notified = true;
+      } catch (e) {
+        results.alice = { error: e.message };
+      }
     }
-  }
 
   // ── Determine which agents should speak ────────────────────────
   // Routing policy (effective July 2026):
