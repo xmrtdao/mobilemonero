@@ -365,7 +365,23 @@ const TOOLS = {
       const params = [];
       let idx = 1;
       if (status)   { sql += ` AND status = $${idx++}`;         params.push(status); }
-      if (assignee) { sql += ` AND assignee_agent_id = $${idx++}`; params.push(assignee); }
+      if (assignee) {
+        // Match the id OR the display name, case-insensitively.
+        //
+        // An exact match on assignee_agent_id alone is what made this lie. An agent
+        // that passes "Builder" instead of "builder-001" got zero rows back — and
+        // zero rows is indistinguishable from "you have no tasks". That is how
+        // Builder reported "tasks_list returned 0 tasks" and declared itself
+        // BLOCKED, while holding an IN_PROGRESS task the whole time.
+        //
+        // A tool that cannot find your work should say so, not return an empty
+        // list that reads as a fact about the world.
+        sql += ` AND (lower(assignee_agent_id) = lower($${idx})`
+             +  ` OR lower(coalesce(assignee, '')) = lower($${idx})`
+             +  ` OR lower(assignee_agent_id) LIKE lower($${idx}) || '-%')`;
+        params.push(assignee);
+        idx++;
+      }
       sql += ` ORDER BY priority DESC, created_at DESC LIMIT $${idx}`;
       params.push(rowLimit);
       const rows = await dbQuery(sql, params);
