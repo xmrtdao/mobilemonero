@@ -12332,42 +12332,44 @@ I will execute the tool and come back for your final answer.\n\n**FORMAT RULE: R
       results.eliza = { error: e.message };
     }
   }
-  // Hermes responds intelligently to any non-Hermes fleet message
-  if ((entry.channel === 'all' || entry.channel === 'hermes' || (entry.channel === 'fleet' && /@hermes/i.test(entry.message))) && entry.agent !== 'hermes') {
-    const hermesInfo = FLEET_AGENTS['hermes'];
-    if (hermesInfo?.endpoint) {
-      try {
-        const hermesEndpoint = hermesInfo.endpoint;
-
-        // Always send direct to Hermes so he can respond intelligently
-        const hermesBody = {
-          agent: entry.agentLabel || entry.agent,
-          message: entry.message,
-          type: 'direct',
-          parentId: entry.id,
-          ts: entry.ts,
-        };
-        const res = await fetch(`${hermesEndpoint}/to/hermes`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(hermesBody),
-          signal: AbortSignal.timeout(15000),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          results.hermes = { forwarded: true, msg_id: data.msg_id };
-        }
-      } catch (e) {
-        results.hermes = { error: e.message };
-      }
-    }
-    // Belt-and-suspenders: post a 1-line "Hermes notified" stub so the
-    // channel shows visible motion even when his phone-side reply is slow
-    // or out-of-band. This keeps the perpetual loop from stalling on Hermes.
-    if (!results.hermes || results.hermes.forwarded) {
-      try {
-        await postAndReRoute('hermes', '🛰️ Hermes notified via fleet-broadcast — will respond on device.', 'fleet');
-      } catch { /* non-fatal */ }
+  // Alice answers mentions. She was already a first-class FLEET_AGENTS entry
+  // (endpoint 'local') and already ran a mention poller in alice.mjs, so this
+  // routes to an agent that exists rather than declaring one that does not.
+  //
+  // This replaces a branch that pointed at https://hermes.mobilemonero.com —
+  // the Termux instance on a phone. With that gone, the old code posted
+  // "Hermes notified via fleet-broadcast - will respond on device" on every
+  // channel:'all' broadcast and nothing ever did. The stub existed to keep the
+  // channel from looking stalled; it was motion, not a promise kept.
+  //
+  // The Hermes persona and FLEET_AGENTS.hermes are untouched: the bridge is
+  // still there for the Termux harness when it is actually in use.
+  //
+  // Guarded against self-trigger. Alice's own replies carry agent
+  // 'alice-daemon', and without this her answer would re-enter here, produce
+  // another mention, and she would answer that forever.
+  const mentionsAlice = /@alice-daemon|@alice\b/i.test(entry.message || '');
+  const aliceShouldAnswer =
+    entry.channel === 'all' || entry.channel === 'alice' ||
+    (entry.channel === 'fleet' && mentionsAlice) ||
+    mentionsAlice;
+  if (aliceShouldAnswer &&
+      entry.agent !== 'alice-daemon' && entry.agent !== 'alice' &&
+      (entry.agentLabel || '') !== 'alice-daemon' &&
+      !/^system$/i.test(entry.agent || '')) {
+    try {
+      // Alice's poller keys off an @alice-daemon mention in the last 5 minutes,
+      // so the mention IS the delivery. No endpoint to forward to.
+      //
+      // Do not re-prefix a message that already carries the mention. Prefixing
+      // unconditionally produced "@alice-daemon @alice-daemon ..." and doubled
+      // every relayed line in the channel.
+      const body = String(entry.message || '');
+      const text = mentionsAlice ? body : '@alice-daemon ' + body;
+      await postAndReRoute('alice-daemon', text.slice(0, 800), 'fleet');
+      results.alice_notified = true;
+    } catch (e) {
+      results.alice = { error: e.message };
     }
   }
 
