@@ -25,6 +25,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { ollamaChat } from './tools/ollama-chat.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -480,10 +481,38 @@ async function checkFleetMentions() {
                                             const ok = s.filter(x => x.status === 'ok').length;
                                             dataReply = '@' + m.agent + ' Services: ' + ok + '/' + s.length + ' healthy';
                                           } else {
-                                            // Unknown query — do NOT fall back to generic health response.
-                                            // Stay silent and let the AI agent handle it.
-                                            log('[FLEETCHAT] No matching keyword for: ' + lower.slice(0, 60) + ' — staying silent');
-                                            return;
+                                            // Unknown query. The keyword paths above stay deterministic
+                                            // because for muapi/balance and service/health a measured number
+                                            // beats a generated one. Everything else falls through to the
+                                            // model, which is what this comment always intended.
+                                            //
+                                            // Imported directly rather than dispatched through /tools/run:
+                                            // the tool gateway is auth-gated and returns 403 to a
+                                            // non-interactive caller, and this has to work unattended.
+                                            log('[FLEETCHAT] No keyword match, asking the model: ' + lower.slice(0, 60));
+                                            try {
+                                              const asked = m.message.replace(/@alice-daemon/gi, '').trim();
+                                              const answer = await ollamaChat(
+                                                'You are Alice, a sidecar agent in the XMRT fleet. ' +
+                                                'Answer briefly and factually. If you do not know something, ' +
+                                                'say so plainly rather than guessing. Keep it under 3 sentences.\n\n' +
+                                                'Question from ' + m.agent + ': ' + asked.slice(0, 400),
+                                                { maxTokens: 220 }
+                                              );
+                                              const text = String(answer?.response || answer || '').trim();
+                                              if (text) {
+                                                dataReply = '@' + m.agent + ' ' + text.slice(0, 600);
+                                              } else {
+                                                // An empty completion is not an answer. Say nothing rather
+                                                // than posting a blank or a fabrication.
+                                                log('[FLEETCHAT] model returned nothing — staying silent');
+                                                return;
+                                              }
+                                            } catch (e) {
+                                              // Inference unavailable must not become a wrong answer.
+                                              log('[FLEETCHAT] inference failed: ' + (e.message || e));
+                                              return;
+                                            }
                                           }
               
               if (dataReply) await postToFleetChat(dataReply);
