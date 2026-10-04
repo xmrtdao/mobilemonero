@@ -1,4 +1,4 @@
-  // ── API helper: add x-api-key to bypass Cloudflare Access on tunnel ──
+  // â”€â”€ API helper: add x-api-key to bypass Cloudflare Access on tunnel â”€â”€
   const API_KEY = '${relayApiKey}';
   window.apiFetch = function(url, opts) {
     opts = opts || {};
@@ -8,7 +8,7 @@
     return fetch(url, opts);
   };
 
-  // ── Quarterdeck Supervisor Watch ──
+  // â”€â”€ Quarterdeck Supervisor Watch â”€â”€
   function updateQDSupervisor() {
       apiFetch('/api/supervisor/status').then(r=>r.json()).then(d => {
         const up = d.services.filter(s => s.healthy).length;
@@ -17,7 +17,7 @@
         const taskIssues = d.tasks.filter(t => t.missed > 0 || (t.ageHours > 30));
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
-        if (supEl) supEl.textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
+        if (supEl) supEl.textContent = d.supervisor.alive ? 'ðŸŸ¢ Online (pid ' + d.supervisor.pid + ')' : 'ðŸŸ¡ Task Scheduler (--once mode)';
         if (supEl) supEl.style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
         const upEl = el('qds-services-up');
         if (upEl) upEl.textContent = up + '/' + d.services.length;
@@ -34,7 +34,7 @@
         const checkEl = el('qds-last-check');
         if (checkEl) checkEl.textContent = new Date(d.checkedAt).toLocaleTimeString();
 
-        // ── Consolidated stack health score (from /api/supervisor/status health block) ──
+        // â”€â”€ Consolidated stack health score (from /api/supervisor/status health block) â”€â”€
         const healthEl = el('qds-health-score');
         if (healthEl && d.health) {
           const sc = d.health.score;
@@ -47,7 +47,7 @@
           healthEl.style.color = '#948d9e';
         }
 
-        // ── Consolidated services tracker (per-service up/down chips) ──
+        // â”€â”€ Consolidated services tracker (per-service up/down chips) â”€â”€
         const svcTrackerEl = el('qds-services-tracker');
         if (svcTrackerEl) {
           if (!d.services || d.services.length === 0) {
@@ -56,12 +56,12 @@
             svcTrackerEl.innerHTML = d.services.map(function(s){
               const ok = s.healthy;
               const c = ok ? '#4ade80' : '#f87171';
-              const dot = ok ? '●' : '○';
+              const dot = ok ? 'â—' : 'â—‹';
               return '<span style="color:' + c + ';margin-right:6px;white-space:nowrap;" title="' + s.name + (s.pid ? ' (pid ' + s.pid + ')' : '') + '">' + dot + ' ' + s.name + '</span>';
             }).join('');
           }
         }
-        // ── Status strip ──────────────────────────────────────────────────
+        // â”€â”€ Status strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Mirrors the four headline readouts above the fold. Same payload, same
         // numbers, separate ids (ss-*) so the strip and the Campus Watch panel
         // can never disagree by being updated from different sources.
@@ -91,14 +91,14 @@
       }).catch(() => {
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
-        if (supEl) supEl.textContent = '○ offline';
+        if (supEl) supEl.textContent = 'â—‹ offline';
         if (supEl) supEl.style.color = '#948d9e';
         // The strip must not keep showing the last good reading when the poll
         // itself is failing. A stale green "14/14" on a dead poll is worse than
         // an honest dash: it says everything is fine precisely when we cannot
         // tell.
         ['ss-up', 'ss-health', 'ss-down'].forEach(function (id) {
-          const n = el(id); if (n) { n.textContent = '—'; n.style.color = '#f87171'; }
+          const n = el(id); if (n) { n.textContent = 'â€”'; n.style.color = '#f87171'; }
         });
         const cEl = el('ss-checked'); if (cEl) { cEl.textContent = 'no answer'; cEl.style.color = '#f87171'; }
         QD_RESTART.note(null);
@@ -107,7 +107,7 @@
 
           setTimeout(function() { updateQDSupervisor(); setInterval(updateQDSupervisor, 10000); }, 0);
 
-  // ── Owner restart control ─────────────────────────────────────────────────
+  // â”€â”€ Owner restart control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // The supervisor's powers, in the page. POST /api/supervisor/restart sends
   // SIGTERM to a service's child process; the supervisor respawns it.
   //
@@ -119,7 +119,7 @@
     // These take the stack down, so they ask first. Everything else is a single
     // service and a stray click costs one service.
     const DANGEROUS = {
-      'relay': 'Restarting the relay drops this page — you will be disconnected and it will reconnect on its own. Every other service stays up.',
+      'relay': 'Restarting the relay drops this page â€” you will be disconnected and it will reconnect on its own. Every other service stays up.',
       'pg': 'Postgres is the database the whole campus runs on. Agents, chat, tasks and jobs all fail until it comes back.',
       'local-sb': 'The local Supabase REST layer is what fifteen files call for edge functions. They fail until it comes back.',
     };
@@ -128,7 +128,7 @@
     // service on the tick AFTER it notices the death, so a restart takes up to
     // two ticks plus process startup. The first version of this waited 60s and
     // therefore showed a red "pid never changed" on roughly half of all
-    // restarts — while the service was in fact coming back. 150s is two ticks
+    // restarts â€” while the service was in fact coming back. 150s is two ticks
     // with room for a slow spawn.
     const TIMEOUT_MS = 150000;
     const TICK_SECONDS = 30;
@@ -172,14 +172,14 @@
       rec.dot.className = 'qd-dot' + (healthy ? ' ok' : ' bad');
       rec.nameEl.textContent = rec.name;
       rec.nameEl.title = DANGEROUS[rec.name] ? 'stack-critical: confirms before restarting' : rec.name;
-      rec.pidEl.textContent = (svc && svc.pid) ? String(svc.pid) : '—';
+      rec.pidEl.textContent = (svc && svc.pid) ? String(svc.pid) : 'â€”';
       rec.pidEl.title = (svc && svc.pid) ? 'pid ' + svc.pid : 'no pid recorded';
       rec.row.classList.toggle('danger', !!DANGEROUS[rec.name]);
       rec.row.classList.toggle('busy', rec.phase === 'work');
       rec.row.classList.toggle('done', rec.phase === 'done');
       rec.row.classList.toggle('fail', rec.phase === 'fail');
       rec.btn.disabled = (rec.phase !== 'idle');
-      rec.btn.textContent = (rec.phase === 'idle') ? 'Restart' : '…';
+      rec.btn.textContent = (rec.phase === 'idle') ? 'Restart' : 'â€¦';
       rec.state.className = 'qd-state' + ((rec.phase !== 'idle') ? ' ' + rec.phase : '');
       rec.state.textContent = rec.msg;
       rec.bar.classList.toggle('show', rec.phase !== 'idle');
@@ -197,8 +197,8 @@
         }
         return;
       }
-      // Clear whatever placeholder is in the host the first time rows arrive —
-      // the server-rendered "loading services…", or the "no services" note if a
+      // Clear whatever placeholder is in the host the first time rows arrive â€”
+      // the server-rendered "loading servicesâ€¦", or the "no services" note if a
       // poll blipped. Previously only the empty path cleared anything, so the
       // placeholder sat above the finished list for the life of the page.
       if (host.dataset.state !== 'list') {
@@ -246,7 +246,7 @@
 
       inFlight.add(name);
       if (rec.resetTimer) { clearTimeout(rec.resetTimer); rec.resetTimer = null; }
-      rec.phase = 'work'; rec.msg = 'signalling…'; paint(rec);
+      rec.phase = 'work'; rec.msg = 'signallingâ€¦'; paint(rec);
 
       let accepted = false, why = '';
       try {
@@ -265,14 +265,14 @@
           // drains it on its next tick. Claiming "restarting" here would be a
           // promise the relay has not made yet.
           rec.msg = body.warning
-            ? 'queued · ' + body.warning
-            : 'queued · supervisor ticks every ' + TICK_SECONDS + 's';
+            ? 'queued Â· ' + body.warning
+            : 'queued Â· supervisor ticks every ' + TICK_SECONDS + 's';
         }
       } catch (e) {
         // Restarting the relay drops the connection this fetch is riding on.
-        // That is the expected outcome of the button, not a failure — keep
+        // That is the expected outcome of the button, not a failure â€” keep
         // polling and let the page reconnect on its own.
-        rec.msg = 'page dropped · reconnecting';
+        rec.msg = 'page dropped Â· reconnecting';
       }
       paint(rec);
 
@@ -290,7 +290,7 @@
           // Name the likely reason rather than just "failed". A queued restart
           // that never produced a new pid is usually the supervisor log, not the
           // button.
-          rec.msg = 'no new pid in ' + Math.round(TIMEOUT_MS / 1000) + 's — check the supervisor log';
+          rec.msg = 'no new pid in ' + Math.round(TIMEOUT_MS / 1000) + 's â€” check the supervisor log';
           paint(rec); inFlight.delete(name);
           scheduleReset(rec, 'fail', RESET_FAIL_MS);
           return;
@@ -304,13 +304,13 @@
           const newPid = now ? (now.pid || null) : null;
           if (newPid && newPid !== oldPid) {
             rec.phase = 'done';
-            rec.msg = 'restarted · pid ' + newPid;
+            rec.msg = 'restarted Â· pid ' + newPid;
             paint(rec); inFlight.delete(name);
             scheduleReset(rec, 'done', RESET_DONE_MS);
             render();                          // chips and dots agree immediately
             return;
           }
-          if (now && !now.healthy) { rec.msg = 'down · supervisor is respawning'; paint(rec); }
+          if (now && !now.healthy) { rec.msg = 'down Â· supervisor is respawning'; paint(rec); }
         }
         setTimeout(tick, POLL_MS);
       };
@@ -322,13 +322,13 @@
     };
   })();
 
-  // ── Security Tile — TrustGraph · CAC Tiers · Access Control ──
+  // â”€â”€ Security Tile â€” TrustGraph Â· CAC Tiers Â· Access Control â”€â”€
   function updateQDSSecurity() {
     apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) }).then(r=>r.json()).then(d => {
       var agents = d.agents || d.nodes || [];
       var total = agents.length;
       var trusted = 0, cautious = 0, banned = 0;
-      var topScore = 0, topName = '—', lowScore = 100, lowName = '—';
+      var topScore = 0, topName = 'â€”', lowScore = 100, lowName = 'â€”';
       var anchor = 0, builder = 0, explorer = 0;
       agents.forEach(function(a) {
         var s = a.trustScore !== undefined ? a.trustScore : 50;
@@ -352,26 +352,26 @@
       if (el('sec-banned')) el('sec-banned').textContent = banned;
       if (el('sec-top-agent')) el('sec-top-agent').textContent = topName + ' (' + topScore.toFixed(1) + ')';
       if (el('sec-low-agent')) el('sec-low-agent').textContent = lowName + ' (' + lowScore.toFixed(1) + ')';
-      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '● online'; el('sec-tg-status').style.color = '#4ade80'; }
+      if (el('sec-tg-status')) { el('sec-tg-status').textContent = 'â— online'; el('sec-tg-status').style.color = '#4ade80'; }
     }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
-      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#948d9e'; }
+      if (el('sec-tg-status')) { el('sec-tg-status').textContent = 'â—‹ offline'; el('sec-tg-status').style.color = '#948d9e'; }
     });
     apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
           var certs = certData.certHolders || certData.holders || certData.certs || [];
           if (!Array.isArray(certs)) certs = [];
           var el = function(id) { return document.getElementById(id); };
           if (el('sec-cert-count')) el('sec-cert-count').textContent = certs.length + ' issued';
-          if (el('sec-uni-status')) el('sec-uni-status').textContent = '● ' + certs.length + ' graduates';
+          if (el('sec-uni-status')) el('sec-uni-status').textContent = 'â— ' + certs.length + ' graduates';
         }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
       if (el('sec-cert-count')) el('sec-cert-count').textContent = 'unavailable';
-      if (el('sec-uni-status')) el('sec-uni-status').textContent = '○ offline';
+      if (el('sec-uni-status')) el('sec-uni-status').textContent = 'â—‹ offline';
     });
   }
   setTimeout(function() { updateQDSSecurity(); setInterval(updateQDSSecurity, 30000); }, 500);
 
-  // ── TrustGraph Trajectory Line Chart ──
+  // â”€â”€ TrustGraph Trajectory Line Chart â”€â”€
   var trajectoryZoom = null; // null = full, {minTime, maxTime} = zoomed
   var trajectoryFullBounds = null; // cached full bounds for un-zoom
 
@@ -427,13 +427,13 @@
       var viewMinTime, viewMaxTime, viewMinScore, viewMaxScore;
 
       if (trajectoryZoom) {
-              // User has zoomed — use their bounds
+              // User has zoomed â€” use their bounds
               viewMinTime = trajectoryZoom.minTime;
               viewMaxTime = trajectoryZoom.maxTime;
               viewMinScore = fullMinScore;
               viewMaxScore = fullMaxScore;
             } else {
-              // Default: last 24h — but if no data in 24h, fall back to full range
+              // Default: last 24h â€” but if no data in 24h, fall back to full range
               var hasRecent = false;
               agents.forEach(function(a) {
                 series[a].forEach(function(p) {
@@ -445,7 +445,7 @@
                 viewMinTime = now - twentyFourHours;
                 viewMaxTime = now;
               } else {
-                // No recent data — show full range
+                // No recent data â€” show full range
                 viewMinTime = fullMinTime;
                 viewMaxTime = fullMaxTime;
               }
@@ -460,7 +460,7 @@
       if (rangeEl) {
         var from = new Date(viewMinTime).toLocaleDateString() + ' ' + new Date(viewMinTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
         var to = new Date(viewMaxTime).toLocaleDateString() + ' ' + new Date(viewMaxTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-        rangeEl.textContent = from + ' — ' + to;
+        rangeEl.textContent = from + ' â€” ' + to;
       }
 
       var pad = { top: 12, bottom: 20, left: 30, right: 10 };
@@ -499,10 +499,10 @@
           return t >= viewMinTime && t <= viewMaxTime;
         });
         // Need at least 1 point in the visible range to show anything.
-        // (A single point draws as a dot only — a line needs ≥2.)
+        // (A single point draws as a dot only â€” a line needs â‰¥2.)
         if (visiblePts.length < 1) return;
 
-        // Draw line (only if we have ≥2 points)
+        // Draw line (only if we have â‰¥2 points)
         if (visiblePts.length >= 2) {
           ctx.strokeStyle = color;
           ctx.lineWidth = 1.5;
@@ -564,7 +564,7 @@
 
       // Draw current scores in center of chart area
       if (trajectoryZoom === null) {
-        // 24h zoomed view — show current scores in center
+        // 24h zoomed view â€” show current scores in center
         ctx.globalAlpha = 0.85;
         var cx = pad.left + w / 2;
         var cy = pad.top + h / 2;
@@ -587,12 +587,12 @@
         ctx.globalAlpha = 1.0;
               }
 
-              // Refresh timestamp (top-right corner) — confirms the chart is actually polling
+              // Refresh timestamp (top-right corner) â€” confirms the chart is actually polling
               ctx.globalAlpha = 0.6;
               ctx.font = '8px monospace';
               ctx.textAlign = 'right';
               ctx.fillStyle = '#948d9e';
-              ctx.fillText('↻ ' + new Date().toLocaleTimeString(), canvas.width - 4, 10);
+              ctx.fillText('â†» ' + new Date().toLocaleTimeString(), canvas.width - 4, 10);
               ctx.globalAlpha = 1.0;
 
               // Legend at bottom
@@ -603,7 +603,7 @@
         var label = l.name + ' ' + l.score.toFixed(0);
         ctx.fillStyle = l.color;
         ctx.textAlign = 'left';
-        ctx.fillText('●', lx, ly);
+        ctx.fillText('â—', lx, ly);
         ctx.fillText(label, lx + 10, ly);
         lx += ctx.measureText(label).width + 18;
         if (lx > canvas.width - 20) { lx = pad.left; ly -= 11; }
@@ -633,10 +633,10 @@
             ? (nearest.delta >= 0 ? '+' + nearest.delta : nearest.delta)
             : '';
           var html = '<b style="color:' + colors[nearest.agentIdx % colors.length] + ';">' + nearest.agent + '</b>';
-          html += ' · ' + dateStr;
-          html += ' · <b>' + nearest.score + '</b>';
+          html += ' Â· ' + dateStr;
+          html += ' Â· <b>' + nearest.score + '</b>';
           if (deltaStr) html += ' (' + deltaStr + ')';
-          if (nearest.event) html += '<br>⚡ ' + nearest.event;
+          if (nearest.event) html += '<br>âš¡ ' + nearest.event;
           if (nearest.note) html += '<br><span style="color:#8b8ba0;font-size:10px;">' + nearest.note + '</span>';
           if (nearest.ref) html += '<br><span style="color:#948d9e;font-size:9px;">' + nearest.ref + '</span>';
           tooltip.innerHTML = html;
@@ -682,14 +682,14 @@
     // Update button text
     var btn = document.getElementById('trajectory-toggle-btn');
     if (btn) {
-      btn.textContent = trajectoryZoom === null ? '🔍 Full View' : '🔍 24h View';
+      btn.textContent = trajectoryZoom === null ? 'ðŸ” Full View' : 'ðŸ” 24h View';
     }
     updateTrustTrajectory();
   };
 
   setTimeout(function() { updateTrustTrajectory(); setInterval(updateTrustTrajectory, 30000); }, 200);
 
-  // ── Activity Log (centralized log viewer) ──
+  // â”€â”€ Activity Log (centralized log viewer) â”€â”€
   function updateShipsLog() {
     var logEl = document.getElementById('qds-activity-log');
     if (!logEl) return;
@@ -723,23 +723,23 @@
         else if (type === 'rate_limit' || type === 'auth_failure') color = '#fb923c';
         else if (type === 'db_error' || type === 'email_error' || type === 'fleet_error' || type === 'memory_error' || type === 'kg_error' || type === 'system_error') color = '#f87171';
         else if (type === 'ollama_error' || type === 'mesh_rejection') color = '#fbbf24';
-        var icon = '●';
-        if (type === 'fleet_message') icon = '📨';
-        else if (type === 'ai_chat') icon = '💬';
-        else if (type === 'system_health_check') icon = '🏥';
-        else if (type === 'daemon_scan') icon = '🔍';
-        else if (type === 'rate_limit') icon = '🚦';
-        else if (type === 'auth_failure') icon = '🔑';
-        else if (type === 'db_error') icon = '🗄️';
-        else if (type === 'email_error') icon = '📧';
-        else if (type === 'fleet_error') icon = '📡';
-        else if (type === 'memory_error') icon = '🧠';
-        else if (type === 'ollama_error') icon = '🤖';
-        else if (type === 'kg_error') icon = '🕸️';
-        else if (type === 'mesh_rejection') icon = '🌐';
-        else if (type === 'system_error') icon = '💥';
-        else if (status === 'failed' || status === 'error') icon = '❌';
-        else if (status === 'success' || status === 'completed') icon = '✅';
+        var icon = 'â—';
+        if (type === 'fleet_message') icon = 'ðŸ“¨';
+        else if (type === 'ai_chat') icon = 'ðŸ’¬';
+        else if (type === 'system_health_check') icon = 'ðŸ¥';
+        else if (type === 'daemon_scan') icon = 'ðŸ”';
+        else if (type === 'rate_limit') icon = 'ðŸš¦';
+        else if (type === 'auth_failure') icon = 'ðŸ”‘';
+        else if (type === 'db_error') icon = 'ðŸ—„ï¸';
+        else if (type === 'email_error') icon = 'ðŸ“§';
+        else if (type === 'fleet_error') icon = 'ðŸ“¡';
+        else if (type === 'memory_error') icon = 'ðŸ§ ';
+        else if (type === 'ollama_error') icon = 'ðŸ¤–';
+        else if (type === 'kg_error') icon = 'ðŸ•¸ï¸';
+        else if (type === 'mesh_rejection') icon = 'ðŸŒ';
+        else if (type === 'system_error') icon = 'ðŸ’¥';
+        else if (status === 'failed' || status === 'error') icon = 'âŒ';
+        else if (status === 'success' || status === 'completed') icon = 'âœ…';
         return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span><br/><span style="color:#8b8ba0;font-size:0.5rem;">' + agent + '</span></div>';
       }).join('');
     }).catch(function() {
@@ -750,7 +750,7 @@
   function refreshLogViewer() { updateShipsLog(); }
   setTimeout(function() { updateShipsLog(); setInterval(updateShipsLog, 5000); }, 1000);
 
-  // ── Mesh Peers ──
+  // â”€â”€ Mesh Peers â”€â”€
   function updateMeshPeers() {
     var meshSeq = Date.now();
     apiFetch('/api/mesh/bridge', { signal: AbortSignal.timeout(25000) }).then(r=>r.json()).then(d => {
@@ -768,7 +768,7 @@
       var bridge = document.getElementById('qds-mt-bridge');
       var mtPeers = document.getElementById('qds-mt-peers');
       var mtMsgs = document.getElementById('qds-mt-msgs');
-      if (bridge) bridge.textContent = d.connected ? '🟢 connected' : '○ idle';
+      if (bridge) bridge.textContent = d.connected ? 'ðŸŸ¢ connected' : 'â—‹ idle';
       if (bridge) bridge.style.color = d.connected ? '#4ade80' : '#948d9e';
       if (mtPeers) mtPeers.textContent = d.nodes || 0;
       if (mtMsgs) mtMsgs.textContent = d.messageCount || 0;
@@ -776,7 +776,7 @@
   }
   setTimeout(function() { updateMeshPeers(); setInterval(updateMeshPeers, 5000); }, 1500);
 
-  // ── Bulletin Board Topics (in Quarterdeck) ──
+  // â”€â”€ Bulletin Board Topics (in Quarterdeck) â”€â”€
   function updateBoardTopics() {
     var seq = Date.now();
     var list = document.getElementById('board-topics-list');
@@ -789,7 +789,7 @@
         if (count) count.textContent = d.topics.length;
         list.innerHTML = d.topics.slice(0, 5).map(function(t) {
           var statusColor = t.status === 'completed' ? '#4ade80' : t.status === 'in-progress' ? '#fbbf24' : t.status === 'archived' ? '#948d9e' : '#60a5fa';
-          var statusIcon = t.status === 'completed' ? '✅' : t.status === 'in-progress' ? '🔄' : t.status === 'archived' ? '📦' : '📋';
+          var statusIcon = t.status === 'completed' ? 'âœ…' : t.status === 'in-progress' ? 'ðŸ”„' : t.status === 'archived' ? 'ðŸ“¦' : 'ðŸ“‹';
           return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.65rem;border-bottom:1px solid #1a1a2e;"><span style="color:#e0e0e0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (t.title || 'untitled') + '</span><span style="color:' + statusColor + ';margin-left:6px;">' + statusIcon + ' ' + (t.status || 'active') + '</span></div>';
         }).join('');
       } else {
@@ -803,8 +803,8 @@
   }
   setTimeout(function() { updateBoardTopics(); setInterval(updateBoardTopics, 15000); }, 2000);
 
-  // dashboard.js v8.0.0 — Trust Trajectory full-width chart, Footlocker agent chests, cron/supervisor fixes
-// ── Rum Quota + Agent Fleet (combined) ──
+  // dashboard.js v8.0.0 â€” Trust Trajectory full-width chart, Footlocker agent chests, cron/supervisor fixes
+// â”€â”€ Rum Quota + Agent Fleet (combined) â”€â”€
   function updateGrogQuota() {
     var seq = Date.now();
     var content = document.getElementById('rum-quota-content');
@@ -865,7 +865,7 @@
         restockStr = Math.round(hoursUntil) + 'h';
       }
 
-      var emojiMap = { 'eliza': '🤖', 'joe': '🏴‍☠️', 'hermes': '⚡', 'vex': '🦑', 'alice': '📧', 'system': '⚙️', 'trib': '🏛️', 'harbor': '🏠', 'postman': '📬', 'arch': '🏗️', 'builder': '🔨', 'sovereign': '👑', 'trustgraph': '📊', 'dao-gov': '🏛️', 'global-communicator': '📡', 'kimi': '🧠', 'xmrt-aidy': '🛠️', 'pfp': '📸', 'relay': '🔌', '127.0.0.1': '🖥️', 'suite-unified-chat': '💬', 'local-dev': '💻', 'anya-sharma': '👩‍💼', 'vex-user': '🦑', 'eliza-quartermaster': '🤖', 'vex-captain,-hms-speedy': '🦑', 'hermes-agent': '⚡' };
+      var emojiMap = { 'eliza': 'ðŸ¤–', 'joe': 'ðŸ´â€â˜ ï¸', 'hermes': 'âš¡', 'vex': 'ðŸ¦‘', 'alice': 'ðŸ“§', 'system': 'âš™ï¸', 'trib': 'ðŸ›ï¸', 'harbor': 'ðŸ ', 'postman': 'ðŸ“¬', 'arch': 'ðŸ—ï¸', 'builder': 'ðŸ”¨', 'sovereign': 'ðŸ‘‘', 'trustgraph': 'ðŸ“Š', 'dao-gov': 'ðŸ›ï¸', 'global-communicator': 'ðŸ“¡', 'kimi': 'ðŸ§ ', 'xmrt-aidy': 'ðŸ› ï¸', 'pfp': 'ðŸ“¸', 'relay': 'ðŸ”Œ', '127.0.0.1': 'ðŸ–¥ï¸', 'suite-unified-chat': 'ðŸ’¬', 'local-dev': 'ðŸ’»', 'anya-sharma': 'ðŸ‘©â€ðŸ’¼', 'vex-user': 'ðŸ¦‘', 'eliza-quartermaster': 'ðŸ¤–', 'vex-captain,-hms-speedy': 'ðŸ¦‘', 'hermes-agent': 'âš¡' };
 
       rumData.agents.forEach(function(a) {
         var canon = a.agent.toLowerCase().trim();
@@ -873,7 +873,7 @@
         var type = fleetMap[canon] || 'unknown';
         var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
         var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
-        var emoji = emojiMap[canon] || '🫡';
+        var emoji = emojiMap[canon] || 'ðŸ«¡';
         rows.push({ agent: a.agent, emoji: emoji, calls: a.calls, tokens: a.tokens, pct: a.pct, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
 
@@ -887,7 +887,7 @@
           var trust = trustMap[name] || {};
           var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
           var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
-          var emoji = emojiMap[name] || '🫡';
+          var emoji = emojiMap[name] || 'ðŸ«¡';
           rows.push({ agent: a.name, emoji: emoji, calls: 0, tokens: 0, pct: '0.0', trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
       });
@@ -896,10 +896,10 @@
 
       // Header with budget info
       var html = '<div style="font-size:0.6rem;color:#948d9e;margin-bottom:4px;">';
-      html += '🍺 <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used · ';
-      html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
-      html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum · ';
-      html += '⏳ <b style="color:#fbbf24;">' + restockStr + '</b> till restock';
+      html += 'ðŸº <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used Â· ';
+      html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining Â· ';
+      html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum Â· ';
+      html += 'â³ <b style="color:#fbbf24;">' + restockStr + '</b> till restock';
       html += '</div>';
 
       // Progress bar
@@ -924,11 +924,11 @@
       html += '<div style="display:flex;flex-direction:column;gap:1px;">';
       rows.forEach(function(r) {
         var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#948d9e;">-</span>';
-        var statusDot = r.statusColor !== '#948d9e' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
+        var statusDot = r.statusColor !== '#948d9e' ? '<span style="color:' + r.statusColor + ';">â—</span>' : '';
         // Check if agent is actively working
         var activity = activityMap[r.agent.toLowerCase().trim()];
         var isWorking = activity && activity.status === 'working';
-        var workingIndicator = isWorking ? '<span style="color:#fbbf24;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">⚡</span>' : '';
+        var workingIndicator = isWorking ? '<span style="color:#fbbf24;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">âš¡</span>' : '';
         var durationStr = isWorking && activity.duration_seconds ? ' (' + activity.duration_seconds + 's)' : '';
         html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.6rem;padding:1px 0;">';
         html += '<span>' + r.emoji + '</span>';
@@ -949,8 +949,8 @@
   }
   setTimeout(function() { updateGrogQuota(); setInterval(updateGrogQuota, 15000); }, 2500);
 
-  // ── Task Pipeline ──
-  // ── Kanban Task Board ──
+  // â”€â”€ Task Pipeline â”€â”€
+  // â”€â”€ Kanban Task Board â”€â”€
     function updateTaskPipeline() {
       var content = document.getElementById('task-pipeline-content');
       if (!content) return;
@@ -994,12 +994,12 @@
               // Progress bar
               html += '<div style="height:3px;background:#1e1e2e;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
               html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#948d9e;">';
-              if (assignee) html += '<span>👤 '+assignee.slice(0,8)+'</span>';
+              if (assignee) html += '<span>ðŸ‘¤ '+assignee.slice(0,8)+'</span>';
               else html += '<span></span>';
               html += '<span>'+pct+'%</span>';
               html += '</div></div>';
             });
-            if (!col.length) html += '<div style="color:#3a3a4a;font-size:0.5rem;text-align:center;padding:10px 0;">— empty —</div>';
+            if (!col.length) html += '<div style="color:#3a3a4a;font-size:0.5rem;text-align:center;padding:10px 0;">â€” empty â€”</div>';
             html += '</div>';
           });
           html += '</div>';
@@ -1020,7 +1020,7 @@
     .then(r => r.json())
     .then(data => {
       functions = data.functions || [];
-      document.getElementById('fnCount').textContent = '— ' + functions.length + ' total';
+      document.getElementById('fnCount').textContent = 'â€” ' + functions.length + ' total';
       var daoFnEl = document.getElementById('dao-fn-count');
       if (daoFnEl) daoFnEl.textContent = functions.length;
       renderFunctions();
@@ -1115,7 +1115,7 @@
       var t = document.querySelector('a[href*="relay.mobilemonero"]');
       if (hb && t) hb.textContent = t.href + '/api/fleet/heartbeat';
     }).catch(function(){
-      // Fleet agents unavailable — leave as Loading...
+      // Fleet agents unavailable â€” leave as Loading...
     });
     });
   };
@@ -1154,7 +1154,7 @@ async function loadUniversityStatus() {
 setInterval(loadUniversityStatus, 60000);
 loadUniversityStatus();
 
-// ── Agent Experience Card ──
+// â”€â”€ Agent Experience Card â”€â”€
 async function loadAgentExperienceCard() {
   try {
     var r = await apiFetch('/api/fleet-chat/agents', { signal: AbortSignal.timeout(25000) });
@@ -1176,11 +1176,11 @@ async function loadAgentExperienceCard() {
 setInterval(loadAgentExperienceCard, 60000);
 loadAgentExperienceCard();
 
-  // ── Fleet Chat Message Feed ──
+  // â”€â”€ Fleet Chat Message Feed â”€â”€
   function loadFleetChat() {
     var msgsEl = document.getElementById('fleet-chat-msgs');
     if (!msgsEl) return;
-    // Keep previous content visible on failure — only show offline if we have nothing cached
+    // Keep previous content visible on failure â€” only show offline if we have nothing cached
     var hasContent = msgsEl.querySelectorAll(':scope > div').length > 0;
     apiFetch('/api/fleet-chat/messages?limit=50&channel=all', { signal: AbortSignal.timeout(15000) })
           .then(function(r){
@@ -1210,7 +1210,7 @@ loadAgentExperienceCard();
                           var nameColor = '#8b8ba0';  // system default
                           if (m.agent === 'system') {
                             nameColor = '#8b8ba0';
-                            name = isToolCard ? '🔧 tool' : 'system';
+                            name = isToolCard ? 'ðŸ”§ tool' : 'system';
                           } else if (m.agent === 'hermes') nameColor = '#ff6b35';
                           else if (m.agent === 'eliza') nameColor = '#a78bfa';
                           else if (m.agent === 'vex') nameColor = '#4ade80';
@@ -1233,7 +1233,7 @@ loadAgentExperienceCard();
                 // Only auto-scroll to bottom if user was already near the bottom BEFORE the update
                 if (wasNearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
       })
-      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
+      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">âš  Comms temporarily offline</div>'; });
   }
   setInterval(loadFleetChat, 3000);
   loadFleetChat();
@@ -1280,7 +1280,7 @@ loadAgentExperienceCard();
       var nodeList = document.getElementById('mt-node-list');
       if (!status) return;
       if (d.connected) {
-        status.textContent = '🟢 Connected';
+        status.textContent = 'ðŸŸ¢ Connected';
         status.style.color = '#4ade80';
         if (peers) peers.textContent = d.nodes + ' nodes';
         if (messages) messages.textContent = d.messageCount || 0;
@@ -1289,7 +1289,7 @@ loadAgentExperienceCard();
         if (d.nodeList && d.nodeList.length > 0 && nodesDiv && nodeList) {
           nodesDiv.style.display = 'block';
           nodeList.innerHTML = d.nodeList.map(function(n){
-            return '<div style="padding:1px 0;font-size:0.65rem;">🟢 ' + (n.name || n.id) +
+            return '<div style="padding:1px 0;font-size:0.65rem;">ðŸŸ¢ ' + (n.name || n.id) +
               (n.rssi ? ' <span style="color:#948d9e;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
               (n.snr ? ' <span style="color:#948d9e;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
               '</div>';
@@ -1298,7 +1298,7 @@ loadAgentExperienceCard();
           nodesDiv.style.display = 'none';
         }
       } else {
-        status.textContent = '○ Disconnected';
+        status.textContent = 'â—‹ Disconnected';
         status.style.color = '#948d9e';
         if (peers) peers.textContent = (d.nodes || 0) + ' nodes tracked';
         if (messages) messages.textContent = d.messageCount || 0;
@@ -1307,7 +1307,7 @@ loadAgentExperienceCard();
       }
     }).catch(function(){
       var status = document.getElementById('mt-bridge-status');
-      if (status) { status.textContent = '○ offline'; status.style.color = '#948d9e'; }
+      if (status) { status.textContent = 'â—‹ offline'; status.style.color = '#948d9e'; }
     });
   }
   setTimeout(function() { updateMeshtasticBridge(); setInterval(updateMeshtasticBridge, 5000); }, 4500);
@@ -1327,11 +1327,11 @@ loadAgentExperienceCard();
         var lastSeen = new Date(w.last_seen).getTime();
         var minutesAgo = Math.round((now - lastSeen) / 60000);
         var isOnline = minutesAgo < 10;
-        var statusDot = isOnline ? '<span style="color:#4ade80;">●</span>' : '<span style="color:#948d9e;">○</span>';
+        var statusDot = isOnline ? '<span style="color:#4ade80;">â—</span>' : '<span style="color:#948d9e;">â—‹</span>';
         var hashDisplay = w.current_hash > 0 ? w.current_hash + ' H/s' : '-';
         var sharesDisplay = w.total_shares > 0 ? w.total_shares.toLocaleString() : '0';
         var timeAgo = minutesAgo < 1 ? 'just now' : minutesAgo + 'm ago';
-        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#948d9e;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
+        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#948d9e;">' + hashDisplay + ' Â· ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
       }).join('');
     }).catch(function(){
       var el = document.getElementById('miner-leaderboard');
@@ -1430,7 +1430,7 @@ function loadInboxTiles() {
 // on load.
 setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); }, 6000);
 
-  // XMRT DAO Health — dynamic data from Supabase
+  // XMRT DAO Health â€” dynamic data from Supabase
   function loadDaoHealth() {
     apiFetch('/api/dao/health', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1549,7 +1549,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   }
   setTimeout(function() { loadDaoHealth(); setInterval(loadDaoHealth, 30000); }, 7500);
 
-  // GitHub Activity — dynamic data from GitHub API
+  // GitHub Activity â€” dynamic data from GitHub API
   function loadGithubActivity() {
     apiFetch('/api/dao/github', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1588,7 +1588,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   }
   setTimeout(function() { loadGithubActivity(); setInterval(loadGithubActivity, 60000); }, 8000);
 
-  // PFP Campaign — live stats
+  // PFP Campaign â€” live stats
   function loadPfpCampaign() {
     apiFetch('/api/campaign/pfp', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1604,7 +1604,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   }
   setTimeout(function() { loadPfpCampaign(); setInterval(loadPfpCampaign, 30000); }, 8500);
 
-  // 31 Harbor Campaign — live stats
+  // 31 Harbor Campaign â€” live stats
   function loadHarborCampaign() {
     apiFetch('/api/campaign/31harbor', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1620,7 +1620,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   }
   setTimeout(function() { loadHarborCampaign(); setInterval(loadHarborCampaign, 30000); }, 9000);
 
-  // PFP Leads — live from pfp_leads table via local-sb
+  // PFP Leads â€” live from pfp_leads table via local-sb
   function loadPfpLeads() {
     apiFetch('/api/leads/pfp', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1631,17 +1631,17 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         if (el('pfp-leads-by-status')) {
           var parts = [];
           for (var k in d.byStatus) parts.push(k + ':' + d.byStatus[k]);
-          el('pfp-leads-by-status').textContent = parts.join(' · ');
+          el('pfp-leads-by-status').textContent = parts.join(' Â· ');
         }
         if (el('pfp-leads-by-source')) {
           var parts = [];
           for (var k in d.bySource) parts.push(k + ':' + d.bySource[k]);
-          el('pfp-leads-by-source').textContent = parts.join(' · ');
+          el('pfp-leads-by-source').textContent = parts.join(' Â· ');
         }
         if (el('pfp-leads-hot')) el('pfp-leads-hot').textContent = d.highRated.length;
         if (el('pfp-leads-newest') && d.newest) {
           var n = d.newest;
-          el('pfp-leads-newest').textContent = (n.contact_name || '?') + ' — ' + (n.contact_email || '') + ' [' + (n.source || '?') + ']';
+          el('pfp-leads-newest').textContent = (n.contact_name || '?') + ' â€” ' + (n.contact_email || '') + ' [' + (n.source || '?') + ']';
         }
       });
   }
@@ -1751,14 +1751,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     renderFunctions();
   }
   
-  // ── Fleet Chat Attachment Support ──
+  // â”€â”€ Fleet Chat Attachment Support â”€â”€
   // Track pending file to attach to next message
   var pendingFile = null;
   function attachFleetFile(input) {
     var file = input.files[0];
     if (!file) return;
     pendingFile = file;
-    document.getElementById('fleet-chat-attach-status').textContent = '📎 ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB) — will attach with next message';
+    document.getElementById('fleet-chat-attach-status').textContent = 'ðŸ“Ž ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB) â€” will attach with next message';
   }
 
   function sendFleetChat() {
@@ -1771,7 +1771,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       localStorage.setItem('fleet-chat-user-name', nameInput.value);
     }
     var agent = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'user';
-    // Prevent impersonating fleet agents — if name matches a reserved agent, suffix with -user
+    // Prevent impersonating fleet agents â€” if name matches a reserved agent, suffix with -user
     var reservedAgents = ['vex','eliza','hermes','alice','trib','arch','builder','sovereign','trustgraph','dao','global-communicator','laura','community-manager','project-manager','devrel','liaison'];
     if (reservedAgents.indexOf(agent) !== -1) {
       agent = agent + '-user';
@@ -1785,19 +1785,19 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     input.value = '';
     var tempId = 'opt-' + Date.now();
     msgs.innerHTML += '<div style="margin-bottom:6px;text-align:right;" data-id="' + tempId + '"><span style="color:#8b8ba0;font-size:10px;display:block;">' + displayName.toUpperCase() + '</span><span style="background:#1a3a5c;color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;">' + msg.replace(/</g,'&lt;') + '</span></div>';
-    document.getElementById('fleet-chat-status').textContent = '● sending...';
+    document.getElementById('fleet-chat-status').textContent = 'â— sending...';
     document.getElementById('fleet-chat-status').style.color = '#fbbf24';
     msgs.scrollTop = msgs.scrollHeight;
     apiFetch('/api/fleet-chat/send', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent:agent,displayName:displayName,message:msg,channel:'all'})})
       .then(function(r){return r.json();})
       .then(function(d){
-        document.getElementById('fleet-chat-status').textContent = '● connected';
+        document.getElementById('fleet-chat-status').textContent = 'â— connected';
         document.getElementById('fleet-chat-status').style.color = '#4ade80';
         // If there's a pending file, upload it as an attachment to this message
         if (pendingFile && d.message && d.message.id) {
           var file = pendingFile;
           pendingFile = null;
-          document.getElementById('fleet-chat-attach-status').textContent = '📤 Uploading ' + file.name + '...';
+          document.getElementById('fleet-chat-attach-status').textContent = 'ðŸ“¤ Uploading ' + file.name + '...';
           var reader = new FileReader();
           reader.onload = function(e) {
             var content = e.target.result;
@@ -1815,10 +1815,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify(payload),
             }).then(function(r){return r.json();}).then(function(ar){
-              document.getElementById('fleet-chat-attach-status').textContent = '✅ Attached ' + file.name;
+              document.getElementById('fleet-chat-attach-status').textContent = 'âœ… Attached ' + file.name;
               loadFleetChat();
             }).catch(function(err){
-              document.getElementById('fleet-chat-attach-status').textContent = '❌ Upload failed: ' + err.message;
+              document.getElementById('fleet-chat-attach-status').textContent = 'âŒ Upload failed: ' + err.message;
             });
           };
           reader.readAsDataURL(file);
@@ -1828,7 +1828,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         if (opt) opt.remove();
         loadFleetChat();
       }).catch(function(e){
-        document.getElementById('fleet-chat-status').textContent = '● error: ' + e.message;
+        document.getElementById('fleet-chat-status').textContent = 'â— error: ' + e.message;
         document.getElementById('fleet-chat-status').style.color = '#f87171';
       });
   }
@@ -1865,7 +1865,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
                   if (ad.attachments && ad.attachments.length > 0) {
                     var attHtml = '<div style="margin-top:4px;font-size:10px;">';
                     ad.attachments.forEach(function(a){
-                      attHtml += '<span style="color:#a78bfa;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">📎 ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
+                      attHtml += '<span style="color:#a78bfa;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">ðŸ“Ž ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
                     });
                     attHtml += '</div>';
                     var attDiv = div.querySelector('.fleet-attachments');
@@ -1883,17 +1883,17 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           }
           msgs.scrollTop = msgs.scrollHeight;
         }
-        document.getElementById('fleet-chat-status').textContent = '● connected';
+        document.getElementById('fleet-chat-status').textContent = 'â— connected';
         document.getElementById('fleet-chat-status').style.color = '#4ade80';
       }).catch(function(e){
-        document.getElementById('fleet-chat-status').textContent = '● polling error';
+        document.getElementById('fleet-chat-status').textContent = 'â— polling error';
         document.getElementById('fleet-chat-status').style.color = '#f87171';
       });
   }
 
   // Markdown renderer is loaded from /static/markdown.js to keep the template literal escape-free.
 
-  // ── Bulletin Board Functions ────────────────────────────────
+  // â”€â”€ Bulletin Board Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   var boardData = { topics: [] };
   var boardCurrentTopic = null;
   var boardStatusFilter = "all"; // all, active, in-progress, completed, archived
@@ -1910,7 +1910,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         var prevPosts = boardLastPostCount;
         boardData = d;
         renderBoardTopics();
-        document.getElementById("board-status").textContent = "● loaded";
+        document.getElementById("board-status").textContent = "â— loaded";
         document.getElementById("board-status").style.color = "#4ade80";
         var newCount = boardData.topics.length;
         var totalPosts = boardData.topics.reduce(function(sum, t) { return sum + (t.posts || []).length; }, 0);
@@ -1921,7 +1921,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         boardLastPostCount = totalPosts;
       })
       .catch(function(e){
-        document.getElementById("board-status").textContent = "● error: " + e.message;
+        document.getElementById("board-status").textContent = "â— error: " + e.message;
         document.getElementById("board-status").style.color = "#f87171";
       });
   }
@@ -1937,7 +1937,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     renderBoardTopics();
   }
 
-  // Quick create (prompt-based) — used by the Quarterdeck "+ new" link.
+  // Quick create (prompt-based) â€” used by the Quarterdeck "+ new" link.
   // Falls through to the form-based createBoardTopic() below if a form
   // is present (Full Board view).
   function quickCreateBoardTopic() {
@@ -1997,7 +1997,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var postCount = (t.posts || []).length;
       var lastPost = postCount > 0 ? t.posts[t.posts.length - 1] : null;
       var active = boardCurrentTopic && boardCurrentTopic.id === t.id ? ' active' : '';
-      var pinIcon = t.pinned ? '<span style="color:#fbbf24;font-size:10px;">📌</span> ' : '';
+      var pinIcon = t.pinned ? '<span style="color:#fbbf24;font-size:10px;">ðŸ“Œ</span> ' : '';
       var assignBadge = t.assigned_agent ? '<span style="color:#60a5fa;font-size:9px;">@' + t.assigned_agent + '</span>' : '';
       html += '<div class="board-topic' + active + '" data-topic-id="' + t.id + '">';
       html += '<div class="board-topic-title">' + pinIcon + getStatusBadge(t.status) + ' ' + t.title.replace(/</g,'&lt;') + '</div>';
@@ -2086,7 +2086,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var agentClass = 'board-agent-' + (p.agent || 'vex').toLowerCase();
       html += '<div class="board-post">';
       html += '<div class="board-post-header"><span class="board-agent-badge ' + agentClass + '">' + (p.agent || 'agent').toUpperCase() + '</span> ' + timeAgo(p.ts);
-      html += '<span style="float:right;font-size:9px;color:#948d9e;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">✕</span>';
+      html += '<span style="float:right;font-size:9px;color:#948d9e;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">âœ•</span>';
       html += '</div>';
       html += '<div class="board-post-body">' + renderMarkdown(p.message) + '</div>';
       html += '</div>';
@@ -2325,7 +2325,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   setTimeout(loadBoard, 1000);
   setInterval(loadBoard, 30000);
 
-  // Next campaign drop calculation — Costa Rica time (UTC-6)
+  // Next campaign drop calculation â€” Costa Rica time (UTC-6)
   (function() {
     var now = new Date();
     var hour = now.getUTCHours() - 6; // CR offset
@@ -2345,7 +2345,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     if (el) el.textContent = label;
   })();
 
-  // Next 31 Harbor drop — Eastern Time (UTC-4/UTC-5)
+  // Next 31 Harbor drop â€” Eastern Time (UTC-4/UTC-5)
   (function() {
     var now = new Date();
     var etOffset = (now.getTimezoneOffset() === 240 || now.getTimezoneOffset() === 300)
@@ -2421,7 +2421,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   animate();
 })();
 
-// ── Obsidian Knowledge Graph ──────────────────────────────────────
+// â”€â”€ Obsidian Knowledge Graph â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 (function() {
   const canvas = document.getElementById('obsidian-graph-canvas');
   if (!canvas) return;
@@ -2439,7 +2439,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   let W, H;
 
   // Camera state
-  let camX = 0, camY = 0, camZ = 0.3, camRot = 0; // 30% default — see the whole galaxy unexploded
+  let camX = 0, camY = 0, camZ = 0.3, camRot = 0; // 30% default â€” see the whole galaxy unexploded
   let dragCam = false;
   let dragCamStart = { x: 0, y: 0, cx: 0, cy: 0 };
   let dragNode = null;
@@ -2447,18 +2447,18 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   let camZTarget = 0.3; // for smooth zoom transitions
 
   // Effect toggles
-  let effectExplode = false; // OFF by default — start unexploded, click Explode for galaxy view
-  let effectOrbit = true;    // on by default — orbital physics
+  let effectExplode = false; // OFF by default â€” start unexploded, click Explode for galaxy view
+  let effectOrbit = true;    // on by default â€” orbital physics
   let effectLabels = true;   // on by default
-  let effectTrust = true;    // on by default — show trust score arcs on agent nodes
-  let effectCluster = false; // off by default — group nodes by category
-  let effectRadial = false;  // off by default — concentric circular layout like cuttlefishclaws.com
-  let effectFilter = false;  // off by default — hide low-trust / unconnected nodes
-  let effectDb = true;       // on by default — show/hide DB table nodes
-  let effectMemory = true;   // on by default — show/hide fleet memory nodes
-  let effectSharedCtx = true; // on by default — show/hide shared-context nodes
-  let effectCatalog = true;  // on by default — show/hide semantic catalog nodes
-  let effectKnowledge = true; // on by default — show/hide knowledge-entity nodes
+  let effectTrust = true;    // on by default â€” show trust score arcs on agent nodes
+  let effectCluster = false; // off by default â€” group nodes by category
+  let effectRadial = false;  // off by default â€” concentric circular layout like cuttlefishclaws.com
+  let effectFilter = false;  // off by default â€” hide low-trust / unconnected nodes
+  let effectDb = true;       // on by default â€” show/hide DB table nodes
+  let effectMemory = true;   // on by default â€” show/hide fleet memory nodes
+  let effectSharedCtx = true; // on by default â€” show/hide shared-context nodes
+  let effectCatalog = true;  // on by default â€” show/hide semantic catalog nodes
+  let effectKnowledge = true; // on by default â€” show/hide knowledge-entity nodes
 
   window.toggleGraphEffect = function(name) {
     const btn = document.getElementById('b-' + name);
@@ -2503,7 +2503,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     Cautious: '#f87171', Suspended: '#948d9e'
   };
 
-  // ── Coordinate transforms ──
+  // â”€â”€ Coordinate transforms â”€â”€
   function screenToWorld(sx, sy) {
     return { x: (sx - W/2) / camZ + camX, y: (sy - H/2) / camZ + camY };
   }
@@ -2558,7 +2558,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     focusNode = n;
     focusFrom = { x: camX, y: camY, z: camZ };
     focusAnim = 0.001; // start transition
-    // Don't animate zoom — preserve user's zoom level, only pan
+    // Don't animate zoom â€” preserve user's zoom level, only pan
   }
 
   function draw() {
@@ -2568,14 +2568,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // ── Build lookup maps once per frame (avoids O(n²) simNodes.find()) ──
+    // â”€â”€ Build lookup maps once per frame (avoids O(nÂ²) simNodes.find()) â”€â”€
     var nodeById = {};
     for (var ni = 0; ni < simNodes.length; ni++) {
       var sn = simNodes[ni];
       nodeById[sn.id] = sn;
     }
 
-    // ── Focus animation (PAN ONLY — preserves user zoom) ──
+    // â”€â”€ Focus animation (PAN ONLY â€” preserves user zoom) â”€â”€
     if (focusNode && focusAnim < 1) {
       focusAnim = Math.min(1, focusAnim + 0.02);
       const t = focusAnim;
@@ -2583,14 +2583,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       const s = t * t * (3 - 2 * t);
       camX = focusFrom.x + (focusNode.x - focusFrom.x) * s;
       camY = focusFrom.y + (focusNode.y - focusFrom.y) * s;
-      // ZOOM PRESERVED — user controls zoom, not focus animation
+      // ZOOM PRESERVED â€” user controls zoom, not focus animation
     } else if (focusNode && focusAnim >= 1) {
       // Keep tracking the focused node so it doesn't drift away
       camX = focusNode.x;
       camY = focusNode.y;
     }
 
-    // ── Galaxy Orbital Physics ──
+    // â”€â”€ Galaxy Orbital Physics â”€â”€
     // Build parent-child hierarchy once
     if (!window._orbitHierarchy) {
       window._orbitHierarchy = { parents: {}, levels: {}, childCounts: {} };
@@ -2601,10 +2601,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       oh.levels['public'] = 0; oh.parents['public'] = null;
       oh.levels['app Schema'] = 0; oh.parents['app Schema'] = null;
       oh.levels['public Schema'] = 0; oh.parents['public Schema'] = null;
-      // Level 1: Planets — orbit Relay Server
+      // Level 1: Planets â€” orbit Relay Server
       var planetNames = ['CashDApp','CuttlefishClaws','31Harbor','HottieHouse','Suite Dashboard','Fleet Chat','Mesh Network','Ollama','Local Supabase','Postgres Database','Cloudflare Workers','Cron Engine'];
       planetNames.forEach(function(p){ oh.levels[p]=1; oh.parents[p]='Relay Server'; });
-      // Level 2: Moons — children of planets or stars
+      // Level 2: Moons â€” children of planets or stars
       edges.forEach(function(e){
         var s=e.source, t=e.target;
         if (oh.levels[s]===1 && !oh.levels[t] && !isAgent(t)) { oh.levels[t]=2; oh.parents[t]=s; }
@@ -2614,7 +2614,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         if (s==='Relay Server' && !oh.levels[t] && !isAgent(t)) { oh.levels[t]=2; oh.parents[t]='Relay Server'; }
         if (t==='Relay Server' && !oh.levels[s] && !isAgent(s)) { oh.levels[s]=2; oh.parents[s]='Relay Server'; }
       });
-      // Catch-all: unassigned → moon of Relay Server
+      // Catch-all: unassigned â†’ moon of Relay Server
       simNodes.forEach(function(n){
         if (oh.levels[n.id]===undefined && n.id!=='Relay Server' && n.category!=='agent') {
           oh.levels[n.id]=2; oh.parents[n.id]='Relay Server';
@@ -2683,7 +2683,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
 
     var time = Date.now();
 
-    // ── First frame: snap all nodes to their orbital positions ──
+    // â”€â”€ First frame: snap all nodes to their orbital positions â”€â”€
     if (!window._orbitInitialized) {
       window._orbitInitialized = true;
       for (const n of simNodes) {
@@ -2712,7 +2712,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       }
     }
 
-    // ── Orbital physics loop — deterministic, no springs, no drift ──
+    // â”€â”€ Orbital physics loop â€” deterministic, no springs, no drift â”€â”€
     // First pass: compute all positions (stars + planets)
     for (const n of simNodes) {
       if (n.category === 'agent') continue;
@@ -2765,7 +2765,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       n.y = pn.y + Math.sin(precessed)*r + wy;
     }
 
-    // ── Comet Agent Physics ──
+    // â”€â”€ Comet Agent Physics â”€â”€
     if (!window._agentState) {
       window._agentState = {};
       simNodes.forEach(function(n){
@@ -2818,14 +2818,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     });
 
     // Smooth zoom transition toward target (only during active transition)
-    // Disabled — direct zoom control via wheel/buttons
+    // Disabled â€” direct zoom control via wheel/buttons
     // camZ += (camZTarget - camZ) * 0.03;
 
-    // ── Render (camera transform) ──
+    // â”€â”€ Render (camera transform) â”€â”€
     ctx.clearRect(0, 0, W, H);
 
-    // ── Galaxy background: warm nebula + dense starfield ──
-    // Cache starfield — compute once, reuse every frame
+    // â”€â”€ Galaxy background: warm nebula + dense starfield â”€â”€
+    // Cache starfield â€” compute once, reuse every frame
     if (!window._starCache) {
       window._starCache = [];
       var starSeed = 42;
@@ -2873,7 +2873,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     ctx.scale(camZ, camZ);
     ctx.translate(-camX, -camY);
 
-    // ── Galaxy rings (golden concentric circles like cuttlefishclaws.com) — wide scale
+    // â”€â”€ Galaxy rings (golden concentric circles like cuttlefishclaws.com) â€” wide scale
     var ringRadii = [120, 220, 360, 540, 800];
     for (var ri = 0; ri < ringRadii.length; ri++) {
       var rr = ringRadii[ri];
@@ -2885,7 +2885,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       ctx.stroke();
     }
 
-    // ── Edges (golden glowing connections) ──
+    // â”€â”€ Edges (golden glowing connections) â”€â”€
     for (const e of edges) {
       const a = nodeById[e.source];
       const b = nodeById[e.target];
@@ -2911,7 +2911,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       ctx.stroke();
     }
 
-    // ── Nodes (glowing golden orbs with lens flare) ──
+    // â”€â”€ Nodes (glowing golden orbs with lens flare) â”€â”€
     for (const n of simNodes) {
       // Filter effect: skip low-trust agents and unconnected nodes
       if (effectFilter) {
@@ -2962,7 +2962,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         }
       }
 
-      // ── Outer glow (large, faint halo) — solid fill, no gradient (faster) ──
+      // â”€â”€ Outer glow (large, faint halo) â€” solid fill, no gradient (faster) â”€â”€
       var isStar = n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema';
       var glowSize = Math.max(1, n.category === 'agent' || isStar ? r * 5 : r * 3);
       ctx.beginPath();
@@ -2970,13 +2970,13 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       ctx.fillStyle = warmColor + '12';
       ctx.fill();
 
-      // ── Inner glow (medium, visible aura) — solid fill ──
+      // â”€â”€ Inner glow (medium, visible aura) â€” solid fill â”€â”€
       ctx.beginPath();
       ctx.arc(n.x, n.y, Math.max(1, r * 2), 0, Math.PI * 2);
       ctx.fillStyle = warmColor + '25';
       ctx.fill();
 
-      // ── Lens flare cross for agent nodes and star nodes ──
+      // â”€â”€ Lens flare cross for agent nodes and star nodes â”€â”€
       if (n.category === 'agent' || n.id === 'Relay Server' || n.id === 'app' || n.id === 'public' || n.id === 'app Schema' || n.id === 'public Schema') {
         // Comet tail using trail history (agents only)
         if (n.category === 'agent') {
@@ -3008,10 +3008,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         ctx.globalAlpha = 1.0;
       }
 
-      // ── Agent nodes: golden ring + score gauge ──
+      // â”€â”€ Agent nodes: golden ring + score gauge â”€â”€
       if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
-        // Outer ring (glowing golden) — shadow only on hover/select to avoid GPU choke
+        // Outer ring (glowing golden) â€” shadow only on hover/select to avoid GPU choke
         ctx.beginPath();
         ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = warmColor + '15';
@@ -3025,7 +3025,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // Inner filled arc showing score — no shadow (too expensive per frame)
+        // Inner filled arc showing score â€” no shadow (too expensive per frame)
         var arcEnd = -Math.PI / 2 + (score / 100) * Math.PI * 2;
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.6, -Math.PI / 2, arcEnd);
@@ -3033,7 +3033,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         ctx.lineWidth = 3 / camZ;
         ctx.stroke();
 
-        // Bright golden center dot — no shadow
+        // Bright golden center dot â€” no shadow
         ctx.beginPath();
         ctx.arc(n.x, n.y, r * 0.25, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
@@ -3042,7 +3042,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         ctx.shadowBlur = 0;
         ctx.globalAlpha = 1.0;
 
-        // Score label — disabled: ctx.font setter is slow and causes freeze on hover
+        // Score label â€” disabled: ctx.font setter is slow and causes freeze on hover
         // if (isSelected || isHovered) {
         //   ctx.font = Math.max(6, 8 * camZ) + 'px monospace';
         //   ctx.fillStyle = warmColor;
@@ -3066,7 +3066,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         ctx.stroke();
       }
 
-      // Labels — show when Idents is on (always visible, not just at high zoom)
+      // Labels â€” show when Idents is on (always visible, not just at high zoom)
       if (effectLabels) {
         const fontSize = Math.max(8, Math.min(14, 11 * camZ));
         ctx.fillStyle = isSelected ? '#ffffff' : isHovered ? '#e0e0f0' : '#c0c0d0';
@@ -3079,7 +3079,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
 
     ctx.restore();
 
-    // ── Zoom indicator ──
+    // â”€â”€ Zoom indicator â”€â”€
     ctx.fillStyle = 'rgba(107,107,128,0.5)';
     ctx.font = '10px -apple-system, sans-serif';
     ctx.textAlign = 'right';
@@ -3090,7 +3090,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     requestAnimationFrame(draw);
   }
 
-  // ── Load data ──
+  // â”€â”€ Load data â”€â”€
   var kgAbort = new AbortController(); var kgTimer = setTimeout(function() { kgAbort.abort(); }, 90000);
   // Fetch trust scores in parallel (don't block graph load)
   var trustPromise = apiFetch('/api/cuttlefishclaws/trust-network', { signal: AbortSignal.timeout(25000) })
@@ -3149,7 +3149,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       clearTimeout(kgTimer);
       nodes = data.nodes || [];
       edges = data.edges || [];
-      if (nodeCountEl) nodeCountEl.textContent = nodes.length + ' nodes · ' + edges.length + ' connections';
+      if (nodeCountEl) nodeCountEl.textContent = nodes.length + ' nodes Â· ' + edges.length + ' connections';
       resize();
       initSimulation();
       // Pre-select the Relay Server node ("You Are Here")
@@ -3165,10 +3165,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       clearTimeout(kgTimer);
       if (nodeCountEl) nodeCountEl.textContent = 'Failed to load graph';
       console.error('[KG] fetch error:', e.message);
-      logShipsLog('kg_error', '🕸️ Knowledge Graph fetch failed', e.message, 'error', 'relay', {});
+      logShipsLog('kg_error', 'ðŸ•¸ï¸ Knowledge Graph fetch failed', e.message, 'error', 'relay', {});
     });
 
-  // ── Mouse events ──
+  // â”€â”€ Mouse events â”€â”€
   let mouseDownTime = 0;
   let mouseDownNode = null;
   let mouseMoved = false;
@@ -3180,13 +3180,13 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     mouseDownNode = n;
     mouseMoved = false;
     if (n) {
-      // Don't select or focus yet — wait to see if it's a click or drag
+      // Don't select or focus yet â€” wait to see if it's a click or drag
       const w = screenToWorld(sx, sy);
       dragOff.x = w.x - n.x;
       dragOff.y = w.y - n.y;
       canvas.style.cursor = 'grabbing';
     } else {
-      // Start camera drag — stop focus tracking so user can pan freely
+      // Start camera drag â€” stop focus tracking so user can pan freely
       focusNode = null;
       focusAnim = 1;
       dragCam = true;
@@ -3199,7 +3199,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     if (mouseDownNode) {
-      // If mouse moved more than 3px, it's a drag — start dragging
+      // If mouse moved more than 3px, it's a drag â€” start dragging
       const w = screenToWorld(sx, sy);
       const dx = w.x - (mouseDownNode.x);
       const dy = w.y - (mouseDownNode.y);
@@ -3232,7 +3232,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       tooltip.style.left = (sx + 14) + 'px';
       tooltip.style.top = (sy - 10) + 'px';
       const connCount = edges.filter(e => e.source === n.id || e.target === n.id).length;
-      tooltip.textContent = n.label + ' — ' + n.category + ' (' + connCount + ' connections)';
+      tooltip.textContent = n.label + ' â€” ' + n.category + ' (' + connCount + ' connections)';
     } else if (tooltip) {
       tooltip.style.display = 'none';
     }
@@ -3255,7 +3255,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         focusOnNode(mouseDownNode);
       }
     } else if (!mouseDownNode && !mouseMoved) {
-      // Click on empty space — deselect
+      // Click on empty space â€” deselect
       selectedNode = null;
     }
     dragNode = null;
@@ -3269,7 +3269,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     canvas.style.cursor = 'grab';
   });
 
-  // ── Mouse wheel zoom ──
+  // â”€â”€ Mouse wheel zoom â”€â”€
   canvas.addEventListener('wheel', function(e) {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -3283,7 +3283,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     camY += (sy - newScreen.y) / camZ;
   }, { passive: false });
 
-  // ── Touch events (mobile: pan, pinch-zoom, rotate, double-tap) ──
+  // â”€â”€ Touch events (mobile: pan, pinch-zoom, rotate, double-tap) â”€â”€
   let touchState = null; // { sx, sy, cx, cy, dist, angle, camX, camY, camZ, camRot, tapTime }
   canvas.addEventListener('touchstart', function(e) {
     e.preventDefault();
@@ -3294,7 +3294,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       const sx = t.clientX - rect.left, sy = t.clientY - rect.top;
       const n = getNodeAtScreen(sx, sy);
       if (n) {
-        // Tap on node — select it
+        // Tap on node â€” select it
         selectedNode = selectedNode && selectedNode.id === n.id ? null : n;
         focusOnNode(n);
         dragNode = n;
@@ -3369,7 +3369,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   canvas.addEventListener('touchend', function(e) {
     // Double-tap detection
     if (touchState && touchState.tapTime && Date.now() - touchState.tapTime < 300) {
-      // Double-tap — zoom in on center (preserve existing zoom, don't reset)
+      // Double-tap â€” zoom in on center (preserve existing zoom, don't reset)
       camX = 0; camY = 0; // center
       // camZ stays wherever user had it
       focusNode = null; focusAnim = 1;
@@ -3379,7 +3379,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     if (tooltip) tooltip.style.display = 'none';
   }, { passive: false });
 
-  // ── Keyboard shortcuts ──
+  // â”€â”€ Keyboard shortcuts â”€â”€
   document.addEventListener('keydown', function(e) {
     if (e.key === 'r' || e.key === 'R') {
       // Reset camera
@@ -3387,7 +3387,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       focusNode = null; focusAnim = 1;
     }
     if (e.key === 'f' || e.key === 'F') {
-      // Fit all — zoom to show all nodes
+      // Fit all â€” zoom to show all nodes
       if (simNodes.length) {
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         for (const n of simNodes) {
@@ -3406,7 +3406,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     }
   });
 
-  // ── Global reset function for the Reset button ──
+  // â”€â”€ Global reset function for the Reset button â”€â”€
   window.resetGraphView = function() {
     camX = 0; camY = 0; camZ = 1; camRot = 0;
     focusNode = null; focusAnim = 1;
@@ -3419,7 +3419,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   window.addEventListener('resize', function() { resize(); });
 })();
 
-// ── Footlocker — Agent Chests ──
+// â”€â”€ Footlocker â€” Agent Chests â”€â”€
 function updateFootlocker() {
   var content = document.getElementById('footlocker-content');
   if (!content) return;
@@ -3430,7 +3430,7 @@ function updateFootlocker() {
       return;
     }
     var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">';
-    var chestEmojis = ['🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵','🪵'];
+    var chestEmojis = ['ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ','ðŸªµ'];
     var chestIdx = 0;
     chests.forEach(function(c) {
       var emoji = chestEmojis[chestIdx % chestEmojis.length];
@@ -3462,7 +3462,7 @@ window.openFootlockerChest = function(agent, el) {
       artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Chest is empty</span></div>';
       return;
     }
-    var html = '<div style="font-size:0.6rem;color:#a78bfa;margin-bottom:4px;">📂 ' + agent + '\'s Chest — ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
+    var html = '<div style="font-size:0.6rem;color:#a78bfa;margin-bottom:4px;">ðŸ“‚ ' + agent + '\'s Chest â€” ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
     artifacts.forEach(function(a) {
       var title = a.title || 'Untitled';
       var type = a.artifact_type || 'summary';
@@ -3470,11 +3470,11 @@ window.openFootlockerChest = function(agent, el) {
       var files = a.file_count || 0;
       var date = a.created_at ? new Date(a.created_at).toLocaleDateString() : '';
       html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #1a1a2e;cursor:pointer;" onclick="openFootlockerArtifact(\'' + agent + '\',\'' + a.id + '\', this)">';
-      html += '<span style="color:#a78bfa;">📄</span>';
+      html += '<span style="color:#a78bfa;">ðŸ“„</span>';
       html += '<span style="flex:1;color:#e0e0e0;font-size:0.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</span>';
       html += '<span style="color:#948d9e;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
       html += '<span style="color:#948d9e;font-size:0.5rem;">' + date + '</span>';
-      html += '<span style="color:#60a5fa;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">⬇</span>';
+      html += '<span style="color:#60a5fa;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">â¬‡</span>';
       html += '</div>';
       html += '<div id="fl-artifact-' + a.id.replace(/[^a-zA-Z0-9]/g,'') + '" style="display:none;padding:4px 8px;background:#0d0d18;border-radius:4px;margin:2px 0;font-size:0.55rem;"></div>';
     });
@@ -3498,14 +3498,14 @@ window.openFootlockerArtifact = function(agent, artifactId, el) {
     var meta = art.metadata || {};
     var html = '<div style="color:#8b8ba0;margin-bottom:4px;">';
     if (desc) html += '<div>' + desc + '</div>';
-    if (meta.resolution_notes) html += '<div style="margin-top:2px;">📝 ' + meta.resolution_notes + '</div>';
-    if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">🔗 <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#60a5fa;">Proof of Work</a></div>';
+    if (meta.resolution_notes) html += '<div style="margin-top:2px;">ðŸ“ ' + meta.resolution_notes + '</div>';
+    if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">ðŸ”— <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#60a5fa;">Proof of Work</a></div>';
     html += '</div>';
     if (files.length > 0) {
       html += '<div style="font-size:0.55rem;color:#948d9e;margin-bottom:2px;">Files:</div>';
       files.forEach(function(f) {
         html += '<div style="display:flex;gap:4px;padding:1px 0;">';
-        html += '<span style="color:#a78bfa;">📄</span>';
+        html += '<span style="color:#a78bfa;">ðŸ“„</span>';
         html += '<span style="flex:1;color:#c0c0d0;">' + f.filename + '</span>';
         html += '<span style="color:#948d9e;">' + (f.file_size || 0) + 'b</span>';
         html += '</div>';
@@ -3543,6 +3543,7 @@ setTimeout(function() { updateFootlocker(); setInterval(updateFootlocker, 30000)
     if (color) el.style.color = color;
   }
   apiFetch('/api/catalog')
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
     .then(function (d) {
       var n = (d && (d.count ?? (d.functions && d.functions.length)));
       if (typeof n === 'number' && isFinite(n)) {
