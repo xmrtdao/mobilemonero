@@ -578,7 +578,23 @@ const EMAIL_DOMAINS = {
   },
   mobilemonero: {
     domain: 'mobilemonero.com', label: 'MobileMonero',
-    key: 'RESEND_XMRT_API_KEY', secret: 'RESEND_MM_WEBHOOK_SECRET',
+    // The outbound key is the 31 Harbor one, not RESEND_XMRT_API_KEY.
+    //
+    // RESEND_XMRT_API_KEY is rejected by the provider outright - the domains
+    // endpoint answers HTTP 400 {"message":"API key is invalid"}, not merely
+    // unverified or rate-limited. Every send routed through this entry failed,
+    // and the relay logged it once at startup and then carried on:
+    //   [send-email] Resend key for mobilemonero.com is REJECTED (HTTP 400)
+    //
+    // That warning is the whole signal. There is no retry and no alert, so an
+    // invalid credential looks identical to a healthy quiet mailbox until
+    // someone notices nobody replied.
+    //
+    // Only the outbound key moves. `secret` stays RESEND_MM_WEBHOOK_SECRET,
+    // because that signs INBOUND webhooks and has nothing to do with sending:
+    // changing it would break signature verification for mail already arriving
+    // on the mobilemonero.com segment.
+    key: 'RESEND_31HARBOR_API_KEY', secret: 'RESEND_MM_WEBHOOK_SECRET',
     agent: 'xmrt', purpose: 'XMRT DAO system emails',
     path: 'mobilemonero',
     strict: false,
