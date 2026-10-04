@@ -437,10 +437,27 @@ async function checkFleetMentions() {
     const res = await fetchJSON('http://localhost:' + RELAY_PORT + '/api/fleet-chat/messages?limit=10', { timeout: 5000 });
     const msgs = res.messages || [];
     const now = Date.now();
+    // Which mentions have already been answered.
+    //
+    // This used to be `if (!m.answered) { ... m.answered = true }` on the object
+    // straight out of fetch. That flag was never persisted anywhere - it was set on
+    // a transient object and discarded with it. Every poll re-fetched the same
+    // messages, saw answered=undefined, and answered them again for as long as
+    // they sat inside the 5 minute window. Observed: one question answered three
+    // times, each answer re-triggering the next, each costing another call.
+    const mstate = loadState();
+    mstate.answeredMentions = mstate.answeredMentions || [];
+    if (mstate.answeredMentions.length > 200) {
+      mstate.answeredMentions = mstate.answeredMentions.slice(-200);
+    }
+    const seen = new Set(mstate.answeredMentions);
     for (const m of msgs) {
       // Check for @alice mentions in recent messages (last 5 min)
       if (m.ts > now - 300000 && (m.message.toLowerCase().includes('@alice-daemon'))) {
-        if (!m.answered) {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          mstate.answeredMentions.push(m.id);
+          saveState(mstate);
           log('[FLEETCHAT] Mentioned by ' + m.agent + ': ' + m.message.slice(0, 80));
           
                     // Wait 3s for Eliza to respond first, then supplement with data
@@ -518,7 +535,6 @@ async function checkFleetMentions() {
               if (dataReply) await postToFleetChat(dataReply);
             } catch (e) { log('[FLEETCHAT] Supplement error: ' + e.message); }
           }, 3000);
-          m.answered = true;
         }
       }
     }
