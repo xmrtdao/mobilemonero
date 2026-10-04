@@ -6925,7 +6925,7 @@ app.get('/', (req, res) => {
     <a href="https://github.com/xmrtdao/mobilemonero" target="_blank">GitHub</a>
   </div>
   <div style="text-align:center;margin-top:4px;font-size:0.75rem;color:var(--text-dim);">
-    <a href="#fn-catalog" style="color:#00d2ff;">☁️ Supabase Edge Functions Catalog</a> — 205 functions available
+    <a href="#fn-catalog" style="color:#00d2ff;">☁️ Supabase Edge Functions Catalog</a> &mdash; <span id="fn-catalog-count">checking&hellip;</span>
   </div>
 
   <!-- Status strip. The question this page exists to answer is "is anything
@@ -8696,23 +8696,44 @@ app.get('/local-runtime/health', async (req, res) => {
   res.json(out);
 });
 
-app.get('/api/catalog', async (req, res) => {
-  try {
-    const efRes = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: '{}',
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!efRes.ok) {
-      return res.status(502).json({ error: 'Edge function catalog unavailable', status: efRes.status });
+  app.get('/api/catalog', async (req, res) => {
+    const headers = { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
+    try {
+      const efRes = await fetch(`${SUPABASE_URL}/functions/v1/list-available-functions`, {
+        method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(5000),
+      });
+      if (efRes.ok) {
+        const data = await efRes.json();
+        if (data && (data.functions || Array.isArray(data))) {
+          return res.json({ ...data, source: 'edge-function' });
+        }
+      }
+      // Fall through to the gateway rather than reporting 502.
+    } catch { /* fall through */ }
+
+    // The edge function answers 500 {"error":"Unknown action: undefined"} for an
+    // empty body and for every action tried - list, index, all, catalog, get,
+    // functions. Its source is not in this tree, so it cannot be fixed from here.
+    // The gateway's own listing is authoritative for what is actually deployed,
+    // it answers, and it is where this number should have come from all along.
+    try {
+      const gw = await fetch(`${SUPABASE_URL}/functions/v1/`, { headers, signal: AbortSignal.timeout(5000) });
+      if (gw.ok) {
+        const data = await gw.json();
+        const functions = data.functions || [];
+        return res.json({
+          source: 'gateway',
+          count: data.count ?? functions.length,
+          functions,
+          degraded: true,
+          note: 'list-available-functions is not responding; served from the gateway instead.',
+        });
+      }
+      return res.status(502).json({ error: 'Edge function catalog unavailable', status: gw.status });
+    } catch (e) {
+      res.status(500).json({ error: 'Catalog not available', message: e.message });
     }
-    const data = await efRes.json();
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: 'Catalog not available', message: e.message });
-  }
-});
+  });
 
 // ── Unified Tool + Edge Function Registry ────────────────────────────
 // Merges the relay's local tool handlers (toolHandlers) with the Supabase
