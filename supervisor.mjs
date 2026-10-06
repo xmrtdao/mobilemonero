@@ -237,9 +237,66 @@ const SERVICE_DEFS = [
     startupGraceMs: 5000,
     dependsOn: [],
   },
+  {
+    // AstraGaze / GrayTech Security - the face recognition console published at
+    // graytech.mobilemonero.com through the cloudflared tunnel.
+    //
+    // Supervised because it was not, and that is how it went dark: the process
+    // had been started by hand from a shell that has since closed, so nothing
+    // brought it back when it died, and there was no entry here to restart it.
+    // A public demo that cannot survive a crash is not a service.
+    //
+    // The venv is the project's own rather than a system python, and cwd is the
+    // project root because both `graytech.server:app` and the `app` package
+    // resolve relative to it. `--workers 1` is not optional: each worker loads
+    // its own copy of the recognition model.
+    name: 'graytech',
+    cmd: join(ROOT, 'face-service', '.venv', 'Scripts', 'python.exe'),
+    args: ['-m', 'uvicorn', 'graytech.server:app', '--host', '127.0.0.1', '--port', '8090', '--workers', '1'],
+    cwd: join(ROOT, 'face-service'),
+    healthUrl: 'http://127.0.0.1:8090/health',
+    // The model load is slow, so a short grace would restart-loop a service that
+    // was merely still booting. Measured cold start on this machine: ~70s from
+    // spawn to answering /health (insightface + SCRFD/ArcFace load), so the grace
+    // is set above that with margin. At 60s a cold start could fail its first
+    // probe and get restarted while it was still coming up.
+    startupGraceMs: 95000,
+      // The port this service listens on, declared on the definition rather than
+      // left to the module-level port map.
+      //
+      // That map was the actual cause of the flapping. There are four copies of
+      // it in this file and graytech appeared in NONE of them, so every restart
+      // path skipped the two things that make a restart reliable:
+      //
+      //   * killing the real port owner, so a stale instance survived and the
+      //     fresh spawn died on EADDRINUSE - which is the EXIT code=1 two seconds
+      //     after spawn in the log, not a crash;
+      //   * waiting for the port to be released before spawning.
+      //
+      // So the sequence was: kill the child, spawn immediately, new instance
+      // loses the port race, exits, count a failure, wait three ticks, retry. The
+      // service was down for 74-92s at a time and each attempt could lose the
+      // race again. Declaring tcpPort here makes all four call sites work,
+      // because each one already reads `def.tcpPort || tcpPorts[name]`.
+      tcpPort: 8090,
+      // Two consecutive failures to the threshold, not the default three.
+      //
+      // startupGraceMs only covers a process that is still booting. Once the
+      // process is up and then dies, startedAt is old, so every probe counts
+      // immediately, and at ~33s per tick a dead service takes 100s to recover.
+      // Measured from the log: 92s and 74s outages on consecutive deaths.
+      //
+      // For this service a dead process is unambiguous - /health answers in
+      // milliseconds once the model is loaded (16ms measured), so a failure is a
+      // genuine one and not a slow boot or a blip.
+      maxFailures: 2,
+    dependsOn: [],
+  },
 ];
 
-const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', 'dsh', 'resume-server'];
+// graytech is independent of every other service - it needs no database and no
+// tunnel to answer on :8090 - so it starts last and blocks nothing.
+const START_ORDER = ['pg', 'local-sb', 'vite', 'health-server', 'cuttlefishclaws-mcp', 'xmrtdao-suite-mcp', 'page-agent-mcp', 'relay', 'tunnel', 'alice', 'cron-engine-v2', 'campaign-scheduler', 'dsh', 'resume-server', 'graytech'];
 
 // ── State ────────────────────────────────────────────────────────────
 const state = {};
@@ -452,6 +509,19 @@ async function checkTcpPort(host, port, timeoutMs = 2000) {
 }
 
 // ── Process detection ────────────────────────────────────────────────
+//
+// The one true port map. This was duplicated as a local `const` inside four
+// separate functions, and they had drifted: one copy had 'cuttlefish-mcp',
+// three did not, and graytech was in none of them. A service missing from a copy
+// silently loses every port-aware behaviour at that call site - it is not an
+// error, the lookup just returns undefined and the branch is skipped. That is
+// precisely how graytech came to lose the port-kill and port-wait on restart and
+// then start failing EADDRINUSE.
+//
+// Definitions remain the source of truth: `def.tcpPort` wins, and this map is
+// only the fallback for services that predate the field.
+const TCP_PORTS = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'cuttlefish-mcp': 3122, dsh: 3080, graytech: 8090 };
+
 async function findExistingProcess(name) {
   // Read the existing state file (populated by server.js / previous runs)
   const st = loadState();
@@ -487,7 +557,7 @@ async function findExistingProcess(name) {
   }
 
   // For services known by TCP port, try a socket connect
-  const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
+  const tcpPorts = TCP_PORTS;
   const port = def.tcpPort || tcpPorts[name];
   if (port) {
     try {
@@ -516,7 +586,7 @@ async function findExistingProcess(name) {
 }
 
 // ── Service lifecycle ────────────────────────────────────────────────
-function startService(name) {
+async function startService(name) {
   const def = SERVICE_DEFS.find(d => d.name === name);
   if (!def) { log(`unknown service: ${name}`); return; }
 
@@ -551,6 +621,56 @@ function startService(name) {
     } catch (e) {
       log(`Warning: could not open log file for ${name}: ${e.message}`);
     }
+    // Do not spawn on top of a port we are still releasing.
+    //
+    // This is the second half of the graytech flapping, and it is separate from
+    // the missing tcpPort. The health-failure path kills the port owner and waits
+    // for release (with tcpPort now declared, graytech finally takes that path),
+    // but this function - startService - is also reached from the tick loop when
+    // no live process is found, and it spawned immediately. A uvicorn process
+    // that has just been killed can hold :8090 for a moment while Windows reaps
+    // it, so the new one lost the bind and exited with code 1 within ~2 seconds.
+    // That exit then counted as a failure, which cost another 60-90 seconds.
+    //
+    // Checking first costs a couple of seconds in the rare case where the port
+    // really is free, and saves a full restart cycle in the case where it is not.
+    const wantPort = def.tcpPort || TCP_PORTS[def.name];
+    if (wantPort) {
+      let waited = 0;
+      while (waited < 15000) {
+        let busy = false;
+        try { busy = await checkTcpPort('127.0.0.1', wantPort, 500); } catch { busy = false; }
+        if (!busy) break;
+        if (waited === 0) {
+          log(`  ${name}: port ${wantPort} still held, waiting for release`);
+        }
+        await new Promise(r => setTimeout(r, 500));
+        waited += 500;
+      }
+      if (waited > 0) {
+        log(`  ${name} waited ${waited}ms for port ${wantPort}`);
+        let stillBusy = false;
+        try { stillBusy = await checkTcpPort('127.0.0.1', wantPort, 500); } catch { stillBusy = false; }
+        if (stillBusy) {
+          // Something is holding it and did not let go in 15s. Find and kill the
+          // owner rather than spawning into a guaranteed EADDRINUSE.
+          try {
+            const out = execSync(`netstat -ano | findstr ":${wantPort} " | findstr LISTENING`,
+                                 { encoding: 'utf8', timeout: 5000, windowsHide: true });
+            const m = out.match(/(\d+)\s*$/m);
+            if (m) {
+              const owner = parseInt(m[1], 10);
+              if (owner && owner !== process.pid) {
+                log(`  ${name}: port ${wantPort} still held by pid ${owner}, killing it`);
+                killProcess(owner);
+                await new Promise(r => setTimeout(r, 1500));
+              }
+            }
+          } catch { /* best effort */ }
+        }
+      }
+    }
+
     const child = spawn(def.cmd, def.args, {
       cwd: def.cwd,
       detached: true,
@@ -670,7 +790,7 @@ async function tick() {
             // Kill the port owner first (handles external/adopted services whose
             // childPid is null — stopService() alone can't kill them, and a fresh
             // spawn would crash with EADDRINUSE while the old process holds the port).
-            const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
+            const tcpPorts = TCP_PORTS;
             const port = def.tcpPort || tcpPorts[action.service];
             if (port) {
               try {
@@ -686,14 +806,14 @@ async function tick() {
               } catch {}
             }
             stopService(action.service);
-            startService(action.service);
+            await startService(action.service);
             action.processedAt = Date.now();
             action.result = 'restarted';
           } else if (action.action === 'start') {
             const healthy = await checkServiceHealth(action.service);
             if (!healthy) {
               log(`service_control: starting ${action.service} (requested by ${action.requestedBy || 'unknown'})`);
-              startService(action.service);
+              await startService(action.service);
               action.processedAt = Date.now();
               action.result = 'started';
             } else {
@@ -752,7 +872,7 @@ async function tick() {
       // Process not found — need to start
       const s = state[name];
       if (!s || !s.child || s.child.killed) {
-        startService(name);
+        await startService(name);
         continue;
       }
       // Our child should be running — health check
@@ -817,7 +937,7 @@ async function performHealthCheck(name, def) {
       // different pid (e.g. after a supervisor restart the real owner gets
       // orphaned from state). Killing only s.child leaves the port taken, so
       // every fresh spawn dies on EADDRINUSE — the suite-mcp restart loop.
-      const tcpPorts = { pg: 5432, 'local-sb': 54321, relay: 8080, vite: 5173, 'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, dsh: 3080 };
+      const tcpPorts = TCP_PORTS;
       const port = def.tcpPort || tcpPorts[name];
       if (port) {
         try {
@@ -848,7 +968,7 @@ async function performHealthCheck(name, def) {
         if (waited > 0) log(`${name} waited ${waited}ms for port ${port} to be released`);
       }
       delete state[name];
-      startService(name);
+      await startService(name);
     }
   }
 }

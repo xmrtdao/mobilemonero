@@ -44,3 +44,11 @@ jobby-mcjobberson/resume_server.log*
 jobby-mcjobberson/*.log*
 jobby-mcjobberson/**/__pycache__/
 **/__pycache__/
+
+# Derived recognition vectors. Rebuilt from C:\Users\PureTrek\Desktop\Faces\Faces
+# by tools/_enrol.py - 33 x 512 floats, all reproducible, and useless without
+# the dataset. The provenance sidecar is runtime state that changes on every
+# enrolment, so it must not be committed either: a stale shot count checked
+# into git is worse than none, because it looks authoritative.
+face-service/identities/
+
