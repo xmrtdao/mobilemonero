@@ -7442,8 +7442,48 @@ app.post('/api/fleet/heartbeat', (req, res) => {
   res.json({ success: true, agent_id, status, registered: true, share_log: shareLogResult });
 });
 
+// API: Reserve side of the XMRT grounding contract. The operator appends
+// signed snapshots (scripts/reserve-operator.ts in TempCashDapp); this
+// endpoint publishes them. Append-only; a torn final line is reported,
+// not silently dropped.
+const RESERVE_SNAPSHOT_FILE = join(DATA_DIR, 'reserve-snapshots.jsonl');
+const RESERVE_IDENTITY_FILE = join(DATA_DIR, 'reserve-operator-public.json');
+
+app.get('/api/reserve/snapshots', (req, res) => {
+  trackRequest('/api/reserve/snapshots');
+  try {
+    if (!existsSync(RESERVE_SNAPSHOT_FILE)) {
+      return res.json({ ok: true, snapshots: [], torn_lines: 0, note: 'no snapshots published yet' });
+    }
+    const raw = readFileSync(RESERVE_SNAPSHOT_FILE, 'utf8');
+    const lines = raw.split('\n');
+    const torn = lines.length > 0 && lines[lines.length - 1].trim() !== '' ? 1 : 0;
+    const snapshots = [];
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) continue;
+      try { snapshots.push(JSON.parse(t)); } catch { /* torn line - counted above */ }
+    }
+    res.json({ ok: true, snapshots, torn_lines: torn });
+  } catch (e) {
+    res.status(500).json({ error: 'reserve snapshots unreadable', message: e.message });
+  }
+});
+
+app.get('/api/reserve/identity', (req, res) => {
+  trackRequest('/api/reserve/identity');
+  if (!existsSync(RESERVE_IDENTITY_FILE)) {
+    return res.status(404).json({ error: 'operator identity not published yet' });
+  }
+  try {
+    res.json(JSON.parse(readFileSync(RESERVE_IDENTITY_FILE, 'utf8')));
+  } catch (e) {
+    res.status(500).json({ error: 'operator identity unreadable', message: e.message });
+  }
+});
+
 // API: Read the share ledger. An append-only log nobody can read is not a
-// feature - this is the retrieval half of the history guarantee.
+// feature — this is the retrieval half of the history guarantee.
 app.get('/api/fleet/shares/history', (req, res) => {
   trackRequest('/api/fleet/shares/history');
   const agentId = (req.query.agent_id || null) && String(req.query.agent_id);
