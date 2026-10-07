@@ -121,6 +121,7 @@ import {
 } from './tools/media-registry.mjs';
 import { paragraphPublish } from './tools/paragraph-publisher.mjs';
 import * as state from './lib/state.mjs';
+import * as shareLog from './lib/share-log.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
 import { handleInboundEmail } from './lib/auto-responder.mjs';
 import { ensureLocalDb, restFetch as localRestFetch, query as localQuery, LOCAL_DB_ENABLED } from './lib/localDb.mjs';
@@ -5450,6 +5451,7 @@ app.get('/health', (req, res) => {
     tools: Object.keys(toolHandlers).length,
     handlers: Object.keys(handlers).length,
     requests: requestCounts.total,
+    share_log: shareLog.health(),
   });
 });
 
@@ -7405,6 +7407,23 @@ app.post('/api/fleet/heartbeat', (req, res) => {
   if (!agent_id || !status) {
     return res.status(400).json({ error: 'agent_id and status are required' });
   }
+
+  // Append-only share ledger. Every accepted beat is recorded before the
+  // state overwrite below; `fleet.agents` answers "where is each agent now",
+  // the ledger answers "what actually happened" - hashrate history, uptime,
+  // gaps. The overwrite alone is why share history was unrecoverable
+  // (xmrt-node 6d900e3: "no ledger exists yet").
+  let shareLogResult = null;
+  try {
+    shareLogResult = shareLog.appendHeartbeat(req.body || {});
+  } catch (e) {
+    // The beat still updates live state - liveness must not depend on the
+    // ledger - but the gap is recorded and reported, never swallowed.
+    shareLog.recordFailure();
+    console.error(`[share-log] append failed for ${agent_id}: ${e.message}`);
+    shareLogResult = { error: e.message };
+  }
+
   const agents = state.get('fleet.agents', {});
   agents[agent_id] = {
     agent_id,
@@ -7420,7 +7439,21 @@ app.post('/api/fleet/heartbeat', (req, res) => {
     last_seen: new Date().toISOString(),
   };
   state.set('fleet.agents', agents);
-  res.json({ success: true, agent_id, status, registered: true });
+  res.json({ success: true, agent_id, status, registered: true, share_log: shareLogResult });
+});
+
+// API: Read the share ledger. An append-only log nobody can read is not a
+// feature - this is the retrieval half of the history guarantee.
+app.get('/api/fleet/shares/history', (req, res) => {
+  trackRequest('/api/fleet/shares/history');
+  const agentId = (req.query.agent_id || null) && String(req.query.agent_id);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 200, 5000);
+  try {
+    const out = shareLog.readHeartbeats({ agentId, limit });
+    res.json({ ok: true, agent_id: agentId, count: out.records.length, torn_lines: out.torn, truncated: out.truncated, records: out.records });
+  } catch (e) {
+    res.status(500).json({ error: 'share log unreadable', message: e.message });
+  }
 });
 
 // API: List all registered fleet agents
