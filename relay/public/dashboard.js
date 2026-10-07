@@ -3525,3 +3525,33 @@ window.downloadFootlocker = function(agent, artifactId) {
 };
 
 setTimeout(function() { updateFootlocker(); setInterval(updateFootlocker, 30000); }, 3500);
+
+// Edge Functions Catalog count.
+//
+// The tile used to render a hardcoded "205 functions available" straight from the
+// server template. It was a literal, so it looked live and was not: the real count
+// had drifted to 272, and the /api/catalog request the page made was failing 502.
+// A number that cannot be wrong is worse than no number, because it is believed.
+//
+// Filled from /api/catalog, and it says so when it cannot find out. "catalog
+// unavailable" is honest; a stale count is not.
+(function loadFnCatalogCount() {
+  var el = document.getElementById('fn-catalog-count');
+  if (!el) return;
+  function paint(text, color) {
+    el.textContent = text;
+    if (color) el.style.color = color;
+  }
+  apiFetch('/api/catalog')
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+    .then(function (d) {
+      var n = (d && (d.count ?? (d.functions && d.functions.length)));
+      if (typeof n === 'number' && isFinite(n)) {
+        paint(n + ' function' + (n === 1 ? '' : 's') + ' available');
+        if (d.degraded) el.title = d.note || 'served from the gateway';
+      } else {
+        paint('count unavailable', '#f0a13a');
+      }
+    })
+    .catch(function () { paint('catalog unavailable', '#f87171'); });
+})();
