@@ -27,11 +27,8 @@ relay/.env.bak*
 local-supabase/.env
 
 
-# The relay server lives in xmrtdao/mobilemonero, which is where the canonical copy is
-# committed. This repo tracked a partial, stale copy of it - 3,490 lines against the
-# running 16,184 - and its own README lists relay/ as local-only. Ignored rather
-# than deleted: the working copy is what actually runs and must keep working.
-relay/server.js
+# relay/server.js is tracked again as of 2026-10-10 (XMRT Nexus aside work);
+# the working copy is canonical — it is what actually runs the stack.
 
 # Runtime JSON state written by the relay (task lists, activity log, session state).
 # It changes on every request and is not source.
