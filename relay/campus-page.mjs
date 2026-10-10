@@ -892,6 +892,32 @@ export function createCampusHandler(deps) {
       border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; }
     .nexus-nav a:hover { color: var(--text-primary); border-bottom: 1px solid var(--accent-orange); }
 
+    /* Dynamic aside: hidden until an agent pushes content via the aside-push
+       tool (loopback). 33% document/web/media pane, grid keeps the rest. */
+    .main-split { display: flex; gap: 12px; align-items: flex-start; }
+    .main-split > .grid { flex: 1 1 auto; min-width: 0; }
+    #nexus-aside { display: none; }
+    body.aside-open #nexus-aside { display: flex; flex-direction: column; flex: 0 0 33%; max-width: 33%;
+      position: sticky; top: 10px; height: calc(100vh - 20px);
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    #nexus-aside .aside-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+      border-bottom: 1px solid var(--border); font-family: 'Space Mono', monospace; font-size: 0.7rem;
+      letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-orange); }
+    #nexus-aside .aside-head #aside-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #nexus-aside .aside-head #aside-by { color: var(--text-dim); font-size: 0.6rem; }
+    #nexus-aside .aside-head button { background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 4px; cursor: pointer; padding: 0 6px; font-size: 0.75rem; line-height: 1.4; }
+    #nexus-aside .aside-head button:hover { color: var(--text-primary); border-color: var(--border-hover); }
+    #nexus-aside .aside-body { flex: 1; overflow: auto; }
+    #nexus-aside .aside-body iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+    #nexus-aside .aside-body img, #nexus-aside .aside-body video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+    #nexus-aside .aside-text { padding: 12px; font-size: 0.85rem; line-height: 1.5; color: var(--text-primary); }
+    #nexus-aside .aside-text pre { white-space: pre-wrap; word-break: break-word; font-family: 'Space Mono', monospace; font-size: 0.75rem; }
+    @media (max-width: 900px) {
+      .main-split { flex-direction: column; }
+      body.aside-open #nexus-aside { flex: none; max-width: 100%; width: 100%; height: 60vh; position: static; order: -1; }
+    }
+
 </style>
 </head>
 <body>
@@ -948,6 +974,7 @@ export function createCampusHandler(deps) {
     <a class="ss-cta" href="#restart-control">⟳ Restart a service</a>
   </div>
   
+  <div class="main-split">
   <div class="grid">
 <div class="card chat-card tile-wide tile-p2" id="comms">
       <h3 style="color:var(--accent-orange);">Campus Comms <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— Vex · Eliza-Cloud · Hermes</span></h3>
@@ -1402,6 +1429,15 @@ export function createCampusHandler(deps) {
   </div>
 </div>
   </div>
+  <aside id="nexus-aside" aria-label="Aside panel">
+    <div class="aside-head">
+      <span id="aside-title">Aside</span>
+      <span id="aside-by"></span>
+      <button onclick="asideClose()" title="Close aside">✕</button>
+    </div>
+    <div class="aside-body" id="aside-body"></div>
+  </aside>
+  </div><!-- /main-split -->
 <!-- Edge Function Catalog -->
   <!-- Collapsed by default. This was 11,888px of table — 70% of the entire
        page — sitting below the fold, so the page was 17,034px long and the

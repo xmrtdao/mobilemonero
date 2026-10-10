@@ -3620,3 +3620,65 @@ setTimeout(function() { updateFootlocker(); setInterval(updateFootlocker, 30000)
     })
     .catch(function () { paint('catalog unavailable', '#E4695A'); });
 })();
+
+// ── Nexus Aside loopback ───────────────────────────────────────────────
+// The relay's aside-push tool (POST /api/aside/push) drops an item into
+// persistent state; every open Nexus dashboard polls /api/aside/current and
+// renders the newest item in the dynamic aside pane. The pane stays hidden
+// until something is pushed, and closes everywhere when aside-close fires.
+var __asideLastId = '__init__';
+function renderAsideItem(item) {
+  var body = document.getElementById('aside-body');
+  var titleEl = document.getElementById('aside-title');
+  var byEl = document.getElementById('aside-by');
+  if (!body || !titleEl) return;
+  if (!item) { document.body.classList.remove('aside-open'); body.innerHTML = ''; return; }
+  titleEl.textContent = item.title || item.kind || 'Aside';
+  if (byEl) byEl.textContent = item.by ? '\u00b7 ' + item.by : '';
+  body.innerHTML = '';
+  if (item.kind === 'url') {
+    var f = document.createElement('iframe');
+    f.src = item.url;
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+    body.appendChild(f);
+  } else if (item.kind === 'image') {
+    var im = document.createElement('img');
+    im.src = item.url; im.alt = item.title || '';
+    body.appendChild(im);
+  } else if (item.kind === 'video') {
+    var v = document.createElement('video');
+    v.src = item.url; v.controls = true; v.autoplay = true; v.muted = true;
+    body.appendChild(v);
+  } else if (item.kind === 'html') {
+    var hf = document.createElement('iframe');
+    hf.setAttribute('sandbox', 'allow-scripts');
+    hf.srcdoc = item.html || '';
+    body.appendChild(hf);
+  } else {
+    var div = document.createElement('div');
+    div.className = 'aside-text';
+    if (item.kind === 'markdown' && typeof renderMarkdown === 'function') {
+      div.innerHTML = renderMarkdown(item.text || '');
+    } else {
+      var pre = document.createElement('pre');
+      pre.textContent = item.text || item.url || '';
+      div.appendChild(pre);
+    }
+    body.appendChild(div);
+  }
+  document.body.classList.add('aside-open');
+  body.scrollTop = 0;
+}
+function pollAside() {
+  window.apiFetch('/api/aside/current').then(function(r){ return r.json(); }).then(function(d){
+    var it = d && d.item;
+    var id = it ? it.id : null;
+    if (id !== __asideLastId) { __asideLastId = id; renderAsideItem(it); }
+  }).catch(function(){});
+}
+window.asideClose = function() {
+  window.apiFetch('/api/aside/close', { method: 'POST' }).catch(function(){});
+  __asideLastId = null;
+  renderAsideItem(null);
+};
+setTimeout(function(){ pollAside(); setInterval(pollAside, 5000); }, 4000);
