@@ -8413,6 +8413,13 @@ const CURATED_TOOL_SCHEMAS = {
     },
     required: ['kind'],
   },
+  'clerk-chat': {
+    type: 'object',
+    properties: {
+      message: { type: 'string', description: 'Operator message to route through the deterministic intent table.' },
+    },
+    required: ['message'],
+  },
   'shell-exec': {
     type: 'object',
     properties: {
@@ -8675,6 +8682,37 @@ app.post('/api/aside/close', async (req, res) => {
   res.json(await toolHandlers['aside-close']());
 });
 
+// ── Office Clerk — deterministic offline first responder ───────────
+// Zero-AI intent router: matches operator messages against
+// office-clerk-intents.mjs and calls relay tools directly. Works with
+// no internet; hands nothing off unless asked. Mutating intents are
+// gated behind a "confirm ..." prefix (handled inside the clerk).
+import { createClerk } from './office-clerk.mjs';
+const officeClerk = createClerk({
+  callTool: async (name, args) => {
+    const fn = toolHandlers[name];
+    if (!fn) return { error: `unknown tool: ${name}` };
+    return await fn(args || {});
+  },
+  // L1: small-model fallback for messages the deterministic table misses.
+  // Provider order: Ollama local (offline) → OpenCode Zen → OpenRouter free
+  // tier. Set CLERK_L1=0 to disable; CLERK_L1_MODEL to swap the Ollama model.
+  l1: process.env.CLERK_L1 === '0' ? null : {
+    url: process.env.OLLAMA_URL || 'http://localhost:11434',
+    model: process.env.CLERK_L1_MODEL || 'gemma3:1b',
+    timeoutMs: parseInt(process.env.CLERK_L1_TIMEOUT_MS || '60000'),
+    providers: [
+      { name: 'opencode', baseUrl: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/v1', key: process.env.OPENCODE_API_KEY || '', models: (process.env.OPENCODE_MODELS || 'space-bunny-free').split(',').map(s => s.trim()).filter(Boolean) },
+      { name: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', key: process.env.OPENROUTER_API_KEY || '', models: (process.env.CLERK_OPENROUTER_MODELS || 'liquid/lfm-2.5-2.6b:free,apodex/apodex-1.1-mini:free,poolside/laguna-xs-2.1:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-26b-a4b-it:free').split(',').map(s => s.trim()).filter(Boolean) },
+    ],
+  },
+});
+toolHandlers['clerk-chat'] = async (args) => await officeClerk.chat(args?.message ?? args?.text ?? '', { l1: args?.l1 });
+app.post('/api/clerk/chat', async (req, res) => {
+  trackRequest('/api/clerk/chat');
+  res.json(await officeClerk.chat(req.body?.message ?? req.body?.text ?? '', { l1: req.body?.l1 }));
+});
+
 function getToolDescription(name) {
   const descriptions = {
     'web-search': 'Search the web via Ollama or DuckDuckGo fallback',
@@ -8698,6 +8736,7 @@ function getToolDescription(name) {
     'task-stats': 'Get task runner statistics',
     'aside-push': 'Push content into the dynamic aside pane of every open XMRT Nexus dashboard. Args: kind (url|image|video|html|text|markdown), url (for url/image/video) or html or text, title, by. The pane appears only when something is pushed — use it to show the operator a web page, file preview, generated image/video, or rendered document.',
     'aside-close': 'Close the aside pane on all open XMRT Nexus dashboards.',
+    'clerk-chat': 'Office Clerk — deterministic offline responder. Args: message. Matches the message against a wired intent table (status, resources, tasks, external, mining, ollama, remember/recall, aside open/close, restart) and executes the mapped relay tool with no AI involved. Returns { text, provenance, intent, tool }. Use as a zero-cost first responder or offline fallback.',
     'github-post': 'Post a comment on a GitHub issue',
     'elze-templates': 'Elze Contract Suite template & clause retrieval. Actions: templates (all with metadata), template {id} (single + ordered clauses), clauses {template_id}, search {q, category}. Filters: category, jurisdiction. Reads canonical DB (lease_templates / clause_definitions). Use to fetch template structure for the lease writer.',
     'elze-learnings': 'Elze AI-Learnings. Capture accept/reject/edit feedback (action: feedback with attorney_id, matter_id, clause_id, playbook_rule_id, action, edited_text) and query the learning dashboard (action: dashboard, by_attorney, preferences). Roll up per-rule acceptance and infer per-attorney preferences. Use to track how the firm learns over time.',
