@@ -18,19 +18,19 @@
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
         if (supEl) supEl.textContent = d.supervisor.alive ? '🟢 Online (pid ' + d.supervisor.pid + ')' : '🟡 Task Scheduler (--once mode)';
-        if (supEl) supEl.style.color = d.supervisor.alive ? '#4ade80' : '#fbbf24';
+        if (supEl) supEl.style.color = d.supervisor.alive ? '#8FC97A' : '#DC8A1E';
         const upEl = el('qds-services-up');
         if (upEl) upEl.textContent = up + '/' + d.services.length;
-        if (upEl) upEl.style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
+        if (upEl) upEl.style.color = up === d.services.length ? '#8FC97A' : '#DC8A1E';
         const downEl = el('qds-services-down');
         if (downEl) downEl.textContent = down > 0 ? down : '0';
-        if (downEl) downEl.style.color = down > 0 ? '#f87171' : '#4ade80';
+        if (downEl) downEl.style.color = down > 0 ? '#E4695A' : '#8FC97A';
         const flapEl = el('qds-flapping');
         if (flapEl) flapEl.textContent = flapping.length > 0 ? flapping.join(', ') : 'none';
-        if (flapEl) flapEl.style.color = flapping.length > 0 ? '#f87171' : '#4ade80';
+        if (flapEl) flapEl.style.color = flapping.length > 0 ? '#E4695A' : '#8FC97A';
         const taskEl = el('qds-task-issues');
         if (taskEl) taskEl.textContent = taskIssues.length > 0 ? taskIssues.length + ' issue(s)' : 'none';
-        if (taskEl) taskEl.style.color = taskIssues.length > 0 ? '#fbbf24' : '#4ade80';
+        if (taskEl) taskEl.style.color = taskIssues.length > 0 ? '#DC8A1E' : '#8FC97A';
         const checkEl = el('qds-last-check');
         if (checkEl) checkEl.textContent = new Date(d.checkedAt).toLocaleTimeString();
 
@@ -39,23 +39,23 @@
         if (healthEl && d.health) {
           const sc = d.health.score;
           const st = d.health.status;
-          const color = sc >= 80 ? '#4ade80' : sc >= 50 ? '#fbbf24' : '#f87171';
+          const color = sc >= 80 ? '#8FC97A' : sc >= 50 ? '#DC8A1E' : '#E4695A';
           healthEl.textContent = sc + '/100 (' + st + ')';
           healthEl.style.color = color;
         } else if (healthEl) {
           healthEl.textContent = 'n/a';
-          healthEl.style.color = '#948d9e';
+          healthEl.style.color = '#9AA091';
         }
 
         // ── Consolidated services tracker (per-service up/down chips) ──
         const svcTrackerEl = el('qds-services-tracker');
         if (svcTrackerEl) {
           if (!d.services || d.services.length === 0) {
-            svcTrackerEl.innerHTML = '<span style="color:#948d9e;">no services</span>';
+            svcTrackerEl.innerHTML = '<span style="color:#9AA091;">no services</span>';
           } else {
             svcTrackerEl.innerHTML = d.services.map(function(s){
               const ok = s.healthy;
-              const c = ok ? '#4ade80' : '#f87171';
+              const c = ok ? '#8FC97A' : '#E4695A';
               const dot = ok ? '●' : '○';
               return '<span style="color:' + c + ';margin-right:6px;white-space:nowrap;" title="' + s.name + (s.pid ? ' (pid ' + s.pid + ')' : '') + '">' + dot + ' ' + s.name + '</span>';
             }).join('');
@@ -69,16 +69,16 @@
               ssDown = el('ss-down'), ssChecked = el('ss-checked');
         if (ssUp) {
           ssUp.textContent = up + '/' + d.services.length;
-          ssUp.style.color = up === d.services.length ? '#4ade80' : '#fbbf24';
+          ssUp.style.color = up === d.services.length ? '#8FC97A' : '#DC8A1E';
         }
         if (ssHealth) {
           const sc = d.health ? d.health.score : null;
           ssHealth.textContent = sc === null ? 'n/a' : sc + '/100';
-          ssHealth.style.color = sc === null ? '#948d9e' : (sc >= 80 ? '#4ade80' : sc >= 50 ? '#fbbf24' : '#f87171');
+          ssHealth.style.color = sc === null ? '#9AA091' : (sc >= 80 ? '#8FC97A' : sc >= 50 ? '#DC8A1E' : '#E4695A');
         }
         if (ssDown) {
           ssDown.textContent = String(down);
-          ssDown.style.color = down > 0 ? '#f87171' : '#4ade80';
+          ssDown.style.color = down > 0 ? '#E4695A' : '#8FC97A';
         }
         if (ssChecked) {
           ssChecked.textContent = d.checkedAt ? new Date(d.checkedAt).toLocaleTimeString() : '-';
@@ -92,15 +92,15 @@
         const el = function(id) { return document.getElementById(id); };
         const supEl = el('qds-supervisor');
         if (supEl) supEl.textContent = '○ offline';
-        if (supEl) supEl.style.color = '#948d9e';
+        if (supEl) supEl.style.color = '#9AA091';
         // The strip must not keep showing the last good reading when the poll
         // itself is failing. A stale green "14/14" on a dead poll is worse than
         // an honest dash: it says everything is fine precisely when we cannot
         // tell.
         ['ss-up', 'ss-health', 'ss-down'].forEach(function (id) {
-          const n = el(id); if (n) { n.textContent = '—'; n.style.color = '#f87171'; }
+          const n = el(id); if (n) { n.textContent = '—'; n.style.color = '#E4695A'; }
         });
-        const cEl = el('ss-checked'); if (cEl) { cEl.textContent = 'no answer'; cEl.style.color = '#f87171'; }
+        const cEl = el('ss-checked'); if (cEl) { cEl.textContent = 'no answer'; cEl.style.color = '#E4695A'; }
         QD_RESTART.note(null);
               });
           }
@@ -121,7 +121,7 @@
     const DANGEROUS = {
       'relay': 'Restarting the relay drops this page — you will be disconnected and it will reconnect on its own. Every other service stays up.',
       'pg': 'Postgres is the database the whole campus runs on. Agents, chat, tasks and jobs all fail until it comes back.',
-      'local-sb': 'The local Supabase REST layer is what fifteen files call for edge functions. They fail until it comes back.',
+      'local-sb': 'The local edge-function REST layer (local-sb) is what fifteen files call. They fail until it comes back.',
     };
     const POLL_MS = 700;
     // The supervisor sleeps 30s between ticks and only starts a dead EXTERNAL
@@ -190,7 +190,7 @@
       if (!host) return;
       if (!status || !status.services || !status.services.length) {
         if (host.dataset.state !== 'empty') {
-          host.innerHTML = '<div style="color:#948d9e;font-size:0.6rem;">no supervised services reported</div>';
+          host.innerHTML = '<div style="color:#9AA091;font-size:0.6rem;">no supervised services reported</div>';
           host.dataset.state = 'empty';
           rows.forEach(function (rec) { rec.row.remove(); });
           rows.clear();
@@ -352,10 +352,10 @@
       if (el('sec-banned')) el('sec-banned').textContent = banned;
       if (el('sec-top-agent')) el('sec-top-agent').textContent = topName + ' (' + topScore.toFixed(1) + ')';
       if (el('sec-low-agent')) el('sec-low-agent').textContent = lowName + ' (' + lowScore.toFixed(1) + ')';
-      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '● online'; el('sec-tg-status').style.color = '#4ade80'; }
+      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '● online'; el('sec-tg-status').style.color = '#8FC97A'; }
     }).catch(function() {
       var el = function(id) { return document.getElementById(id); };
-      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#948d9e'; }
+      if (el('sec-tg-status')) { el('sec-tg-status').textContent = '○ offline'; el('sec-tg-status').style.color = '#9AA091'; }
     });
     apiFetch('/api/cuttlefishclaws/university/cert-holders', { signal: AbortSignal.timeout(25000) }).then(function(r){return r.json();}).then(function(certData) {
           var certs = certData.certHolders || certData.holders || certData.certs || [];
@@ -398,7 +398,7 @@
 
       var agents = Object.keys(series).filter(function(k){ return series[k].length >= 1; });
       if (agents.length === 0) {
-        ctx.fillStyle = '#3a3a4a';
+        ctx.fillStyle = '#3A3F31';
         ctx.font = '12px monospace';
         ctx.textAlign = 'center';
         ctx.fillText('Not enough trajectory data yet', canvas.width/2, canvas.height/2);
@@ -471,19 +471,19 @@
       function y(s) { return pad.top + h - ((s - viewMinScore) / scoreRange) * h; }
 
       // Grid lines
-      ctx.strokeStyle = '#1a1a2a';
+      ctx.strokeStyle = '#111310';
       ctx.lineWidth = 0.5;
       for (var g = 0; g <= 4; g++) {
         var gy = pad.top + (g/4) * h;
         ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(pad.left + w, gy); ctx.stroke();
-        ctx.fillStyle = '#3a3a4a';
+        ctx.fillStyle = '#3A3F31';
         ctx.font = '9px monospace';
         ctx.textAlign = 'right';
         ctx.fillText(Math.round(viewMaxScore - (g/4)*scoreRange), pad.left - 4, gy + 3);
       }
 
       // Agent colors
-      var colors = ['#4ade80','#60a5fa','#a78bfa','#fbbf24','#f87171','#34d399','#818cf8','#f472b6','#2dd4bf','#fb923c','#c084fc','#94a3b8','#f97316','#06b6d4','#ec4899','#84cc16'];
+      var colors = ['#8FC97A','#63C7D4','#A98AD6','#DC8A1E','#E4695A','#8FC97A','#A98AD6','#E4695A','#63C7D4','#DC8A1E','#A98AD6','#9AA091','#DC8A1E','#63C7D4','#E4695A','#8FC97A'];
       var legend = [];
       hitPoints = [];
 
@@ -521,7 +521,7 @@
           var isFab = p.event === 'FABRICATION_DETECTED';
           var isIncorrect = p.event === 'INCORRECT_REFERENCE';
           if (isFab) {
-            ctx.strokeStyle = '#f87171';
+            ctx.strokeStyle = '#E4695A';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(px - 3, py - 3);
@@ -530,7 +530,7 @@
             ctx.lineTo(px - 3, py + 3);
             ctx.stroke();
           } else if (isIncorrect) {
-            ctx.fillStyle = '#fbbf24';
+            ctx.fillStyle = '#DC8A1E';
             ctx.beginPath();
             ctx.arc(px, py, 2, 0, Math.PI*2);
             ctx.fill();
@@ -570,7 +570,7 @@
         var cy = pad.top + h / 2;
         ctx.font = 'bold 11px monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#a78bfa';
+        ctx.fillStyle = '#A98AD6';
         ctx.fillText('Current Scores', cx, cy - 30);
 
         // Use the same legend data (already filtered to visible agents with correct colors)
@@ -591,7 +591,7 @@
               ctx.globalAlpha = 0.6;
               ctx.font = '8px monospace';
               ctx.textAlign = 'right';
-              ctx.fillStyle = '#948d9e';
+              ctx.fillStyle = '#9AA091';
               ctx.fillText('↻ ' + new Date().toLocaleTimeString(), canvas.width - 4, 10);
               ctx.globalAlpha = 1.0;
 
@@ -637,8 +637,8 @@
           html += ' · <b>' + nearest.score + '</b>';
           if (deltaStr) html += ' (' + deltaStr + ')';
           if (nearest.event) html += '<br>⚡ ' + nearest.event;
-          if (nearest.note) html += '<br><span style="color:#8b8ba0;font-size:10px;">' + nearest.note + '</span>';
-          if (nearest.ref) html += '<br><span style="color:#948d9e;font-size:9px;">' + nearest.ref + '</span>';
+          if (nearest.note) html += '<br><span style="color:#6C7263;font-size:10px;">' + nearest.note + '</span>';
+          if (nearest.ref) html += '<br><span style="color:#9AA091;font-size:9px;">' + nearest.ref + '</span>';
           tooltip.innerHTML = html;
           tooltip.style.display = 'block';
           tooltip.style.left = Math.min(nearest.px + 12, canvas.width - 250) + 'px';
@@ -661,7 +661,7 @@
         canvas.style.cursor = 'default';
       };
     }).catch(function() {
-      ctx.fillStyle = '#3a3a4a';
+      ctx.fillStyle = '#3A3F31';
       ctx.font = '12px monospace';
       ctx.textAlign = 'center';
       ctx.fillText('Trajectory data unavailable', canvas.width/2, canvas.height/2);
@@ -698,7 +698,7 @@
     var url = '/api/activity-log?limit=50';
     if (typeFilter) url += '&activity_type=' + encodeURIComponent(typeFilter);
     apiFetch(url, { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
-          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">No activity yet</span></div>'; return; }
+          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">No activity yet</span></div>'; return; }
           // Filter out the noise: dashboard polling every 3s drowns the log
           rows = rows.filter(function(a) {
             var title = (a.title || '').toLowerCase();
@@ -712,17 +712,17 @@
         var status = a.status || 'info';
         var agent = a.agent_id || '';
         var time = a.created_at ? (function() { var d = new Date(a.created_at); var s = Math.floor((Date.now()-d)/1000); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; })() : '';
-        var color = '#948d9e';
-        if (status === 'failed' || status === 'error') color = '#f87171';
-        else if (status === 'success' || status === 'completed') color = '#4ade80';
-        else if (status === 'in_progress' || status === 'pending') color = '#fbbf24';
-        else if (status === 'info') color = '#60a5fa';
-        if (type === 'fleet_message') color = '#a78bfa';
-        else if (type === 'ai_chat') color = '#34d399';
-        else if (type === 'system_health_check') color = status === 'completed' ? '#4ade80' : '#f87171';
-        else if (type === 'rate_limit' || type === 'auth_failure') color = '#fb923c';
-        else if (type === 'db_error' || type === 'email_error' || type === 'fleet_error' || type === 'memory_error' || type === 'kg_error' || type === 'system_error') color = '#f87171';
-        else if (type === 'ollama_error' || type === 'mesh_rejection') color = '#fbbf24';
+        var color = '#9AA091';
+        if (status === 'failed' || status === 'error') color = '#E4695A';
+        else if (status === 'success' || status === 'completed') color = '#8FC97A';
+        else if (status === 'in_progress' || status === 'pending') color = '#DC8A1E';
+        else if (status === 'info') color = '#63C7D4';
+        if (type === 'fleet_message') color = '#A98AD6';
+        else if (type === 'ai_chat') color = '#8FC97A';
+        else if (type === 'system_health_check') color = status === 'completed' ? '#8FC97A' : '#E4695A';
+        else if (type === 'rate_limit' || type === 'auth_failure') color = '#DC8A1E';
+        else if (type === 'db_error' || type === 'email_error' || type === 'fleet_error' || type === 'memory_error' || type === 'kg_error' || type === 'system_error') color = '#E4695A';
+        else if (type === 'ollama_error' || type === 'mesh_rejection') color = '#DC8A1E';
         var icon = '●';
         if (type === 'fleet_message') icon = '📨';
         else if (type === 'ai_chat') icon = '💬';
@@ -740,11 +740,11 @@
         else if (type === 'system_error') icon = '💥';
         else if (status === 'failed' || status === 'error') icon = '❌';
         else if (status === 'success' || status === 'completed') icon = '✅';
-        return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span><br/><span style="color:#8b8ba0;font-size:0.5rem;">' + agent + '</span></div>';
+        return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span><br/><span style="color:#6C7263;font-size:0.5rem;">' + agent + '</span></div>';
       }).join('');
     }).catch(function() {
       var el = document.getElementById('qds-activity-log');
-      if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Activity feed unavailable</span></div>';
+      if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">Activity feed unavailable</span></div>';
     });
   }
   function refreshLogViewer() { updateShipsLog(); }
@@ -760,7 +760,7 @@
       peers.dataset.meshSeq = meshSeq;
       if (d.nodeList && d.nodeList.length > 0) {
         peers.innerHTML = d.nodeList.map(function(n) {
-          return '<div class="stat" style="font-size:0.6rem;"><span class="label">' + (n.name || n.id || 'node') + '</span><span class="value" style="color:#4ade80;">' + (n.rssi ? n.rssi.toFixed(0) + ' dBm' : '?') + '</span></div>';
+          return '<div class="stat" style="font-size:0.6rem;"><span class="label">' + (n.name || n.id || 'node') + '</span><span class="value" style="color:#8FC97A;">' + (n.rssi ? n.rssi.toFixed(0) + ' dBm' : '?') + '</span></div>';
         }).join('');
       } else {
         peers.innerHTML = '<div class="stat"><span class="label">No mesh peers</span></div>';
@@ -769,7 +769,7 @@
       var mtPeers = document.getElementById('qds-mt-peers');
       var mtMsgs = document.getElementById('qds-mt-msgs');
       if (bridge) bridge.textContent = d.connected ? '🟢 connected' : '○ idle';
-      if (bridge) bridge.style.color = d.connected ? '#4ade80' : '#948d9e';
+      if (bridge) bridge.style.color = d.connected ? '#8FC97A' : '#9AA091';
       if (mtPeers) mtPeers.textContent = d.nodes || 0;
       if (mtMsgs) mtMsgs.textContent = d.messageCount || 0;
     }).catch(() => {});
@@ -788,17 +788,17 @@
       if (d.topics && d.topics.length > 0) {
         if (count) count.textContent = d.topics.length;
         list.innerHTML = d.topics.slice(0, 5).map(function(t) {
-          var statusColor = t.status === 'completed' ? '#4ade80' : t.status === 'in-progress' ? '#fbbf24' : t.status === 'archived' ? '#948d9e' : '#60a5fa';
+          var statusColor = t.status === 'completed' ? '#8FC97A' : t.status === 'in-progress' ? '#DC8A1E' : t.status === 'archived' ? '#9AA091' : '#63C7D4';
           var statusIcon = t.status === 'completed' ? '✅' : t.status === 'in-progress' ? '🔄' : t.status === 'archived' ? '📦' : '📋';
-          return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.65rem;border-bottom:1px solid #1a1a2e;"><span style="color:#e0e0e0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (t.title || 'untitled') + '</span><span style="color:' + statusColor + ';margin-left:6px;">' + statusIcon + ' ' + (t.status || 'active') + '</span></div>';
+          return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.65rem;border-bottom:1px solid #111310;"><span style="color:#ECEDE6;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (t.title || 'untitled') + '</span><span style="color:' + statusColor + ';margin-left:6px;">' + statusIcon + ' ' + (t.status || 'active') + '</span></div>';
         }).join('');
       } else {
         if (count) count.textContent = '0';
-        list.innerHTML = '<div style="color:#948d9e;font-size:0.65rem;">No resolutions yet</div>';
+        list.innerHTML = '<div style="color:#9AA091;font-size:0.65rem;">No resolutions yet</div>';
       }
     }).catch(function() {
       if (list.dataset.seq != seq) return;
-      list.innerHTML = '<div style="color:#f87171;font-size:0.65rem;">Articles offline</div>';
+      list.innerHTML = '<div style="color:#E4695A;font-size:0.65rem;">Articles offline</div>';
     });
   }
   setTimeout(function() { updateBoardTopics(); setInterval(updateBoardTopics, 15000); }, 2000);
@@ -824,7 +824,7 @@
       var trustAgents = trustData.agents || trustData.nodes || [];
 
       if (!rumData) {
-        content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
+        content.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Rum cellar offline</span></div>';
         return;
       }
 
@@ -871,8 +871,8 @@
         var canon = a.agent.toLowerCase().trim();
         var trust = trustMap[canon] || {};
         var type = fleetMap[canon] || 'unknown';
-        var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
-        var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
+        var statusColor = trust.status === 'online' ? '#8FC97A' : trust.status === 'standby' ? '#DC8A1E' : '#9AA091';
+        var bandColor = trust.band === 'Trusted' ? '#8FC97A' : trust.band === 'Cautious' ? '#DC8A1E' : trust.band === 'Banned' ? '#E4695A' : '#9AA091';
         var emoji = emojiMap[canon] || '🫡';
         rows.push({ agent: a.agent, emoji: emoji, calls: a.calls, tokens: a.tokens, pct: a.pct, trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: type });
       });
@@ -885,8 +885,8 @@
         if (!seen[name]) {
           seen[name] = true;
           var trust = trustMap[name] || {};
-          var statusColor = trust.status === 'online' ? '#4ade80' : trust.status === 'standby' ? '#fbbf24' : '#948d9e';
-          var bandColor = trust.band === 'Trusted' ? '#4ade80' : trust.band === 'Cautious' ? '#fbbf24' : trust.band === 'Banned' ? '#f87171' : '#948d9e';
+          var statusColor = trust.status === 'online' ? '#8FC97A' : trust.status === 'standby' ? '#DC8A1E' : '#9AA091';
+          var bandColor = trust.band === 'Trusted' ? '#8FC97A' : trust.band === 'Cautious' ? '#DC8A1E' : trust.band === 'Banned' ? '#E4695A' : '#9AA091';
           var emoji = emojiMap[name] || '🫡';
           rows.push({ agent: a.name, emoji: emoji, calls: 0, tokens: 0, pct: '0.0', trustScore: trust.score, bandColor: bandColor, statusColor: statusColor, type: a.type || 'relay' });
         }
@@ -895,22 +895,22 @@
       rows.sort(function(a, b) { return b.calls - a.calls; });
 
       // Header with budget info
-      var html = '<div style="font-size:0.6rem;color:#948d9e;margin-bottom:4px;">';
-      html += '🍺 <b style="color:#a78bfa;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#fbbf24;">' + budget.toLocaleString() + '</b> calls used · ';
-      html += '<b style="color:' + (remaining > 0 ? '#4ade80' : '#f87171') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
-      html += '<b style="color:#60a5fa;">' + pctUsed + '%</b> of weekly rum · ';
-      html += '⏳ <b style="color:#fbbf24;">' + restockStr + '</b> till restock';
+      var html = '<div style="font-size:0.6rem;color:#9AA091;margin-bottom:4px;">';
+      html += '🍺 <b style="color:#A98AD6;">' + totalCalls.toLocaleString() + '</b> / <b style="color:#DC8A1E;">' + budget.toLocaleString() + '</b> calls used · ';
+      html += '<b style="color:' + (remaining > 0 ? '#8FC97A' : '#E4695A') + ';">' + remaining.toLocaleString() + '</b> remaining · ';
+      html += '<b style="color:#63C7D4;">' + pctUsed + '%</b> of weekly rum · ';
+      html += '⏳ <b style="color:#DC8A1E;">' + restockStr + '</b> till restock';
       html += '</div>';
 
       // Progress bar
       var pctNum = parseFloat(pctUsed) / 100;
-      var barColor = pctNum > 0.8 ? '#f87171' : pctNum > 0.5 ? '#fbbf24' : '#4ade80';
-      html += '<div style="height:4px;background:#1e1e2e;border-radius:2px;margin-bottom:4px;overflow:hidden;">';
+      var barColor = pctNum > 0.8 ? '#E4695A' : pctNum > 0.5 ? '#DC8A1E' : '#8FC97A';
+      html += '<div style="height:4px;background:#171A15;border-radius:2px;margin-bottom:4px;overflow:hidden;">';
       html += '<div style="height:100%;width:' + Math.min(pctNum * 100, 100) + '%;background:' + barColor + ';border-radius:2px;transition:width 1s;"></div>';
       html += '</div>';
 
       // Column headers
-      html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#948d9e;padding:2px 0;border-bottom:1px solid #1e1e2e;margin-bottom:2px;">';
+      html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.55rem;color:#9AA091;padding:2px 0;border-bottom:1px solid #171A15;margin-bottom:2px;">';
       html += '<span style="width:16px;"></span>';
       html += '<span style="flex:1;">Crew</span>';
       html += '<span style="width:28px;text-align:center;">St</span>';
@@ -923,28 +923,28 @@
       // Agent rows
       html += '<div style="display:flex;flex-direction:column;gap:1px;">';
       rows.forEach(function(r) {
-        var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#948d9e;">-</span>';
-        var statusDot = r.statusColor !== '#948d9e' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
+        var trustStr = r.trustScore !== undefined && r.trustScore !== null ? '<span style="color:' + r.bandColor + ';">' + r.trustScore.toFixed(1) + '</span>' : '<span style="color:#9AA091;">-</span>';
+        var statusDot = r.statusColor !== '#9AA091' ? '<span style="color:' + r.statusColor + ';">●</span>' : '';
         // Check if agent is actively working
         var activity = activityMap[r.agent.toLowerCase().trim()];
         var isWorking = activity && activity.status === 'working';
-        var workingIndicator = isWorking ? '<span style="color:#fbbf24;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">⚡</span>' : '';
+        var workingIndicator = isWorking ? '<span style="color:#DC8A1E;font-size:8px;animation:pulse 1s infinite;" title="' + (activity.activity || 'working') + '">⚡</span>' : '';
         var durationStr = isWorking && activity.duration_seconds ? ' (' + activity.duration_seconds + 's)' : '';
         html += '<div style="display:flex;align-items:center;gap:4px;font-size:0.6rem;padding:1px 0;">';
         html += '<span>' + r.emoji + '</span>';
-        html += '<span style="flex:1;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + r.agent + '</span>';
+        html += '<span style="flex:1;color:#ECEDE6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + r.agent + '</span>';
         html += '<span style="width:28px;text-align:center;">' + (isWorking ? workingIndicator : statusDot) + '</span>';
         html += '<span style="width:32px;text-align:right;">' + trustStr + '</span>';
-        html += '<span style="color:#a78bfa;width:40px;text-align:right;font-weight:500;">' + (r.calls || 0) + '</span>';
-        html += '<span style="color:#948d9e;width:24px;text-align:right;">' + r.pct + '%</span>';
-        html += '<span style="color:#948d9e;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
+        html += '<span style="color:#A98AD6;width:40px;text-align:right;font-weight:500;">' + (r.calls || 0) + '</span>';
+        html += '<span style="color:#9AA091;width:24px;text-align:right;">' + r.pct + '%</span>';
+        html += '<span style="color:#9AA091;width:50px;text-align:right;">' + (r.tokens || 0).toLocaleString() + '</span>';
         html += '</div>';
       });
       html += '</div>';
       content.innerHTML = html;
     }).catch(function() {
       if (content.dataset.seq != seq) return;
-      content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Rum cellar offline</span></div>';
+      content.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Rum cellar offline</span></div>';
     });
   }
   setTimeout(function() { updateGrogQuota(); setInterval(updateGrogQuota, 15000); }, 2500);
@@ -959,8 +959,8 @@
         .then(function(d){
           var tasks = d.tasks || d.recent || [];
           var stages = ['PENDING','INTAKE','DISCUSS','PLANNING','EXECUTION','REVIEW','COMPLETION'];
-          var stageColors = {'PENDING':'#948d9e','INTAKE':'#948d9e','DISCUSS':'#fbbf24','PLANNING':'#60a5fa','EXECUTION':'#a78bfa','REVIEW':'#4ade80','COMPLETION':'#2dd4bf'};
-          var catColors = {'code':'#3b82f6','infrastructure':'#f97316','research':'#a855f7','documentation':'#06b6d4','testing':'#10b981','bug':'#ef4444','feature':'#8b5cf6','design':'#ec4899'};
+          var stageColors = {'PENDING':'#9AA091','INTAKE':'#9AA091','DISCUSS':'#DC8A1E','PLANNING':'#63C7D4','EXECUTION':'#A98AD6','REVIEW':'#8FC97A','COMPLETION':'#63C7D4'};
+          var catColors = {'code':'#63C7D4','infrastructure':'#DC8A1E','research':'#A98AD6','documentation':'#63C7D4','testing':'#8FC97A','bug':'#E4695A','feature':'#A98AD6','design':'#E4695A'};
           // Organize tasks into stage buckets
           var buckets = {};
           stages.forEach(function(s){ buckets[s] = []; });
@@ -974,38 +974,38 @@
           var html = '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-height:180px;">';
           stages.forEach(function(stage) {
             var col = buckets[stage] || [];
-            var color = stageColors[stage] || '#948d9e';
-            html += '<div style="min-width:170px;max-width:170px;background:#0d0d18;border-radius:6px;border:1px solid #1a1a2a;padding:6px;flex-shrink:0;">';
-            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #1e1e2e;">';
+            var color = stageColors[stage] || '#9AA091';
+            html += '<div style="min-width:170px;max-width:170px;background:#111310;border-radius:6px;border:1px solid #111310;padding:6px;flex-shrink:0;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid #171A15;">';
             html += '<span style="color:'+color+';font-weight:600;font-size:0.6rem;text-transform:uppercase;">'+stage+'</span>';
             html += '<span style="background:'+color+';color:#000;border-radius:8px;padding:0 5px;font-size:0.5rem;font-weight:700;">'+col.length+'</span>';
             html += '</div>';
             col.forEach(function(t) {
               var pct = t.progress_percentage != null ? t.progress_percentage : 0;
-              var pctCls = pct >= 80 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#948d9e';
+              var pctCls = pct >= 80 ? '#8FC97A' : pct >= 40 ? '#DC8A1E' : '#9AA091';
               var cat = t.category || '';
               var catColor = catColors[cat.toLowerCase()] || '';
               var assignee = t.assignee_agent_id || '';
               var title = (t.title || '').slice(0, 45);
               // Card
-              html += '<div style="background:#12121f;border-radius:4px;padding:5px;margin-bottom:4px;border:1px solid #1a1a2e;border-left:2px solid '+color+';">';
+              html += '<div style="background:#171A15;border-radius:4px;padding:5px;margin-bottom:4px;border:1px solid #111310;border-left:2px solid '+color+';">';
               if (catColor) html += '<span style="display:inline-block;background:'+catColor+';color:#000;border-radius:3px;padding:0 4px;font-size:0.45rem;font-weight:600;margin-bottom:2px;">'+cat+'</span>';
-              html += '<div style="color:#d0d0e0;font-size:0.55rem;margin:1px 0;word-break:break-word;">'+title+'</div>';
+              html += '<div style="color:#D8DACE;font-size:0.55rem;margin:1px 0;word-break:break-word;">'+title+'</div>';
               // Progress bar
-              html += '<div style="height:3px;background:#1e1e2e;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
-              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#948d9e;">';
+              html += '<div style="height:3px;background:#171A15;border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+pctCls+';border-radius:2px;"></div></div>';
+              html += '<div style="display:flex;justify-content:space-between;font-size:0.45rem;color:#9AA091;">';
               if (assignee) html += '<span>👤 '+assignee.slice(0,8)+'</span>';
               else html += '<span></span>';
               html += '<span>'+pct+'%</span>';
               html += '</div></div>';
             });
-            if (!col.length) html += '<div style="color:#3a3a4a;font-size:0.5rem;text-align:center;padding:10px 0;">— empty —</div>';
+            if (!col.length) html += '<div style="color:#3A3F31;font-size:0.5rem;text-align:center;padding:10px 0;">— empty —</div>';
             html += '</div>';
           });
           html += '</div>';
           content.innerHTML = html;
         }).catch(function(){
-          content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Task pipeline offline</span></div>';
+          content.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Task pipeline offline</span></div>';
         });
     }
   setTimeout(function() { updateTaskPipeline(); setInterval(updateTaskPipeline, 15000); }, 3000);
@@ -1026,7 +1026,7 @@
       renderFunctions();
     })
     .catch(e => {
-      document.getElementById('fnBody').innerHTML = '<tr><td colspan="5" style="color:#f87171;text-align:center;padding:2rem;">Failed to load catalog: ' + e.message + '</td></tr>';
+      document.getElementById('fnBody').innerHTML = '<tr><td colspan="5" style="color:#E4695A;text-align:center;padding:2rem;">Failed to load catalog: ' + e.message + '</td></tr>';
     });
 
   // Load pool stats for mining card
@@ -1056,7 +1056,7 @@
         if (h.revenue_generating) parts.push('\u{1F4B0} Earning');
         if (h.pool_healthy) parts.push('\u{1F30D} Good');
         e.textContent = parts.join(' \u00b7 ');
-        e.style.color = h.mining_active ? '#4ade80' : '#ef4444';
+        e.style.color = h.mining_active ? '#8FC97A' : '#E4695A';
       }
     }).catch(function(){});
     apiFetch('/api/mining/pool-identifiers').then(function(r){return r.json();}).then(function(ids){
@@ -1103,12 +1103,12 @@
         var agentRole = a.role || 'agent';
         var cleanRole = agentRole.replace(/-/g,' ').replace(/\b\w/g, function(l){return l.toUpperCase();});
         var me = agentName === 'vex' ? '\u2b50 ' : '';
-        var tun = a.tunnel_url ? '<br><span style="font-size:0.65rem;color:#4a7cff;">' + a.tunnel_url + '</span>' : '';
+        var tun = a.tunnel_url ? '<br><span style="font-size:0.65rem;color:#63C7D4;">' + a.tunnel_url + '</span>' : '';
         var h = a.hashrate ? ' \u00b7 ' + a.hashrate + ' H/s' : '';
         // Look up trust score
         var trustInfo = trustMap[agentName.toLowerCase()];
-        var trustStr = trustInfo ? ' <span style="font-size:0.65rem;color:' + (trustInfo.score >= 90 ? '#4ade80' : trustInfo.score >= 70 ? '#60a5fa' : trustInfo.score >= 50 ? '#fbbf24' : trustInfo.score >= 20 ? '#f87171' : '#948d9e') + ';">\u25cf ' + trustInfo.score.toFixed(1) + ' ' + trustInfo.band + '</span>' : '';
-        return '<div class="stat"><span class="label">' + me + agentName + trustStr + '<br><span style="font-size:0.65rem;color:#948d9e;">' + cleanRole + '</span>' + tun + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span>' + h + '</span></div>';
+        var trustStr = trustInfo ? ' <span style="font-size:0.65rem;color:' + (trustInfo.score >= 90 ? '#8FC97A' : trustInfo.score >= 70 ? '#63C7D4' : trustInfo.score >= 50 ? '#DC8A1E' : trustInfo.score >= 20 ? '#E4695A' : '#9AA091') + ';">\u25cf ' + trustInfo.score.toFixed(1) + ' ' + trustInfo.band + '</span>' : '';
+        return '<div class="stat"><span class="label">' + me + agentName + trustStr + '<br><span style="font-size:0.65rem;color:#9AA091;">' + cleanRole + '</span>' + tun + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span>' + h + '</span></div>';
       }).join('');
       // Update heartbeat URL
       var hb = document.getElementById('heartbeat-url');
@@ -1121,8 +1121,20 @@
   };
   loadFleetAgents();
 // -- XMRT University Status --
+// The tile this renders into (Campus Intelligence) was removed 2026-10-08, so
+// every element below it targets can legitimately be absent. It used to
+// dereference statusEl unguarded, which threw a TypeError every 60s once the
+// markup was gone.
+//
+// The early return is deliberate rather than a null-check on each write: with no
+// tile there is nothing to paint, so fetching /api/ef-university every minute is
+// pure cost — and that endpoint is currently answering 502, so it was also
+// logging a failure to the console on a timer. Put the tile back and this
+// function works again with no other change, because the guard is a check on
+// the DOM, not a permanent disable.
 async function loadUniversityStatus() {
   var statusEl = document.getElementById('uni-status');
+  if (!statusEl) return;
   var detailEl = document.getElementById('university-detail');
   var progressEl = document.getElementById('uni-progress');
   var certEl = document.getElementById('uni-cert');
@@ -1140,15 +1152,15 @@ async function loadUniversityStatus() {
     var coursesData = await coursesRes.json();
     if (coursesData.success) {
       statusEl.textContent = coursesData.total_modules + ' modules available';
-      statusEl.style.color = '#4ade80';
+      statusEl.style.color = '#8FC97A';
       if (sourceEl) sourceEl.textContent = 'database';
     } else {
       statusEl.textContent = 'offline';
-      statusEl.style.color = '#ef4444';
+      statusEl.style.color = '#E4695A';
     }
   } catch(e) {
     statusEl.textContent = 'unreachable';
-    statusEl.style.color = '#ef4444';
+    statusEl.style.color = '#E4695A';
   }
 }
 setInterval(loadUniversityStatus, 60000);
@@ -1190,7 +1202,7 @@ loadAgentExperienceCard();
           .then(function(d){
             var msgs = d.messages || [];
             if (!msgs.length) {
-              if (!hasContent) msgsEl.innerHTML = '<div style="color:#8b8ba0;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>';
+              if (!hasContent) msgsEl.innerHTML = '<div style="color:#6C7263;text-align:center;padding:20px 0;">Ship-to-ship comms active. All privateers hear every hail.</div>';
               return;
             }
                 // Save scroll position BEFORE DOM replacement (innerHTML resets scrollTop to 0)
@@ -1207,33 +1219,33 @@ loadAgentExperienceCard();
                           var body = isToolCard
                             ? (m.message || '')
                             : (m.message || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-                          var nameColor = '#8b8ba0';  // system default
+                          var nameColor = '#6C7263';  // system default
                           if (m.agent === 'system') {
-                            nameColor = '#8b8ba0';
+                            nameColor = '#6C7263';
                             name = isToolCard ? '🔧 tool' : 'system';
-                          } else if (m.agent === 'hermes') nameColor = '#ff6b35';
-                          else if (m.agent === 'eliza') nameColor = '#a78bfa';
-                          else if (m.agent === 'vex') nameColor = '#4ade80';
-                          else if (m.agent === 'alice') nameColor = '#60a5fa';
-                          else if (m.agent === 'trib') nameColor = '#fbbf24';
-                          else if (m.agent === 'arch') nameColor = '#a78bfa';
-                          else if (m.agent === 'builder') nameColor = '#34d399';
-                          else if (m.agent === 'sovereign') nameColor = '#f97316';
-                          else if (m.agent === 'trustgraph') nameColor = '#f472b6';
-                          else if (m.agent === 'dao') nameColor = '#818cf8';
-                          else if (m.agent === 'global-communicator') nameColor = '#2dd4bf';
+                          } else if (m.agent === 'hermes') nameColor = '#C9A227';
+                          else if (m.agent === 'eliza') nameColor = '#A98AD6';
+                          else if (m.agent === 'vex') nameColor = '#8FC97A';
+                          else if (m.agent === 'alice') nameColor = '#63C7D4';
+                          else if (m.agent === 'trib') nameColor = '#DC8A1E';
+                          else if (m.agent === 'arch') nameColor = '#A98AD6';
+                          else if (m.agent === 'builder') nameColor = '#8FC97A';
+                          else if (m.agent === 'sovereign') nameColor = '#DC8A1E';
+                          else if (m.agent === 'trustgraph') nameColor = '#E4695A';
+                          else if (m.agent === 'dao') nameColor = '#A98AD6';
+                          else if (m.agent === 'global-communicator') nameColor = '#63C7D4';
                           // Tool cards get a slightly different background to stand out
-                          var cardBg = isToolCard ? 'background:#0d0d1a;border-left:2px solid #4ade80;' : '';
-                          return '<div style="margin-bottom:6px;padding:6px 4px;border-bottom:1px solid #1a1a2a;' + cardBg + 'border-radius:3px;">' +
+                          var cardBg = isToolCard ? 'background:#111310;border-left:2px solid #8FC97A;' : '';
+                          return '<div style="margin-bottom:6px;padding:6px 4px;border-bottom:1px solid #111310;' + cardBg + 'border-radius:3px;">' +
                             '<span style="color:' + nameColor + ';font-weight:500;font-size:11px;">' + name + '</span> ' +
-                            '<span style="color:#948d9e;font-size:10px;float:right;">' + time + '</span><br/>' +
-                            '<span style="color:#c0c0d0;font-size:12px;line-height:1.45;word-break:break-word;">' + body + '</span>' +
+                            '<span style="color:#9AA091;font-size:10px;float:right;">' + time + '</span><br/>' +
+                            '<span style="color:#D8DACE;font-size:12px;line-height:1.45;word-break:break-word;">' + body + '</span>' +
                             '</div>';
                         }).join('');
                 // Only auto-scroll to bottom if user was already near the bottom BEFORE the update
                 if (wasNearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
       })
-      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#f87171;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
+      .catch(function(){ if(msgsEl) msgsEl.innerHTML = '<div style="color:#E4695A;text-align:center;padding:20px 0;font-size:12px;">⚠ Comms temporarily offline</div>'; });
   }
   setInterval(loadFleetChat, 3000);
   loadFleetChat();
@@ -1258,10 +1270,10 @@ loadAgentExperienceCard();
         var status = p.status || 'unknown';
         var sb = status === 'online' ? 'badge-ok' : 'badge-err';
         var me = p.agent_name === 'vex' ? '\u2b50 ' : '';
-        var eps = p.endpoint ? '<br><span style="font-size:0.65rem;color:#4a7cff;">' + p.endpoint + '</span>' : '';
-        var caps = p.capabilities ? '<br><span style="font-size:0.6rem;color:#948d9e;">' + p.capabilities.slice(0,5).join(', ') + (p.capabilities.length > 5 ? ' +' + (p.capabilities.length-5) + ' more' : '') + '</span>' : '';
+        var eps = p.endpoint ? '<br><span style="font-size:0.65rem;color:#63C7D4;">' + p.endpoint + '</span>' : '';
+        var caps = p.capabilities ? '<br><span style="font-size:0.6rem;color:#9AA091;">' + p.capabilities.slice(0,5).join(', ') + (p.capabilities.length > 5 ? ' +' + (p.capabilities.length-5) + ' more' : '') + '</span>' : '';
         var lastSeen = p.last_seen ? new Date(p.last_seen).toLocaleTimeString() : '';
-        return '<div class="stat"><span class="label">' + me + p.agent_name + eps + caps + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span><br><span style="font-size:0.6rem;color:#948d9e;">' + lastSeen + '</span></span></div>';
+        return '<div class="stat"><span class="label">' + me + p.agent_name + eps + caps + '</span><span class="value"><span class="badge ' + sb + '">' + status + '</span><br><span style="font-size:0.6rem;color:#9AA091;">' + lastSeen + '</span></span></div>';
       }).join('');
     }).catch(function(){
       // Mesh peers unavailable
@@ -1281,7 +1293,7 @@ loadAgentExperienceCard();
       if (!status) return;
       if (d.connected) {
         status.textContent = '🟢 Connected';
-        status.style.color = '#4ade80';
+        status.style.color = '#8FC97A';
         if (peers) peers.textContent = d.nodes + ' nodes';
         if (messages) messages.textContent = d.messageCount || 0;
         var u = d.uptime || 0;
@@ -1290,8 +1302,8 @@ loadAgentExperienceCard();
           nodesDiv.style.display = 'block';
           nodeList.innerHTML = d.nodeList.map(function(n){
             return '<div style="padding:1px 0;font-size:0.65rem;">🟢 ' + (n.name || n.id) +
-              (n.rssi ? ' <span style="color:#948d9e;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
-              (n.snr ? ' <span style="color:#948d9e;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
+              (n.rssi ? ' <span style="color:#9AA091;">RSSI:'+n.rssi.toFixed(1)+'</span>' : '') +
+              (n.snr ? ' <span style="color:#9AA091;">SNR:'+n.snr.toFixed(1)+'</span>' : '') +
               '</div>';
           }).join('');
         } else if (nodesDiv) {
@@ -1299,7 +1311,7 @@ loadAgentExperienceCard();
         }
       } else {
         status.textContent = '○ Disconnected';
-        status.style.color = '#948d9e';
+        status.style.color = '#9AA091';
         if (peers) peers.textContent = (d.nodes || 0) + ' nodes tracked';
         if (messages) messages.textContent = d.messageCount || 0;
         if (uptime) uptime.textContent = '-';
@@ -1307,7 +1319,7 @@ loadAgentExperienceCard();
       }
     }).catch(function(){
       var status = document.getElementById('mt-bridge-status');
-      if (status) { status.textContent = '○ offline'; status.style.color = '#948d9e'; }
+      if (status) { status.textContent = '○ offline'; status.style.color = '#9AA091'; }
     });
   }
   setTimeout(function() { updateMeshtasticBridge(); setInterval(updateMeshtasticBridge, 5000); }, 4500);
@@ -1327,11 +1339,11 @@ loadAgentExperienceCard();
         var lastSeen = new Date(w.last_seen).getTime();
         var minutesAgo = Math.round((now - lastSeen) / 60000);
         var isOnline = minutesAgo < 10;
-        var statusDot = isOnline ? '<span style="color:#4ade80;">●</span>' : '<span style="color:#948d9e;">○</span>';
+        var statusDot = isOnline ? '<span style="color:#8FC97A;">●</span>' : '<span style="color:#9AA091;">○</span>';
         var hashDisplay = w.current_hash > 0 ? w.current_hash + ' H/s' : '-';
         var sharesDisplay = w.total_shares > 0 ? w.total_shares.toLocaleString() : '0';
         var timeAgo = minutesAgo < 1 ? 'just now' : minutesAgo + 'm ago';
-        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#948d9e;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#fbbf24;">' + w.xmrt_earned + ' XMRT</span></span></div>';
+        return '<div class="stat"><span class="label">' + statusDot + ' ' + w.worker.slice(0,16) + '<br><span style="font-size:0.65rem;color:#9AA091;">' + hashDisplay + ' · ' + timeAgo + '</span></span><span class="value">' + sharesDisplay + ' shares<br><span style="font-size:0.65rem;color:#DC8A1E;">' + w.xmrt_earned + ' XMRT</span></span></div>';
       }).join('');
     }).catch(function(){
       var el = document.getElementById('miner-leaderboard');
@@ -1385,8 +1397,8 @@ function renderInboxTile(cfg) {
   var count = 0;
   Object.keys(groups).forEach(function(addr) {
     var msgs = groups[addr];
-    html += '<div class="stat" style="border-bottom:1px solid #2a2a3a;padding:0.4rem 0;">';
-    html += '<span class="label" style="font-size:0.78rem;color:#60a5fa;">' + addr + '</span>';
+    html += '<div class="stat" style="border-bottom:1px solid #2A2E25;padding:0.4rem 0;">';
+    html += '<span class="label" style="font-size:0.78rem;color:#63C7D4;">' + addr + '</span>';
     html += '<span class="value badge badge-info">' + msgs.length + '</span>';
     html += '</div>';
     msgs.forEach(function(m) {
@@ -1394,7 +1406,7 @@ function renderInboxTile(cfg) {
       if (count > cfg.list) return;
       html += '<div class="stat" style="padding:0.2rem 0 0.2rem 0.5rem;font-size:0.72rem;">';
       html += '<span class="label">' + (m.from || '').substring(0, 28) + '</span>';
-      html += '<span class="value" style="color:#a0a0b0;">' + (m.subject || '').substring(0, 22) + '</span>';
+      html += '<span class="value" style="color:#9AA091;">' + (m.subject || '').substring(0, 22) + '</span>';
       html += '</div>';
     });
   });
@@ -1430,7 +1442,7 @@ function loadInboxTiles() {
 // on load.
 setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); }, 6000);
 
-  // XMRT DAO Health — dynamic data from Supabase
+  // XMRT DAO Health — dynamic data from the local edge-function layer
   function loadDaoHealth() {
     apiFetch('/api/dao/health', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
@@ -1550,7 +1562,12 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   setTimeout(function() { loadDaoHealth(); setInterval(loadDaoHealth, 30000); }, 7500);
 
   // GitHub Activity — dynamic data from GitHub API
+  // Bails for the same reason as loadUniversityStatus: its tile was removed with
+  // Campus Intelligence on 2026-10-08. It was already null-safe on every write,
+  // so this was never throwing — but it kept hitting /api/dao/github once a
+  // minute to render into nothing.
   function loadGithubActivity() {
+    if (!document.getElementById('gh-repo-count')) return;
     apiFetch('/api/dao/github', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
       .then(function(d){
@@ -1575,8 +1592,8 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
             recentEl.innerHTML = d.recent_commits.slice(0,5).map(function(c){
               var m = (c.commit && c.commit.message) ? c.commit.message.split(NL)[0].slice(0, 28) : '?';
               var dd = new Date(c.commit.author.date).toLocaleDateString();
-              var repo = c._repo ? '<span style="color:#4ade80;">' + c._repo + '</span> ' : '';
-              return '<div style="font-size:0.65rem;color:#a0a0b0;margin:2px 0;">' + repo + m + ' <span style="color:#948d9e;">(' + dd + ')</span></div>';
+              var repo = c._repo ? '<span style="color:#8FC97A;">' + c._repo + '</span> ' : '';
+              return '<div style="font-size:0.65rem;color:#9AA091;margin:2px 0;">' + repo + m + ' <span style="color:#9AA091;">(' + dd + ')</span></div>';
             }).join('');
           }
         }
@@ -1589,17 +1606,30 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   setTimeout(function() { loadGithubActivity(); setInterval(loadGithubActivity, 60000); }, 8000);
 
   // PFP Campaign — live stats
+  //
+  // The endpoints now read the schedulers' own state files rather than per-send
+  // append files that no longer exist, so these fields can arrive as null when a
+  // number is genuinely unknown. null means "not tracked"; 0 means "there were
+  // none". Writing null straight into textContent would render the word "null"
+  // on the tile, so it is rendered as a dash instead.
+  function showOrDash(el, value) {
+    if (el && value !== null && value !== undefined) el.textContent = value;
+    else if (el) el.textContent = '—';
+  }
+
   function loadPfpCampaign() {
     apiFetch('/api/campaign/pfp', { signal: AbortSignal.timeout(25000) })
       .then(function(r){return r.json();})
       .then(function(d){
         if (!d.success) return;
         var el = function(id){return document.getElementById(id);};
-        if (el('pfp-pool')) el('pfp-pool').textContent = d.poolSize;
-        if (el('pfp-sent-today')) el('pfp-sent-today').textContent = d.sentToday;
-        if (el('pfp-sent-total')) el('pfp-sent-total').textContent = d.totalSent;
-        if (el('pfp-fresh')) el('pfp-fresh').textContent = d.freshAvailable;
-        if (el('pfp-last-run')) el('pfp-last-run').textContent = d.campaignLastRun;
+        showOrDash(el('pfp-pool'), d.poolSize);
+        showOrDash(el('pfp-sent-total'), d.totalSent);
+        showOrDash(el('pfp-fresh'), d.freshAvailable);
+        showOrDash(el('pfp-last-run'), d.campaignLastRun);
+        showOrDash(el('pfp-sent-errors'), d.sendErrors);
+        // Dropped rather than updated: pfp-sent-today was removed from the tile
+        // because the scheduler keeps no per-day breakdown to source it from.
       });
   }
   setTimeout(function() { loadPfpCampaign(); setInterval(loadPfpCampaign, 30000); }, 8500);
@@ -1611,11 +1641,12 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       .then(function(d){
         if (!d.success) return;
         var el = function(id){return document.getElementById(id);};
-        if (el('harbor-pool')) el('harbor-pool').textContent = d.harborPoolSize;
-        if (el('harbor-sent-today')) el('harbor-sent-today').textContent = d.harborSentToday;
-        if (el('harbor-sent-total')) el('harbor-sent-total').textContent = d.harborSentTotal;
-        if (el('harbor-fresh')) el('harbor-fresh').textContent = d.harborFresh;
-        if (el('harbor-last-run')) el('harbor-last-run').textContent = d.harborLastRun;
+        showOrDash(el('harbor-pool'), d.harborPoolSize);
+        showOrDash(el('harbor-sent-total'), d.harborSentTotal);
+        showOrDash(el('harbor-fresh'), d.harborFresh);
+        showOrDash(el('harbor-last-run'), d.harborLastRun);
+        showOrDash(el('harbor-sent-errors'), d.sendErrors);
+        showOrDash(el('harbor-last-scrape'), d.lastScrapeDay);
       });
   }
   setTimeout(function() { loadHarborCampaign(); setInterval(loadHarborCampaign, 30000); }, 9000);
@@ -1730,8 +1761,8 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         : '<span class="badge badge-ok" style="font-size:0.65rem;">' + timeout + '</span>';
       
       const inputs = (f.inputs && f.inputs.length)
-        ? f.inputs.map(i => '<span style="color:#fbbf24">' + i + '</span>').join(', ')
-        : '<span style="color:#4a4a5a">(see source)</span>';
+        ? f.inputs.map(i => '<span style="color:#DC8A1E">' + i + '</span>').join(', ')
+        : '<span style="color:#6C7263">(see source)</span>';
       const endpoint = SUPABASE_URL + '/functions/v1/' + f.name;
       
       return '<tr>' +
@@ -1784,15 +1815,15 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     if (!msg) return;
     input.value = '';
     var tempId = 'opt-' + Date.now();
-    msgs.innerHTML += '<div style="margin-bottom:6px;text-align:right;" data-id="' + tempId + '"><span style="color:#8b8ba0;font-size:10px;display:block;">' + displayName.toUpperCase() + '</span><span style="background:#1a3a5c;color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;">' + msg.replace(/</g,'&lt;') + '</span></div>';
+    msgs.innerHTML += '<div style="margin-bottom:6px;text-align:right;" data-id="' + tempId + '"><span style="color:#6C7263;font-size:10px;display:block;">' + displayName.toUpperCase() + '</span><span style="background:#15262B;color:#ECEDE6;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;">' + msg.replace(/</g,'&lt;') + '</span></div>';
     document.getElementById('fleet-chat-status').textContent = '● sending...';
-    document.getElementById('fleet-chat-status').style.color = '#fbbf24';
+    document.getElementById('fleet-chat-status').style.color = '#DC8A1E';
     msgs.scrollTop = msgs.scrollHeight;
     apiFetch('/api/fleet-chat/send', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent:agent,displayName:displayName,message:msg,channel:'all'})})
       .then(function(r){return r.json();})
       .then(function(d){
         document.getElementById('fleet-chat-status').textContent = '● connected';
-        document.getElementById('fleet-chat-status').style.color = '#4ade80';
+        document.getElementById('fleet-chat-status').style.color = '#8FC97A';
         // If there's a pending file, upload it as an attachment to this message
         if (pendingFile && d.message && d.message.id) {
           var file = pendingFile;
@@ -1829,7 +1860,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         loadFleetChat();
       }).catch(function(e){
         document.getElementById('fleet-chat-status').textContent = '● error: ' + e.message;
-        document.getElementById('fleet-chat-status').style.color = '#f87171';
+        document.getElementById('fleet-chat-status').style.color = '#E4695A';
       });
   }
 
@@ -1848,7 +1879,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           for (var i = 0; i < d.messages.length; i++) {
             var m = d.messages[i];
             if (m.ts <= lastFleetTs) continue;
-            var color = m.agent === 'vex' ? '#2a1a0a' : m.agent === 'eliza' ? '#1a3a2a' : '#2a1a3a';
+            var color = m.agent === 'vex' ? '#2A2114' : m.agent === 'eliza' ? '#16281C' : '#1E1728';
             var label = m.agentLabel || m.agent;
             // Check if message already displayed
             var existing = msgs.querySelector('[data-id="' + m.id + '"]');
@@ -1856,7 +1887,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
             var div = document.createElement('div');
             div.style.marginBottom = '6px';
             div.setAttribute('data-id', m.id);
-            var msgHtml = '<span style="color:#8b8ba0;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#e0e0f0;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
+            var msgHtml = '<span style="color:#6C7263;font-size:10px;display:block;">' + label + '</span><span class="fleet-msg-body" style="background:' + color + ';color:#ECEDE6;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px;max-width:100%;">' + renderMarkdown(m.message || '') + '</span>';
             // Check for attachments on this message
             if (m.id) {
               apiFetch('/api/fleet-chat/attachments/' + encodeURIComponent(m.id), { signal: AbortSignal.timeout(5000) })
@@ -1865,7 +1896,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
                   if (ad.attachments && ad.attachments.length > 0) {
                     var attHtml = '<div style="margin-top:4px;font-size:10px;">';
                     ad.attachments.forEach(function(a){
-                      attHtml += '<span style="color:#a78bfa;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">📎 ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
+                      attHtml += '<span style="color:#A98AD6;cursor:pointer;" onclick="window.open(\'/api/fleet-chat/attachments/' + a.id + '/content\',\'_blank\')">📎 ' + a.filename + ' (' + (a.file_size / 1024).toFixed(1) + ' KB)</span> ';
                     });
                     attHtml += '</div>';
                     var attDiv = div.querySelector('.fleet-attachments');
@@ -1884,10 +1915,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           msgs.scrollTop = msgs.scrollHeight;
         }
         document.getElementById('fleet-chat-status').textContent = '● connected';
-        document.getElementById('fleet-chat-status').style.color = '#4ade80';
+        document.getElementById('fleet-chat-status').style.color = '#8FC97A';
       }).catch(function(e){
         document.getElementById('fleet-chat-status').textContent = '● polling error';
-        document.getElementById('fleet-chat-status').style.color = '#f87171';
+        document.getElementById('fleet-chat-status').style.color = '#E4695A';
       });
   }
 
@@ -1911,7 +1942,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         boardData = d;
         renderBoardTopics();
         document.getElementById("board-status").textContent = "● loaded";
-        document.getElementById("board-status").style.color = "#4ade80";
+        document.getElementById("board-status").style.color = "#8FC97A";
         var newCount = boardData.topics.length;
         var totalPosts = boardData.topics.reduce(function(sum, t) { return sum + (t.posts || []).length; }, 0);
         if (newCount !== prevCount || totalPosts !== prevPosts) {
@@ -1922,7 +1953,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       })
       .catch(function(e){
         document.getElementById("board-status").textContent = "● error: " + e.message;
-        document.getElementById("board-status").style.color = "#f87171";
+        document.getElementById("board-status").style.color = "#E4695A";
       });
   }
   
@@ -1967,10 +1998,10 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   
   function getStatusBadge(status) {
     var colors = {
-      'active': 'background:#1a3a2a;color:#4ade80;',
-      'in-progress': 'background:#3a2a1a;color:#fbbf24;',
-      'completed': 'background:#1a2a3a;color:#60a5fa;',
-      'archived': 'background:#2a2a2a;color:#948d9e;'
+      'active': 'background:#16281C;color:#8FC97A;',
+      'in-progress': 'background:#2A2114;color:#DC8A1E;',
+      'completed': 'background:#15262B;color:#63C7D4;',
+      'archived': 'background:#22251F;color:#9AA091;'
     };
     var label = status === 'in-progress' ? 'in progress' : status;
     return '<span style="' + (colors[status] || colors.active) + 'padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;">' + label + '</span>';
@@ -1984,7 +2015,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       filtered = filtered.filter(function(t) { return t.status === boardStatusFilter; });
     }
     if (!filtered || filtered.length === 0) {
-      var emptyMsg = '<div style="color:#948d9e;text-align:center;padding:20px 0;font-size:12px;">' +
+      var emptyMsg = '<div style="color:#9AA091;text-align:center;padding:20px 0;font-size:12px;">' +
         (boardStatusFilter !== 'all' ? 'No ' + boardStatusFilter + ' topics.' : 'No topics yet. Create one to start tracking progress.') +
         '</div>';
       if (list) list.innerHTML = emptyMsg;
@@ -1997,8 +2028,8 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var postCount = (t.posts || []).length;
       var lastPost = postCount > 0 ? t.posts[t.posts.length - 1] : null;
       var active = boardCurrentTopic && boardCurrentTopic.id === t.id ? ' active' : '';
-      var pinIcon = t.pinned ? '<span style="color:#fbbf24;font-size:10px;">📌</span> ' : '';
-      var assignBadge = t.assigned_agent ? '<span style="color:#60a5fa;font-size:9px;">@' + t.assigned_agent + '</span>' : '';
+      var pinIcon = t.pinned ? '<span style="color:#DC8A1E;font-size:10px;">📌</span> ' : '';
+      var assignBadge = t.assigned_agent ? '<span style="color:#63C7D4;font-size:9px;">@' + t.assigned_agent + '</span>' : '';
       html += '<div class="board-topic' + active + '" data-topic-id="' + t.id + '">';
       html += '<div class="board-topic-title">' + pinIcon + getStatusBadge(t.status) + ' ' + t.title.replace(/</g,'&lt;') + '</div>';
       html += '<div class="board-topic-meta">' + postCount + ' post' + (postCount !== 1 ? 's' : '') + ' \u2022 by ' + t.creator + ' \u2022 ' + (t.created_at || '').slice(0,10);
@@ -2063,7 +2094,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     // Update pin button
     var pinBtn = document.getElementById('board-pin-btn');
     pinBtn.textContent = boardCurrentTopic.pinned ? 'Unpin' : 'Pin';
-    pinBtn.style.borderColor = boardCurrentTopic.pinned ? '#fbbf24' : '#3a3a5a';
+    pinBtn.style.borderColor = boardCurrentTopic.pinned ? '#DC8A1E' : '#3A3F31';
     
     renderBoardPosts();
   }
@@ -2077,7 +2108,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   function renderBoardPosts() {
     var list = document.getElementById('board-posts-list');
     if (!boardCurrentTopic || !boardCurrentTopic.posts || boardCurrentTopic.posts.length === 0) {
-      list.innerHTML = '<div style="color:#948d9e;text-align:center;padding:15px 0;font-size:12px;">No posts yet. Be the first!</div>';
+      list.innerHTML = '<div style="color:#9AA091;text-align:center;padding:15px 0;font-size:12px;">No posts yet. Be the first!</div>';
       return;
     }
     var html = '';
@@ -2086,7 +2117,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var agentClass = 'board-agent-' + (p.agent || 'vex').toLowerCase();
       html += '<div class="board-post">';
       html += '<div class="board-post-header"><span class="board-agent-badge ' + agentClass + '">' + (p.agent || 'agent').toUpperCase() + '</span> ' + timeAgo(p.ts);
-      html += '<span style="float:right;font-size:9px;color:#948d9e;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">✕</span>';
+      html += '<span style="float:right;font-size:9px;color:#9AA091;cursor:pointer;" onclick="deleteBoardPost(' + "'" + p.id + "'" + ')" title="Delete post">✕</span>';
       html += '</div>';
       html += '<div class="board-post-body">' + renderMarkdown(p.message) + '</div>';
       html += '</div>';
@@ -2124,7 +2155,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       })
       .catch(function(e) {
         document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
+        document.getElementById('board-status').style.color = '#E4695A';
       });
   }
   
@@ -2174,15 +2205,15 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           }
           loadBoard();
           document.getElementById('board-status').textContent = '\u2713 renamed';
-          document.getElementById('board-status').style.color = '#4ade80';
+          document.getElementById('board-status').style.color = '#8FC97A';
         } else {
           document.getElementById('board-status').textContent = '\u2716 rename failed: ' + (d.error || 'unknown');
-          document.getElementById('board-status').style.color = '#f87171';
+          document.getElementById('board-status').style.color = '#E4695A';
         }
       })
       .catch(function(e) {
         document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
+        document.getElementById('board-status').style.color = '#E4695A';
       });
   }
 
@@ -2200,7 +2231,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           boardCurrentTopic.pinned = newPinned;
           var pinBtn = document.getElementById('board-pin-btn');
           pinBtn.textContent = newPinned ? 'Unpin' : 'Pin';
-          pinBtn.style.borderColor = newPinned ? '#fbbf24' : '#3a3a5a';
+          pinBtn.style.borderColor = newPinned ? '#DC8A1E' : '#3A3F31';
           loadBoard();
         }
       })
@@ -2231,7 +2262,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       })
       .catch(function(e) {
         document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
+        document.getElementById('board-status').style.color = '#E4695A';
       });
   }
   
@@ -2275,7 +2306,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       })
       .catch(function(e) {
         document.getElementById('board-status').textContent = '\u2716 error: ' + e.message;
-        document.getElementById('board-status').style.color = '#f87171';
+        document.getElementById('board-status').style.color = '#E4695A';
       });
   }
 
@@ -2302,7 +2333,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function() {
         var orig = el.style.background;
-        el.style.background = '#1a3a2a';
+        el.style.background = '#16281C';
         el.style.transition = 'background 0.3s';
         setTimeout(function(){ el.style.background = orig; }, 1000);
       }).catch(function(){});
@@ -2367,11 +2398,45 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   })();
   
 // Mesh Network Particle Animation
+//
+// Kept deliberately. This is the one piece of the page that is motion for its
+// own sake rather than a readout, it predates the rebrand, and it is what makes
+// the command center feel alive rather than like a table.
+//
+// Colours are READ FROM THE THEME TOKENS rather than written inline. They used
+// to be hardcoded rgba(255,102,0,...) - AstraGaze orange - so every palette
+// change had to be repeated by hand in this file or the mesh silently kept the
+// old brand while the rest of the page moved. Reading --gold / --ink makes that
+// class of drift impossible, and it is why the mesh followed the rebrand
+// without this file being told the new hex anywhere.
+//
+//   --gold  node fill, particle-to-particle links, and the lines that reach for
+//           the cursor
+//   --ink   the trail wash. This is the load-bearing one: it is a translucent
+//           fillRect over the entire canvas EVERY frame, not a decoration, and
+//           it has to sit just above --bg-primary or the wash bands into visible
+//           steps and the whole field turns to mud. At 0.15 the particles leave
+//           a comet tail.
 (function(){
   const canvas = document.getElementById('mesh-bg');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   let W, H, particles = [];
+
+  // Resolved once at start rather than per frame: getComputedStyle forces a
+  // style recalc, and calling that inside a requestAnimationFrame loop on a page
+  // this size is a real cost for a value that cannot change under us.
+  const css = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => (css.getPropertyValue(name) || '').trim() || fallback;
+  const GOLD = token('--gold', '#C9A227');
+  const INK  = token('--ink',  '#0D0F0C');
+  // rgba() built from the hex, because the per-frame alpha varies with pulse and
+  // distance and cannot be a static string.
+  const rgba = (hex, a) => {
+    const n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  };
+
   function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
   resize(); addEventListener('resize', resize);
   
@@ -2389,7 +2454,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     draw() {
       const pulse = 0.5 + 0.5 * Math.sin(this.life * 0.03);
       ctx.beginPath(); ctx.arc(this.x, this.y, this.r * pulse, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,102,0,' + (0.4 * pulse) + ')'; ctx.fill();
+      ctx.fillStyle = rgba(GOLD, 0.4 * pulse); ctx.fill();
     }
   }
   for (let i = 0; i < 60; i++) particles.push(new Particle());
@@ -2398,7 +2463,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
   document.addEventListener('mousemove', function(e) { mouse.x = e.clientX; mouse.y = e.clientY; });
   
   function animate() {
-    ctx.fillStyle = 'rgba(10,10,15,0.15)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = rgba(INK, 0.15); ctx.fillRect(0, 0, W, H);
     particles.forEach(function(p) { p.update(); p.draw(); });
     for (let i = 0; i < particles.length; i++) {
       for (let j = i + 1; j < particles.length; j++) {
@@ -2406,14 +2471,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < 150) {
           ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(particles[j].x, particles[j].y);
-          ctx.strokeStyle = 'rgba(255,102,0,' + (0.12 * (1 - dist / 150)) + ')'; ctx.lineWidth = 0.6; ctx.stroke();
+          ctx.strokeStyle = rgba(GOLD, 0.12 * (1 - dist / 150)); ctx.lineWidth = 0.6; ctx.stroke();
         }
       }
       const dx = particles[i].x - mouse.x, dy = particles[i].y - mouse.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 200) {
         ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(mouse.x, mouse.y);
-        ctx.strokeStyle = 'rgba(255,102,0,' + (0.15 * (1 - dist / 200)) + ')'; ctx.lineWidth = 0.8; ctx.stroke();
+        ctx.strokeStyle = rgba(GOLD, 0.15 * (1 - dist / 200)); ctx.lineWidth = 0.8; ctx.stroke();
       }
     }
     requestAnimationFrame(animate);
@@ -2481,26 +2546,26 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     if (btn) {
       btn.classList.toggle('on', newState);
       var isDb = name === 'db';
-      btn.style.background = newState ? (isDb ? 'rgba(52,211,153,0.08)' : 'rgba(167,139,250,0.08)') : 'rgba(107,107,128,0.04)';
-      btn.style.borderColor = newState ? (isDb ? 'rgba(52,211,153,0.22)' : 'rgba(167,139,250,0.22)') : 'rgba(107,107,128,0.12)';
-      btn.style.color = newState ? (isDb ? 'rgba(52,211,153,0.65)' : 'rgba(167,139,250,0.65)') : 'rgba(107,107,128,0.4)';
+      btn.style.background = newState ? (isDb ? 'rgba(143,201,122,0.08)' : 'rgba(169,138,214,0.08)') : 'rgba(107,107,128,0.04)';
+      btn.style.borderColor = newState ? (isDb ? 'rgba(143,201,122,0.22)' : 'rgba(169,138,214,0.22)') : 'rgba(107,107,128,0.12)';
+      btn.style.color = newState ? (isDb ? 'rgba(143,201,122,0.65)' : 'rgba(169,138,214,0.65)') : 'rgba(107,107,128,0.4)';
     }
   };
 
   const CAT_COLORS = {
-    spa: '#4ade80', backend: '#60a5fa', agent: '#a78bfa',
-    infra: '#fbbf24', system: '#ff6b35', email: '#f87171',
-    db: '#34d399', mining: '#818cf8', cert: '#f472b6',
-    cron: '#2dd4bf', 'edge-function': '#67e8f9', endpoint: '#93c5fd',
-    github: '#c084fc', tunnel: '#fcd34d', campaign: '#fdba74',
-    memory: '#f472b6', 'shared-context': '#2dd4bf', catalog: '#fcd34d',
-    knowledge: '#a3e635',
-    other: '#948d9e'
+    spa: '#8FC97A', backend: '#63C7D4', agent: '#A98AD6',
+    infra: '#DC8A1E', system: '#C9A227', email: '#E4695A',
+    db: '#8FC97A', mining: '#A98AD6', cert: '#E4695A',
+    cron: '#63C7D4', 'edge-function': '#63C7D4', endpoint: '#63C7D4',
+    github: '#A98AD6', tunnel: '#DC8A1E', campaign: '#DC8A1E',
+    memory: '#E4695A', 'shared-context': '#63C7D4', catalog: '#DC8A1E',
+    knowledge: '#8FC97A',
+    other: '#9AA091'
   };
 
   const TRUST_BAND_COLORS = {
-    Trusted: '#4ade80', Standard: '#60a5fa', Monitored: '#fbbf24',
-    Cautious: '#f87171', Suspended: '#948d9e'
+    Trusted: '#8FC97A', Standard: '#63C7D4', Monitored: '#DC8A1E',
+    Cautious: '#E4695A', Suspended: '#9AA091'
   };
 
   // ── Coordinate transforms ──
@@ -2602,7 +2667,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       oh.levels['app Schema'] = 0; oh.parents['app Schema'] = null;
       oh.levels['public Schema'] = 0; oh.parents['public Schema'] = null;
       // Level 1: Planets — orbit Relay Server
-      var planetNames = ['CashDApp','CuttlefishClaws','31Harbor','HottieHouse','Suite Dashboard','Fleet Chat','Mesh Network','Ollama','Local Supabase','Postgres Database','Cloudflare Workers','Cron Engine'];
+      var planetNames = ['CashDApp','CuttlefishClaws','31Harbor','HottieHouse','Suite Dashboard','Fleet Chat','Mesh Network','Ollama','Edge Functions (local)','Postgres Database','Cloudflare Workers','Cron Engine'];
       planetNames.forEach(function(p){ oh.levels[p]=1; oh.parents[p]='Relay Server'; });
       // Level 2: Moons — children of planets or stars
       edges.forEach(function(e){
@@ -2843,8 +2908,8 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     var stars = window._starCache;
     // Subtle nebula glow at center
     var nebula = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.6);
-    nebula.addColorStop(0, 'rgba(180,120,60,0.03)');
-    nebula.addColorStop(0.4, 'rgba(120,80,40,0.015)');
+    nebula.addColorStop(0, 'rgba(201,162,39,0.03)');
+    nebula.addColorStop(0.4, 'rgba(90,80,40,0.015)');
     nebula.addColorStop(1, 'transparent');
     ctx.fillStyle = nebula;
     ctx.fillRect(0, 0, W, H);
@@ -2928,7 +2993,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       if (!effectCatalog && n.category === 'catalog') continue;
       if (!effectKnowledge && n.category === 'knowledge') continue;
 
-      var color = CAT_COLORS[n.category] || '#948d9e';
+      var color = CAT_COLORS[n.category] || '#9AA091';
       var trustInfo = null;
       if (n.category === 'agent') {
         trustInfo = trustScores[n.label] || trustScores[n.id] || trustScores[n.label.toLowerCase()] || trustScores[n.id.toLowerCase()] || null;
@@ -2951,14 +3016,14 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       var warmColor = color;
       // If it's a cool purple/blue, shift toward golden for agents
       if (n.category === 'agent') {
-        warmColor = '#e8c060';
+        warmColor = '#C9A227';
         if (trustInfo) {
           // Map trust bands to golden/warm spectrum
-          if (trustInfo.band === 'Pioneer') warmColor = '#60d0e0';
-          else if (trustInfo.band === 'Builder') warmColor = '#60e0a0';
-          else if (trustInfo.band === 'Contributor') warmColor = '#e8c060';
-          else if (trustInfo.band === 'Participant') warmColor = '#c08040';
-          else warmColor = '#e0a040';
+          if (trustInfo.band === 'Pioneer') warmColor = '#63C7D4';
+          else if (trustInfo.band === 'Builder') warmColor = '#8FC97A';
+          else if (trustInfo.band === 'Contributor') warmColor = '#C9A227';
+          else if (trustInfo.band === 'Participant') warmColor = '#DC8A1E';
+          else warmColor = '#B87333';
         }
       }
 
@@ -3069,7 +3134,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       // Labels — show when Idents is on (always visible, not just at high zoom)
       if (effectLabels) {
         const fontSize = Math.max(8, Math.min(14, 11 * camZ));
-        ctx.fillStyle = isSelected ? '#ffffff' : isHovered ? '#e0e0f0' : '#c0c0d0';
+        ctx.fillStyle = isSelected ? '#ffffff' : isHovered ? '#ECEDE6' : '#D8DACE';
         ctx.font = (isSelected ? 'bold ' : '') + fontSize + 'px -apple-system, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
@@ -3103,7 +3168,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           if (!name) return;
           var score = a.trust_score !== undefined ? a.trust_score : (a.score !== undefined ? a.score : 0.5);
           var band = a.trust_band || a.band || 'Standard';
-          var color = TRUST_BAND_COLORS[band] || '#60a5fa';
+          var color = TRUST_BAND_COLORS[band] || '#63C7D4';
           trustScores[name] = { score: score, band: band, color: color };
           trustScores[name.toLowerCase()] = trustScores[name];
           var firstWord = name.split(/[\s-]+/)[0].toLowerCase();
@@ -3114,7 +3179,7 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
           var a = agents[k];
           var score = a.trust_score !== undefined ? a.trust_score : (a.score !== undefined ? a.score : 0.5);
           var band = a.trust_band || a.band || 'Standard';
-          var color = TRUST_BAND_COLORS[band] || '#60a5fa';
+          var color = TRUST_BAND_COLORS[band] || '#63C7D4';
           trustScores[k] = { score: score, band: band, color: color };
           trustScores[k.toLowerCase()] = trustScores[k];
           var firstWord = k.split(/[\s-]+/)[0].toLowerCase();
@@ -3426,7 +3491,7 @@ function updateFootlocker() {
   apiFetch('/api/footlocker', { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var chests = d.chests || [];
     if (chests.length === 0) {
-      content.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;"><div class="stat"><span class="label" style="color:#948d9e;">No completed task artifacts yet</span></div></div>';
+      content.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;"><div class="stat"><span class="label" style="color:#9AA091;">No completed task artifacts yet</span></div></div>';
       return;
     }
     var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">';
@@ -3439,48 +3504,48 @@ function updateFootlocker() {
       var count = c.artifact_count || 0;
       var lastUpd = c.last_updated ? new Date(c.last_updated).toLocaleDateString() : '';
       html += '<div class="stat" style="cursor:pointer;min-width:100px;" onclick="openFootlockerChest(\'' + agentName + '\', this)">';
-      html += '<span class="label">' + emoji + ' <b style="color:#a78bfa;">' + agentName + '</b></span>';
-      html += '<span class="value" style="color:#4ade80;font-size:0.65rem;">' + count + ' artifact' + (count !== 1 ? 's' : '') + '</span>';
-      if (lastUpd) html += '<span style="color:#948d9e;font-size:0.5rem;">' + lastUpd + '</span>';
+      html += '<span class="label">' + emoji + ' <b style="color:#A98AD6;">' + agentName + '</b></span>';
+      html += '<span class="value" style="color:#8FC97A;font-size:0.65rem;">' + count + ' artifact' + (count !== 1 ? 's' : '') + '</span>';
+      if (lastUpd) html += '<span style="color:#9AA091;font-size:0.5rem;">' + lastUpd + '</span>';
       html += '</div>';
     });
     html += '</div>';
-    html += '<div id="footlocker-artifacts" style="margin-top:4px;padding-top:4px;border-top:1px solid #1e1e2e;max-height:200px;overflow-y:auto;"></div>';
+    html += '<div id="footlocker-artifacts" style="margin-top:4px;padding-top:4px;border-top:1px solid #171A15;max-height:200px;overflow-y:auto;"></div>';
     content.innerHTML = html;
   }).catch(function() {
-    content.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Footlocker offline</span></div>';
+    content.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Footlocker offline</span></div>';
   });
 }
 
 window.openFootlockerChest = function(agent, el) {
   var artifactsDiv = document.getElementById('footlocker-artifacts');
   if (!artifactsDiv) return;
-  artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Loading ' + agent + '\'s chest...</span></div>';
+  artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">Loading ' + agent + '\'s chest...</span></div>';
   apiFetch('/api/footlocker/' + encodeURIComponent(agent), { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var artifacts = d.artifacts || [];
     if (artifacts.length === 0) {
-      artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Chest is empty</span></div>';
+      artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">Chest is empty</span></div>';
       return;
     }
-    var html = '<div style="font-size:0.6rem;color:#a78bfa;margin-bottom:4px;">📂 ' + agent + '\'s Chest — ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
+    var html = '<div style="font-size:0.6rem;color:#A98AD6;margin-bottom:4px;">📂 ' + agent + '\'s Chest — ' + artifacts.length + ' artifact' + (artifacts.length !== 1 ? 's' : '') + '</div>';
     artifacts.forEach(function(a) {
       var title = a.title || 'Untitled';
       var type = a.artifact_type || 'summary';
       var desc = (a.description || '').slice(0, 100);
       var files = a.file_count || 0;
       var date = a.created_at ? new Date(a.created_at).toLocaleDateString() : '';
-      html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #1a1a2e;cursor:pointer;" onclick="openFootlockerArtifact(\'' + agent + '\',\'' + a.id + '\', this)">';
-      html += '<span style="color:#a78bfa;">📄</span>';
-      html += '<span style="flex:1;color:#e0e0e0;font-size:0.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</span>';
-      html += '<span style="color:#948d9e;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
-      html += '<span style="color:#948d9e;font-size:0.5rem;">' + date + '</span>';
-      html += '<span style="color:#60a5fa;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">⬇</span>';
+      html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid #111310;cursor:pointer;" onclick="openFootlockerArtifact(\'' + agent + '\',\'' + a.id + '\', this)">';
+      html += '<span style="color:#A98AD6;">📄</span>';
+      html += '<span style="flex:1;color:#ECEDE6;font-size:0.6rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</span>';
+      html += '<span style="color:#9AA091;font-size:0.5rem;">' + files + ' file' + (files !== 1 ? 's' : '') + '</span>';
+      html += '<span style="color:#9AA091;font-size:0.5rem;">' + date + '</span>';
+      html += '<span style="color:#63C7D4;font-size:0.5rem;cursor:pointer;" onclick="event.stopPropagation();downloadFootlocker(\'' + agent + '\',\'' + a.id + '\')">⬇</span>';
       html += '</div>';
-      html += '<div id="fl-artifact-' + a.id.replace(/[^a-zA-Z0-9]/g,'') + '" style="display:none;padding:4px 8px;background:#0d0d18;border-radius:4px;margin:2px 0;font-size:0.55rem;"></div>';
+      html += '<div id="fl-artifact-' + a.id.replace(/[^a-zA-Z0-9]/g,'') + '" style="display:none;padding:4px 8px;background:#111310;border-radius:4px;margin:2px 0;font-size:0.55rem;"></div>';
     });
     artifactsDiv.innerHTML = html;
   }).catch(function() {
-    artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#f87171;">Failed to open chest</span></div>';
+    artifactsDiv.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Failed to open chest</span></div>';
   });
 };
 
@@ -3490,30 +3555,30 @@ window.openFootlockerArtifact = function(agent, artifactId, el) {
   if (!detailEl) return;
   if (detailEl.style.display !== 'none') { detailEl.style.display = 'none'; return; }
   detailEl.style.display = 'block';
-  detailEl.innerHTML = '<div class="stat"><span class="label" style="color:#948d9e;">Loading...</span></div>';
+  detailEl.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">Loading...</span></div>';
   apiFetch('/api/footlocker/' + encodeURIComponent(agent) + '/' + artifactId, { signal: AbortSignal.timeout(15000) }).then(function(r){return r.json();}).then(function(d){
     var art = d.artifact || {};
     var files = d.files || [];
     var desc = (art.description || '').slice(0, 300);
     var meta = art.metadata || {};
-    var html = '<div style="color:#8b8ba0;margin-bottom:4px;">';
+    var html = '<div style="color:#6C7263;margin-bottom:4px;">';
     if (desc) html += '<div>' + desc + '</div>';
     if (meta.resolution_notes) html += '<div style="margin-top:2px;">📝 ' + meta.resolution_notes + '</div>';
-    if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">🔗 <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#60a5fa;">Proof of Work</a></div>';
+    if (meta.proof_of_work_link) html += '<div style="margin-top:2px;">🔗 <a href="' + meta.proof_of_work_link + '" target="_blank" style="color:#63C7D4;">Proof of Work</a></div>';
     html += '</div>';
     if (files.length > 0) {
-      html += '<div style="font-size:0.55rem;color:#948d9e;margin-bottom:2px;">Files:</div>';
+      html += '<div style="font-size:0.55rem;color:#9AA091;margin-bottom:2px;">Files:</div>';
       files.forEach(function(f) {
         html += '<div style="display:flex;gap:4px;padding:1px 0;">';
-        html += '<span style="color:#a78bfa;">📄</span>';
-        html += '<span style="flex:1;color:#c0c0d0;">' + f.filename + '</span>';
-        html += '<span style="color:#948d9e;">' + (f.file_size || 0) + 'b</span>';
+        html += '<span style="color:#A98AD6;">📄</span>';
+        html += '<span style="flex:1;color:#D8DACE;">' + f.filename + '</span>';
+        html += '<span style="color:#9AA091;">' + (f.file_size || 0) + 'b</span>';
         html += '</div>';
       });
     }
     detailEl.innerHTML = html;
   }).catch(function() {
-    detailEl.innerHTML = '<div style="color:#f87171;">Failed to load artifact</div>';
+    detailEl.innerHTML = '<div style="color:#E4695A;">Failed to load artifact</div>';
   });
 };
 
@@ -3550,8 +3615,70 @@ setTimeout(function() { updateFootlocker(); setInterval(updateFootlocker, 30000)
         paint(n + ' function' + (n === 1 ? '' : 's') + ' available');
         if (d.degraded) el.title = d.note || 'served from the gateway';
       } else {
-        paint('count unavailable', '#f0a13a');
+        paint('count unavailable', '#DC8A1E');
       }
     })
-    .catch(function () { paint('catalog unavailable', '#f87171'); });
+    .catch(function () { paint('catalog unavailable', '#E4695A'); });
 })();
+
+// ── Nexus Aside loopback ───────────────────────────────────────────────
+// The relay's aside-push tool (POST /api/aside/push) drops an item into
+// persistent state; every open Nexus dashboard polls /api/aside/current and
+// renders the newest item in the dynamic aside pane. The pane stays hidden
+// until something is pushed, and closes everywhere when aside-close fires.
+var __asideLastId = '__init__';
+function renderAsideItem(item) {
+  var body = document.getElementById('aside-body');
+  var titleEl = document.getElementById('aside-title');
+  var byEl = document.getElementById('aside-by');
+  if (!body || !titleEl) return;
+  if (!item) { document.body.classList.remove('aside-open'); body.innerHTML = ''; return; }
+  titleEl.textContent = item.title || item.kind || 'Aside';
+  if (byEl) byEl.textContent = item.by ? '\u00b7 ' + item.by : '';
+  body.innerHTML = '';
+  if (item.kind === 'url') {
+    var f = document.createElement('iframe');
+    f.src = item.url;
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+    body.appendChild(f);
+  } else if (item.kind === 'image') {
+    var im = document.createElement('img');
+    im.src = item.url; im.alt = item.title || '';
+    body.appendChild(im);
+  } else if (item.kind === 'video') {
+    var v = document.createElement('video');
+    v.src = item.url; v.controls = true; v.autoplay = true; v.muted = true;
+    body.appendChild(v);
+  } else if (item.kind === 'html') {
+    var hf = document.createElement('iframe');
+    hf.setAttribute('sandbox', 'allow-scripts');
+    hf.srcdoc = item.html || '';
+    body.appendChild(hf);
+  } else {
+    var div = document.createElement('div');
+    div.className = 'aside-text';
+    if (item.kind === 'markdown' && typeof renderMarkdown === 'function') {
+      div.innerHTML = renderMarkdown(item.text || '');
+    } else {
+      var pre = document.createElement('pre');
+      pre.textContent = item.text || item.url || '';
+      div.appendChild(pre);
+    }
+    body.appendChild(div);
+  }
+  document.body.classList.add('aside-open');
+  body.scrollTop = 0;
+}
+function pollAside() {
+  window.apiFetch('/api/aside/current').then(function(r){ return r.json(); }).then(function(d){
+    var it = d && d.item;
+    var id = it ? it.id : null;
+    if (id !== __asideLastId) { __asideLastId = id; renderAsideItem(it); }
+  }).catch(function(){});
+}
+window.asideClose = function() {
+  window.apiFetch('/api/aside/close', { method: 'POST' }).catch(function(){});
+  __asideLastId = null;
+  renderAsideItem(null);
+};
+setTimeout(function(){ pollAside(); setInterval(pollAside, 5000); }, 4000);
