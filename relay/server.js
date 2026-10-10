@@ -1570,13 +1570,14 @@ const toolHandlers = {
     const KINDS = ['url', 'image', 'video', 'html', 'text', 'markdown'];
     if (!KINDS.includes(kind)) return { error: `kind must be one of ${KINDS.join('|')}` };
     if ((kind === 'url' || kind === 'image' || kind === 'video') && !args?.url) return { error: 'url is required for kind url|image|video' };
+    const bodyText = args?.text ?? args?.content;
     const item = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
       kind,
       title: String(args?.title || kind).slice(0, 120),
       url: args?.url ? String(args.url) : undefined,
-      html: args?.html ? String(args.html).slice(0, 200000) : undefined,
-      text: args?.text ? String(args.text).slice(0, 200000) : undefined,
+      html: (args?.html ?? (kind === 'html' ? bodyText : undefined)) ? String(args?.html ?? bodyText).slice(0, 200000) : undefined,
+      text: bodyText ? String(bodyText).slice(0, 200000) : undefined,
       by: String(args?.by || 'agent').slice(0, 60),
       ts: Date.now(),
     };
