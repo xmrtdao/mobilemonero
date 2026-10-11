@@ -115,6 +115,7 @@ import {
 
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
 import { startHarnessProxies } from './harness-proxy.mjs';
+import { startEntitySyncListener } from './lib/entity-sync-listener.mjs';
 import { videoEditor } from './tools/video-editor.mjs';
 import { videoBrief, probe as probeMedia, detectShots, contactSheet, loudness, waveform } from './tools/perception.mjs';
 import {
@@ -16108,6 +16109,16 @@ try {
   startHarnessProxies({ root: join(__dirname, '..'), logger: console });
 } catch (e) {
   console.warn('[harness-proxy] failed to start:', e?.message || e);
+}
+
+// ── Entity sync listener ──
+// Drains app.entity_sync_outbox (populated by the pfp_leads trigger) so CRM
+// corrections propagate to knowledge_entities / fleet_memory / shared_context
+// automatically. See relay/lib/entity-sync-listener.mjs.
+try {
+  startEntitySyncListener({ logger: console });
+} catch (e) {
+  console.warn('[entity-sync] failed to start:', e?.message || e);
 }
 
 // ── Mining Pool Stats ──
