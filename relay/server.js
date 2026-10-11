@@ -116,6 +116,7 @@ import {
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
 import { startHarnessProxies } from './harness-proxy.mjs';
 import { startEntitySyncListener } from './lib/entity-sync-listener.mjs';
+import { createResolver as createEntityResolver } from './lib/entity-resolver.mjs';
 import { videoEditor } from './tools/video-editor.mjs';
 import { videoBrief, probe as probeMedia, detectShots, contactSheet, loudness, waveform } from './tools/perception.mjs';
 import {
@@ -3717,6 +3718,19 @@ const toolHandlers = {
         return { success: true, lead: result[0] };
       }
       return { error: 'unknown action: ' + action };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  // ── Unified Entity Resolver ──
+  // One lookup across CRM + memory stores; see relay/lib/entity-resolver.mjs.
+  'resolve-entity': async (args) => {
+    const q = args?.query || args?.q || args?.name;
+    if (!q) return { error: 'query is required (name, alias, organization, role, or email — current or superseded)' };
+    try {
+      const resolver = createEntityResolver({ query: (t, p) => queryLocalPg(t, p) });
+      return await resolver.resolveEntity(String(q), { limit: Math.min(args?.limit || 5, 20) });
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -8414,11 +8428,18 @@ async function getMcpToolSchemas() {
 // Curated parameter schemas for the tools agents reach for most. Keys are tool
 // names; values are JSON Schema objects for the tool's `parameters`.
 const CURATED_TOOL_SCHEMAS = {
+  'resolve-entity': {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Name, alias, organization, role phrase, or email (current or superseded) to resolve.' },
+      limit: { type: 'number', description: 'Max entity clusters to return (default 5).' },
+    },
+    required: ['query'],
+  },
   'aside-push': {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['url', 'image', 'video', 'html', 'text', 'markdown'], description: 'Content kind to display in the aside pane.' },
-      url: { type: 'string', description: 'Required for url/image/video kinds.' },
+      kind: { type: 'string', enum: ['url', 'image', 'video', 'html', 'text', 'markdown'], description: 'Content kind to display in the aside pane.' },      url: { type: 'string', description: 'Required for url/image/video kinds.' },
       html: { type: 'string', description: 'Rendered HTML document for kind html (sandboxed iframe).' },
       text: { type: 'string', description: 'Plain text or markdown source for text/markdown kinds.' },
       title: { type: 'string', description: 'Short title shown in the aside header.' },
@@ -8770,6 +8791,7 @@ function getToolDescription(name) {
     'db-query': 'Run a raw SQL query against the local Postgres database (read-only; use SELECT only)',
     'db-rest': 'Query any database table via the local-sb REST API using path and optional method/body',
     'shared-context': 'Read or write shared context memory visible to all agents (action: read|write|search|recall_by_agent|recall_by_topic, key, value, search_term, agent_id, topic)',
+    'resolve-entity': 'Unified entity resolver — the ONE lookup for "who is X". Searches pfp_leads, pfp_contacts, pfp_partnerships, knowledge_entities, fleet_memory and shared_context, merges records that share a hard identifier (CRM record id or email — never just a first name), and returns canonical entities with current_email, superseded_emails, aliases, organization, relationship, per-field source provenance, and conflict_state. Args: query, limit. Prefer this over querying any single memory store.',
     'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',

@@ -336,6 +336,7 @@ export const TOOL_SECURITY = {
   'sql-migrate': TRUST_LEVELS.CORE,
   'db-rest': TRUST_LEVELS.TRUSTED,
   'shared-context': TRUST_LEVELS.TRUSTED,
+  'resolve-entity': TRUST_LEVELS.TRUSTED,
   'recall_context': TRUST_LEVELS.TRUSTED,
   'knowledge-dedup': TRUST_LEVELS.TRUSTED,
   'task-dedup': TRUST_LEVELS.TRUSTED,
