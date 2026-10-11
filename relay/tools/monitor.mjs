@@ -41,16 +41,18 @@ export function getSystemResources() {
   // CPU info (cross-platform)
   try {
     if (process.platform === 'win32') {
-      const cpu = execSync('wmic cpu get loadpercentage /value', { encoding: 'utf8', timeout: 5000 });
-      const match = cpu.match(/LoadPercentage=(\d+)/);
-      if (match) info.cpu.usage = `${match[1]}%`;
-      
-      const mem = execSync('wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /value', { encoding: 'utf8', timeout: 5000 });
-      const freeMatch = mem.match(/FreePhysicalMemory=(\d+)/);
-      const totalMatch = mem.match(/TotalVisibleMemorySize=(\d+)/);
-      if (freeMatch && totalMatch) {
-        const freeMB = Math.round(parseInt(freeMatch[1]) / 1024);
-        const totalMB = Math.round(parseInt(totalMatch[1]) / 1024);
+      // wmic was removed from Windows 11 — use CIM via PowerShell instead.
+      // One spawn prints three lines: cpuPct, freeKB, totalKB. No nested
+      // quotes or $vars — cmd.exe mangles those on the way through.
+      const out = execSync(
+        'powershell -NoProfile -Command "(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average; (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory; (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize"',
+        { encoding: 'utf8', timeout: 8000 }
+      ).trim();
+      const parts = out.split(/\r?\n/).map(s => parseInt(s.trim(), 10));
+      if (Number.isFinite(parts[0])) info.cpu.usage = `${parts[0]}%`;
+      if (Number.isFinite(parts[1]) && Number.isFinite(parts[2]) && parts[2] > 0) {
+        const freeMB = Math.round(parts[1] / 1024);
+        const totalMB = Math.round(parts[2] / 1024);
         info.memory.system = {
           total: `${totalMB} MB`,
           free: `${freeMB} MB`,
