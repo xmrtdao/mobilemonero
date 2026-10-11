@@ -1358,6 +1358,24 @@ export function createCampusHandler(deps) {
   </div>
 </div>
 
+<!-- Browser tile — summons the dynamic aside pane with the browser chrome.
+     The pane itself is not new (aside-push loopback below); what this adds
+     is the manual on-demand entry point and the harness shortcuts. -->
+<div class="card tile tile-p8" id="browser">
+  <h3 style="color:var(--accent-orange);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    🌐 Browser
+    <span style="color:var(--text-dim);font-weight:400;font-size:0.7rem;">— contained pane · drives the harnesses</span>
+  </h3>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+    <button onclick="openBrowserPane()" style="padding:6px 14px;border-radius:6px;border:none;background:#ff6b35;color:white;cursor:pointer;font-size:12px;font-weight:600;">Open Browser</button>
+    <button onclick="openBrowserPane('http://127.0.0.1:4130/','OpenCode')" title="OpenCode coding agent, embedded via the loopback auth proxy" style="padding:6px 14px;border-radius:6px;border:1px solid #3a3a5a;background:transparent;color:#ff6b35;cursor:pointer;font-size:12px;">⌨️ opencode</button>
+    <button onclick="openBrowserPane('http://127.0.0.1:4131/','DSH')" title="DeepSeek harness, embedded via the loopback auth proxy" style="padding:6px 14px;border-radius:6px;border:1px solid #3a3a5a;background:transparent;color:#ff6b35;cursor:pointer;font-size:12px;">🌊 dsh</button>
+  </div>
+  <div style="margin-top:6px;font-size:10px;color:#948d9e;">
+    Agents push pages here with <code>aside-push</code> → <code>/browser?u=…</code> · harnesses are loopback, view from the host laptop
+  </div>
+</div>
+
 <!-- Campus Forum Full Board -->
 <div id="board-full" class="card tile-wide tile-p9" style="margin-top:0.5rem;">
   <h3 style="color:var(--accent-yellow);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">

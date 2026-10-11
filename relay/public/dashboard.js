@@ -3657,11 +3657,16 @@ function renderAsideItem(item) {
   } else {
     var div = document.createElement('div');
     div.className = 'aside-text';
-    if (item.kind === 'markdown' && typeof renderMarkdown === 'function') {
-      div.innerHTML = renderMarkdown(item.text || '');
+    var txt = item.text || item.url || '';
+    // Render markdown-looking text as markdown regardless of declared kind —
+    // agents often push kind 'text' with markdown bodies (bold, lists,
+    // headers) and a raw <pre> makes fleet-status cards unreadable.
+    var looksMarkdown = /(^|\n)#{1,4}\s|\*\*[^*\n]+\*\*|^\s*[-*•]\s+\S/m.test(txt);
+    if (typeof renderMarkdown === 'function' && (item.kind === 'markdown' || looksMarkdown)) {
+      div.innerHTML = renderMarkdown(txt);
     } else {
       var pre = document.createElement('pre');
-      pre.textContent = item.text || item.url || '';
+      pre.textContent = txt;
       div.appendChild(pre);
     }
     body.appendChild(div);
@@ -3682,3 +3687,18 @@ window.asideClose = function() {
   renderAsideItem(null);
 };
 setTimeout(function(){ pollAside(); setInterval(pollAside, 5000); }, 4000);
+
+// ── Browser tile ───────────────────────────────────────────────────────
+// Summons the aside pane with the browser chrome (/browser), optionally
+// preloaded with a URL. Agents do the equivalent with aside-push directly:
+// kind 'url', url '/browser?u=<target>'. The harness shortcuts point at the
+// relay's loopback auth proxies (4130 opencode, 4131 dsh) so credentials
+// never touch the page.
+window.openBrowserPane = function(u, title) {
+  var url = '/browser' + (u ? ('?u=' + encodeURIComponent(u)) : '');
+  window.apiFetch('/api/aside/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'url', url: url, title: title || 'Browser', by: 'operator' }),
+  }).catch(function(){});
+};

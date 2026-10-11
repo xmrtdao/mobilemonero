@@ -114,6 +114,7 @@ import {
 } from './vault.mjs';
 
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
+import { startHarnessProxies } from './harness-proxy.mjs';
 import { videoEditor } from './tools/video-editor.mjs';
 import { videoBrief, probe as probeMedia, detectShots, contactSheet, loudness, waveform } from './tools/perception.mjs';
 import {
@@ -4491,6 +4492,17 @@ app.get('/images/:name', (req, res) => {
   res.sendFile(filePath);
 });
 
+// The aside browser chrome (URL bar + harness shortcuts). Served explicitly,
+// same explicit-route discipline as the dashboard scripts below. No-cache:
+// it's tiny and agents push ?u= URLs that must take effect immediately.
+app.get('/browser', (req, res) => {
+  const filePath = join(PUBLIC_DIR, 'browser.html');
+  if (!existsSync(filePath)) return res.status(404).send('browser chrome not found');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(filePath);
+});
+
 // The dashboard's own scripts, served explicitly rather than through a static
 // mount.
 //
@@ -8734,7 +8746,7 @@ function getToolDescription(name) {
     'state-get': 'Get a value from persistent state',
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
-    'aside-push': 'Push content into the dynamic aside pane of every open XMRT Nexus dashboard. Args: kind (url|image|video|html|text|markdown), url (for url/image/video) or html or text, title, by. The pane appears only when something is pushed — use it to show the operator a web page, file preview, generated image/video, or rendered document.',
+    'aside-push': 'Push content into the dynamic aside pane of every open XMRT Nexus dashboard. Args: kind (url|image|video|html|text|markdown), url (for url/image/video) or html or text, title, by. The pane appears only when something is pushed — use it to show the operator a web page, file preview, generated image/video, or rendered document. To drive the contained browser (URL bar + agent harnesses), push kind url with url /browser?u=<target>; harness shortcuts: http://127.0.0.1:4130/ (opencode), http://127.0.0.1:4131/ (dsh) — both are relay loopback proxies that inject auth, so never push 4096/3080 directly.',
     'aside-close': 'Close the aside pane on all open XMRT Nexus dashboards.',
     'clerk-chat': 'Office Clerk — deterministic offline responder. Args: message. Matches the message against a wired intent table (status, resources, tasks, external, mining, ollama, remember/recall, aside open/close, restart) and executes the mapped relay tool with no AI involved. Returns { text, provenance, intent, tool }. Use as a zero-cost first responder or offline fallback.',
     'github-post': 'Post a comment on a GitHub issue',
@@ -16087,6 +16099,15 @@ if (relayHttpServer && typeof relayHttpServer.on === 'function') {
     }
   });
   console.log('[realtime] WebSocket upgrade proxy registered for /realtime/v1 -> 127.0.0.1:54321');
+}
+
+// ── Harness proxies (opencode / dsh embedded in the Nexus aside browser) ──
+// Loopback auth-injecting reverse proxies; see relay/harness-proxy.mjs.
+// ROOT here is the xmrtdao dir (relay/..) — dsh's launch log lives there.
+try {
+  startHarnessProxies({ root: join(__dirname, '..'), logger: console });
+} catch (e) {
+  console.warn('[harness-proxy] failed to start:', e?.message || e);
 }
 
 // ── Mining Pool Stats ──

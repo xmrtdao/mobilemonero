@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus Browser</title>
+<style>
+  :root {
+    --bg: #0d0d14;
+    --bg-raised: #12121a;
+    --border: #2a2a3a;
+    --text: #c0c0d0;
+    --text-dim: #948d9e;
+    --accent: #ff6b35;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; }
+  .chrome {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    background: var(--bg-raised); border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .chrome input[type="text"] {
+    flex: 1; min-width: 0; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    font-size: 12px; outline: none;
+  }
+  .chrome input[type="text"]:focus { border-color: var(--accent); }
+  .chrome button, .chrome a.btn {
+    padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-dim); cursor: pointer;
+    font-size: 11px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .chrome button:hover, .chrome a.btn:hover { color: var(--text); border-color: var(--accent); }
+  .chrome button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .chrome button.harness { color: var(--accent); }
+  #frame { flex: 1; border: 0; width: 100%; background: #fff; }
+  .note {
+    padding: 3px 8px; font-size: 10px; color: var(--text-dim);
+    background: var(--bg-raised); border-bottom: 1px solid var(--border); flex-shrink: 0;
+    display: none;
+  }
+  .note.show { display: block; }
+</style>
+</head>
+<body>
+  <div class="chrome">
+    <button class="harness" onclick="go('http://127.0.0.1:4130/')" title="OpenCode coding agent — embedded via loopback auth proxy">⌨️ opencode</button>
+    <button class="harness" onclick="go('http://127.0.0.1:4131/')" title="DeepSeek harness (dsh) — embedded via loopback auth proxy">🌊 dsh</button>
+    <input id="url" type="text" placeholder="URL — or pick a harness ⟵" spellcheck="false"
+           onkeypress="if(event.key==='Enter')go(this.value)">
+    <button class="primary" onclick="go(document.getElementById('url').value)">Go</button>
+    <a class="btn" id="popout" href="#" target="_blank" rel="noopener" title="Open current page in a full tab">↗</a>
+  </div>
+  <div class="note" id="loopback-note">⌨️/🌊 harnesses run on this machine's loopback — the pane must be viewed from the host laptop. Remote viewers see the refused-connection page.</div>
+  <iframe id="frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" src="about:blank"></iframe>
+
+<script>
+  var frame = document.getElementById('frame');
+  var input = document.getElementById('url');
+  var popout = document.getElementById('popout');
+  var note = document.getElementById('loopback-note');
+
+  function normalize(u) {
+    u = (u || '').trim();
+    if (!u) return null;
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    return u;
+  }
+
+  function go(u) {
+    u = normalize(u);
+    if (!u) return;
+    input.value = u;
+    popout.href = u;
+    frame.src = u;
+    note.classList.toggle('show', /^http:\/\/127\.0\.0\.1:(4130|4131)\//.test(u));
+  }
+
+  // Agents summon this pane via aside-push with /browser?u=<url>.
+  var q = new URLSearchParams(location.search);
+  var initial = q.get('u');
+  if (initial) go(initial);
+</script>
+</body>
+</html>
