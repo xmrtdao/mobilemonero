@@ -25,13 +25,13 @@ process.on('unhandledRejection', (err) => {
  */
 
 import express from 'express';
+import compression from 'compression';
 import { readFileSync, existsSync, mkdirSync, writeFile, writeFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { spawn, execSync, execFileSync } from 'child_process';
 import { hostname as osHostname } from 'os';
-import { createCampusHandler } from './campus-page.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -100,6 +100,8 @@ import {
   pollFeeds, readBoard as readFeedBoard, boardCount as feedBoardCount, boardHealth as feedBoardHealth,
   boardBySource as feedBoardBySource,
 } from './jobby/feed-board.mjs';
+import * as domainStore from './jobby/domain-store.mjs';
+import { runOnce as runDomainPass } from './jobby/domain-daemon.mjs';
 // The per-application reader behind GET /api/jobby/applications. Imported here
 // because the endpoint calls it: an import added below its first use, or never
 // added at all, is a ReferenceError that only shows up on that one route.
@@ -113,6 +115,9 @@ import {
 } from './vault.mjs';
 
 import { getFullSnapshot, getSystemResources, checkExternalServices } from './tools/monitor.mjs';
+import { startHarnessProxies } from './harness-proxy.mjs';
+import { startEntitySyncListener } from './lib/entity-sync-listener.mjs';
+import { createResolver as createEntityResolver, getResolverMetrics } from './lib/entity-resolver.mjs';
 import { videoEditor } from './tools/video-editor.mjs';
 import { videoBrief, probe as probeMedia, detectShots, contactSheet, loudness, waveform } from './tools/perception.mjs';
 import {
@@ -120,6 +125,7 @@ import {
   get as getMedia, list as listMedia, remove as removeMedia,
 } from './tools/media-registry.mjs';
 import { paragraphPublish } from './tools/paragraph-publisher.mjs';
+import * as paragraphManager from './tools/paragraph-manager.mjs';
 import * as state from './lib/state.mjs';
 import * as shareLog from './lib/share-log.mjs';
 import { createTaskRunner } from './lib/task-runner.mjs';
@@ -141,6 +147,13 @@ import { handleAgentPrompt, pollOutbox } from './hermes-bridge.mjs';
 
 // CuttlefishClaws protocol engines (TG-001, SS-001, SGQ-001, AR-001)
 import { registerCuttlefishRoutes } from './lib/cuttlefish-routes.mjs';
+// Inbound email capture lives in lib/ because server.js is gitignored (line 34).
+// Everything that was inline here — the envelope unwrap, the DB write, the
+// domain-scoped body fetch, the 10-minute pass — is now a tested module, so the
+// fixes are versioned instead of living only on one machine's disk.
+import {
+  fetchInboundBody, persistInboundEmail, runInboundSyncPass,
+} from './lib/inbound-email.mjs';
 import { parseObsidianWikiLinks } from './lib/obsidian-graph-links.mjs';
 import { registerUniversityBridge } from './lib/university-bridge.mjs';
 
@@ -560,6 +573,7 @@ const EMAIL_DOMAINS = {
     // whose routes are /resend/inbox with nothing in between - kept exactly as
     // they were, because other code and the inbox pages call those paths.
     path: '',
+    key_scope: 'partyfavorphoto.com',
     // Whether a webhook for this domain must carry a valid signature.
     //
     // False for the three older domains: their signing secrets have never been
@@ -580,23 +594,46 @@ const EMAIL_DOMAINS = {
   },
   mobilemonero: {
     domain: 'mobilemonero.com', label: 'MobileMonero',
-    // The outbound key is the 31 Harbor one, not RESEND_XMRT_API_KEY.
+    // The outbound key is RESEND_XMRT_API_KEY, which is scoped to this domain
+    // and nothing else. Verified live against the provider: it sees
+    // mobilemonero.com(verified) and no other domain.
     //
-    // RESEND_XMRT_API_KEY is rejected by the provider outright - the domains
-    // endpoint answers HTTP 400 {"message":"API key is invalid"}, not merely
-    // unverified or rate-limited. Every send routed through this entry failed,
-    // and the relay logged it once at startup and then carried on:
+    // WHAT CHANGED, AND WHY IT WAS WRONG BEFORE
+    // ------------------------------------------
+    // This used to borrow RESEND_31HARBOR_API_KEY because RESEND_XMRT_API_KEY was
+    // rejected outright - the domains endpoint answered HTTP 400 {"message":"API
+    // key is invalid"}. The old comment below said so at length, and was accurate
+    // when written:
     //   [send-email] Resend key for mobilemonero.com is REJECTED (HTTP 400)
     //
-    // That warning is the whole signal. There is no retry and no alert, so an
-    // invalid credential looks identical to a healthy quiet mailbox until
-    // someone notices nobody replied.
+    // The key has since been rotated and is valid again. The comment was not
+    // updated with it, which is the ordinary way a working system ends up
+    // documenting a fault that no longer exists - and the next reader would have
+    // kept the workaround.
+    //
+    // BORROWING A KEY IS NOT A NEUTRAL FALLBACK
+    // -----------------------------------------
+    // A Resend key is scoped to one domain. Using 31harbor's key for mobilemonero
+    // happened to work for SENDING, because Resend accepts any valid key and
+    // checks the From domain separately. It does not work for READING: a
+    // per-id inbound fetch against a key that cannot see the domain returns 404,
+    // and a 404 is indistinguishable from "the provider no longer has this mail".
+    //
+    // That is not hypothetical. During the inbox fix, 12 messages were written off
+    // as expired on exactly that signal. Every one of them was 31harbor mail
+    // fetched with the PFP key; re-tested with the right key, all 12 returned 200.
+    // The same failure was latent here for mobilemonero inbound, which is why the
+    // body fetch keys off the RECIPIENT domain and not off this field alone.
     //
     // Only the outbound key moves. `secret` stays RESEND_MM_WEBHOOK_SECRET,
-    // because that signs INBOUND webhooks and has nothing to do with sending:
+    // because that signs INBOUND webhooks and nothing to do with sending:
     // changing it would break signature verification for mail already arriving
     // on the mobilemonero.com segment.
-    key: 'RESEND_31HARBOR_API_KEY', secret: 'RESEND_MM_WEBHOOK_SECRET',
+    // One key, one domain. `selfcheck` records the correspondence rather than
+    // leaving it to be inferred, because a key borrowed from a sibling domain is
+    // exactly the kind of thing that survives for years because it "works".
+    key: 'RESEND_XMRT_API_KEY', secret: 'RESEND_MM_WEBHOOK_SECRET',
+    key_scope: 'mobilemonero.com',
     agent: 'xmrt', purpose: 'XMRT DAO system emails',
     path: 'mobilemonero',
     strict: false,
@@ -606,6 +643,7 @@ const EMAIL_DOMAINS = {
   '31harbor': {
     domain: '31harbor.com', label: '31 Harbor',
     key: 'RESEND_31HARBOR_API_KEY', secret: 'RESEND_31HARBOR_WEBHOOK_SECRET',
+    key_scope: '31harbor.com',
     agent: 'harbor', purpose: '31 Harbor campaign emails',
     path: '31harbor',
     strict: false,
@@ -619,6 +657,7 @@ const EMAIL_DOMAINS = {
     key: 'RESEND_JOBBY_API_KEY', secret: 'RESEND_JOBBY_WEBHOOK_SECRET',
     agent: 'jobby', purpose: "A candidate's own sending and receiving address",
     path: 'jobby',
+    key_scope: 'jobbymcjobberson.com',
     // Strict from the start. This domain is being set up now, its secret is known,
     // and it is the one whose addresses are candidates' own - so it is the one
     // where injected mail would be most damaging. A candidate reading a forged
@@ -942,33 +981,6 @@ function jobbyTools() {
 }
 
 const toolHandlers = {
-  // ── Nexus Aside loopback ────────────────────────────────────────
-  // Push content (web page, image, video, rendered HTML, text, markdown)
-  // into the dynamic aside pane of every open XMRT Nexus dashboard.
-  'aside-push': async (args) => {
-    const kind = args?.kind;
-    const KINDS = ['url', 'image', 'video', 'html', 'text', 'markdown'];
-    if (!KINDS.includes(kind)) return { error: `kind must be one of ${KINDS.join('|')}` };
-    if ((kind === 'url' || kind === 'image' || kind === 'video') && !args?.url) return { error: 'url is required for kind url|image|video' };
-    const bodyText = args?.text ?? args?.content;
-    const item = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      kind,
-      title: String(args?.title || kind).slice(0, 120),
-      url: args?.url ? String(args.url) : undefined,
-      html: (args?.html ?? (kind === 'html' ? bodyText : undefined)) ? String(args?.html ?? bodyText).slice(0, 200000) : undefined,
-      text: bodyText ? String(bodyText).slice(0, 200000) : undefined,
-      by: String(args?.by || 'agent').slice(0, 60),
-      ts: Date.now(),
-    };
-    state.set('nexusAside', item);
-    return { success: true, id: item.id, kind: item.kind, title: item.title };
-  },
-  'aside-close': async () => {
-    state.set('nexusAside', null);
-    return { success: true };
-  },
-
   // ── PFP financial tools ────────────────────────────────────────────────
   // The only tools in this map that can move money. Each asks the standing gate
   // before it reaches Stripe, and the gate is expected to refuse an agent that
@@ -1122,6 +1134,14 @@ const toolHandlers = {
     return { success: true, mediaId: r.entry.id, path: w.path };
   },
   'paragraph-publish': paragraphPublish,
+  'paragraph-posts-list': paragraphManager.paragraphPostsList,
+  'paragraph-post-get': paragraphManager.paragraphPostGet,
+  'paragraph-post-create': paragraphManager.paragraphPostCreate,
+  'paragraph-post-update': paragraphManager.paragraphPostUpdate,
+  'paragraph-post-set-status': paragraphManager.paragraphPostSetStatus,
+  'paragraph-post-delete': paragraphManager.paragraphPostDelete,
+  'paragraph-publication-get': paragraphManager.paragraphPublicationGet,
+  'paragraph-api-capabilities': paragraphManager.paragraphApiCapabilities,
 
   'muapi-generate-image': async (args) => {
     const prompt = args?.prompt || args?.p || '';
@@ -1552,11 +1572,41 @@ const toolHandlers = {
     return { success: true, key, value };
   },
 
+  // ── Nexus Aside loopback ────────────────────────────────────────
+  // Push a piece of content (web page, image, video, rendered HTML, text,
+  // markdown) into the dynamic aside pane of every open XMRT Nexus dashboard.
+  // Dashboards poll /api/aside/current and render the newest item; the pane
+  // stays hidden until something is pushed. State lives in persistent state
+  // so a relay restart does not blank an operator's screen mid-review.
+  'aside-push': async (args) => {
+    const kind = args?.kind;
+    const KINDS = ['url', 'image', 'video', 'html', 'text', 'markdown'];
+    if (!KINDS.includes(kind)) return { error: `kind must be one of ${KINDS.join('|')}` };
+    if ((kind === 'url' || kind === 'image' || kind === 'video') && !args?.url) return { error: 'url is required for kind url|image|video' };
+    const bodyText = args?.text ?? args?.content;
+    const item = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      kind,
+      title: String(args?.title || kind).slice(0, 120),
+      url: args?.url ? String(args.url) : undefined,
+      html: (args?.html ?? (kind === 'html' ? bodyText : undefined)) ? String(args?.html ?? bodyText).slice(0, 200000) : undefined,
+      text: bodyText ? String(bodyText).slice(0, 200000) : undefined,
+      by: String(args?.by || 'agent').slice(0, 60),
+      ts: Date.now(),
+    };
+    state.set('nexusAside', item);
+    return { success: true, id: item.id, kind: item.kind, title: item.title };
+  },
+  'aside-close': async () => {
+    state.set('nexusAside', null);
+    return { success: true };
+  },
+
   'service_control': async (args) => {
     const action = args?.action;
     const service = args?.service;
     const validActions = ['restart', 'status', 'start', 'stop'];
-    const validServices = ['relay', 'pg', 'local-sb', 'vite', 'tunnel', 'alice', 'cron-engine-v2', 'cuttlefishclaws-mcp', 'suite-mcp', 'campaign-scheduler', 'page-agent-mcp', 'dsh', 'supervisor'];
+    const validServices = ['relay', 'pg', 'local-sb', 'vite', 'tunnel', 'alice', 'cron-engine-v2', 'cuttlefishclaws-mcp', 'suite-mcp', 'campaign-scheduler', 'page-agent-mcp', 'dsh', 'graytech', 'supervisor', 'opencode'];
     if (!action || !validActions.includes(action)) {
       return { error: `action must be one of: ${validActions.join(', ')}` };
     }
@@ -1632,6 +1682,7 @@ const toolHandlers = {
           { name: 'suite-mcp', healthCheck: () => checkHttp('http://127.0.0.1:3121/health', 2000) },
           { name: 'campaign-scheduler', healthCheck: () => checkProcessByScript('campaign-scheduler.mjs') },
           { name: 'zero-claw', healthCheck: () => checkHttp('http://127.0.0.1:5174/', 2000) },
+          { name: 'opencode', healthCheck: () => checkHttp('http://127.0.0.1:4096/api/info', 2000) },
         ].find(s => s.name === service);
         const liveCheck = svcDef ? await svcDef.healthCheck() : null;
 
@@ -3682,6 +3733,19 @@ const toolHandlers = {
     }
   },
 
+  // ── Unified Entity Resolver ──
+  // One lookup across CRM + memory stores; see relay/lib/entity-resolver.mjs.
+  'resolve-entity': async (args) => {
+    const q = args?.query || args?.q || args?.name;
+    if (!q) return { error: 'query is required (name, alias, organization, role, or email — current or superseded)' };
+    try {
+      const resolver = createEntityResolver({ query: (t, p) => queryLocalPg(t, p) });
+      return await resolver.resolveEntity(String(q), { limit: Math.min(args?.limit || 5, 20) });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
   // ── Resend Send Email (agent sends email via fleet-chat endpoint) ──
   'resend-send-email': async (args) => {
     const { agent, to, subject, body } = args || {};
@@ -4053,6 +4117,38 @@ function guessHandlerFromTitle(title) {
 // ── Express App ─────────────────────────────────────────────
 const app = express();
 
+// ── Response compression ─────────────────────────────────────
+// Added 2026-10-12. The Suite SPA's main bundle is ~11.7 MB of JS and was being
+// served UNCOMPRESSED — express.static does not gzip, and no compression
+// middleware was installed. Verified against the live endpoint: a request
+// sending `Accept-Encoding: gzip, deflate, br` came back with no
+// Content-Encoding at all and Content-Length: 11747476.
+//
+// Through Cloudflare that large an uncompressed body breaks the transfer:
+// browsers failed the load with
+//   GET /suite/assets/index-*.js net::ERR_HTTP2_PROTOCOL_ERROR
+// while a plain fetch of the same URL still completed. The page then never
+// executed, so the dashboard showed nothing at all.
+//
+// gzip takes this bundle to roughly 3 MB, comfortably inside what the edge
+// will carry. This is registered BEFORE express.static so static assets are
+// covered.
+//
+// The threshold is raised from the 1 KB default because the relay serves a lot
+// of small JSON responses that are already tiny; compressing those costs CPU
+// for no gain. Already-compressed formats are skipped by the library.
+app.use(compression({
+  threshold: 1024,
+  // Don't try to gzip things that are already compressed on disk.
+  filter: (req, res) => {
+    const type = res.getHeader('Content-Type');
+    if (typeof type === 'string' && /image|video|audio|zip|gzip|br|woff2?/i.test(type)) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+}));
+
 // Raw body capture for requests without Content-Type (some agents omit it)
 // Standard JSON parser — fleet chat endpoint has its own fallback for missing Content-Type
 //
@@ -4224,6 +4320,31 @@ function rateLimit(ip, path) {  const now = Date.now();
 
 app.use(async (req, res, next) => {
   // Public API endpoints (no auth required)
+
+  // WHOLE-HOST exemption for the two client-facing PFP hostnames.
+  //
+  // The path list below can only enumerate prefixes, and a studio link is not a
+  // predictable path: prints.partyfavorphoto.com/<booking-token> serves the
+  // studio by Host-header routing, so the token is whatever the funnel issued.
+  // `req.path === '/'` is public, which is why the bare domain worked, but
+  // `req.path === '/a9gjZiQJtkezC5XaiTpzcs5xLOkQf8TX'` matched nothing and was
+  // answered 401 "Authentication required".
+  //
+  // The failure is entirely silent from the client's side of a healthy-looking
+  // funnel: the booking completes, the confirmation page renders, the studio
+  // link is correct, and every client who clicks it is turned away by the
+  // relay's own auth middleware. Found by walking the real link on
+  // 2026-10-14, not by reading code.
+  //
+  // Host-scoped rather than path-scoped on purpose. These two hosts serve only
+  // client-facing product surfaces and are already deliberately exempt from
+  // Cloudflare Access; nothing privileged is reachable through them.
+  const pfpClientHost = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (pfpClientHost === 'prints.partyfavorphoto.com' ||
+      pfpClientHost === 'book.partyfavorphoto.com') {
+    return next();
+  }
+
   if (req.method === 'OPTIONS' ||
       req.path === '/' ||
       req.path === '/ping' ||
@@ -4237,6 +4358,24 @@ app.use(async (req, res, next) => {
       // recorded - while the endpoint looked complete.
       req.path === '/webhook/stripe' ||
       req.path.startsWith('/functions/v1/') ||
+      // PFP Prints Studio (prints.partyfavorphoto.com). A booked client is an
+      // anonymous browser on a public link: they have no RELAY_API_KEY and no
+      // Cloudflare Access JWT, and requiring either is precisely the login page
+      // this product must not have. Every request arrives through the Cloudflare
+      // tunnel carrying CF-* headers, which is what exposed the gap — locally the
+      // same call succeeded, so it only broke for real clients.
+      // Same failure shape as the Stripe omission documented above: the endpoint
+      // looked finished and answered 401 to every real caller.
+      req.path.startsWith('/studio/') ||
+      req.path.startsWith('/api/visual/pfp/') ||
+      // PFP Booking funnel (book.partyfavorphoto.com). Same reasoning as the
+      // studio above: a prospective client is an anonymous browser with no
+      // RELAY_API_KEY and no Cloudflare Access JWT. Nothing here is secret to
+      // reach — the booking token in the URL is the credential, exactly as it
+      // is for the studio link. The one endpoint that can change money is the
+      // Stripe webhook, which authenticates with the Stripe signature over the
+      // raw body rather than with a session.
+      req.path.startsWith('/api/pfp-book/') ||
       req.path === '/api/suite/validate-token' || req.path === '/api/login' || req.path === '/api/auth/cert-login' ||
       req.path.startsWith('/api/suite/') ||
       req.path.startsWith('/rest/v1/') ||
@@ -4258,6 +4397,18 @@ app.use(async (req, res, next) => {
       req.path === '/api/leads/pfp' ||
       req.path === '/suite' || req.path.startsWith('/suite/') ||
       req.path === '/elze' || req.path.startsWith('/elze/') ||
+      // AstraGaze brochure. Public by intent: it is the marketing page for the
+      // face-recognition console, and the whole reason it exists is to be
+      // readable by anyone who arrives while that console is restarting. It
+      // contains no operational data - a pitch, a capability table, contact
+      // details - and it reads nothing from the relay.
+      //
+      // It was 401 through the tunnel until this entry was added, which made the
+      // page unreachable to the exact audience it was written for. Auth here
+      // would mean an outage on graytech.mobilemonero.com becomes a blank page
+      // for the public instead of a brochure.
+      req.path === '/graytech' || req.path === '/astragaze' ||
+      req.path.startsWith('/graytech-assets/') ||
       req.path === '/cuttlefishclaws/' || req.path.startsWith('/cuttlefishclaws/')) {
     // If api_key is in query params, set it as a cookie for SPA API calls
     if (req.query.api_key) {
@@ -4441,6 +4592,17 @@ app.get('/images/:name', (req, res) => {
   res.sendFile(filePath);
 });
 
+// The aside browser chrome (URL bar + harness shortcuts). Served explicitly,
+// same explicit-route discipline as the dashboard scripts below. No-cache:
+// it's tiny and agents push ?u= URLs that must take effect immediately.
+app.get('/browser', (req, res) => {
+  const filePath = join(PUBLIC_DIR, 'browser.html');
+  if (!existsSync(filePath)) return res.status(404).send('browser chrome not found');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(filePath);
+});
+
 // The dashboard's own scripts, served explicitly rather than through a static
 // mount.
 //
@@ -4507,6 +4669,28 @@ app.get('/static/markdown.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.sendFile(filePath);
 });
+
+// -- AstraGaze fallback page (relay-hosted) ---------------------------------
+// The live console at graytech.mobilemonero.com goes dark for 56-92s on every
+// restart, because it loads insightface and ONNX models on boot. This page is
+// served from the relay instead - a separate process with no dependency on the
+// recognition model - so the product still has a front door while it recovers.
+//
+// It is NOT a mirror of the console. The first thing on the page says the live
+// service is restarting, because a fallback that looks like the working product
+// is worse than an outage: a visitor concludes the system is broken rather than
+// unavailable. See relay/lib/astragaze-fallback.mjs for the full reasoning,
+// including why Cloudflare Pages could not be used.
+//
+// relay/server.js is gitignored (.gitignore line 34), so the substance lives in
+// the lib module and this is wiring only - the same split relay/lib/ already
+// uses for inbound email.
+try {
+  const { mountAstraGazeFallback } = await import('./lib/astragaze-fallback.mjs');
+  mountAstraGazeFallback(app);
+} catch (e) {
+  console.error('[astragaze] fallback page failed to mount:', e.message);
+}
 
 // ── Suite SPA (Vite build, served locally instead of GH Pages' broken CDN) ──
 // IMPORTANT: SUITE_DIR must point to the Vite build output (suite/dist/), not
@@ -4629,6 +4813,82 @@ if (existsSync(join(BOOKINGS_DIR, 'index.html'))) {
   console.log(`  PFP Bookings SPA: NOT FOUND at ${BOOKINGS_DIR} — skipping`);
 }
 
+// ── PFP Prints — client-facing print studio (prints.partyfavorphoto.com) ──
+// The client arrives on a booking UUID and shapes their template with Eliza.
+// Generation is priced and budget-guarded inside PFPDesigner; a failure opens
+// a task and never auto-retries.
+const PFP_PRINTS_DIR = join(__dirname, 'public', 'pfp-prints');
+const PFP_BRAND_DIR = join(__dirname, '..', 'partyfavorphoto', 'assets');
+// The studio's API is mounted TWICE on purpose.
+//
+//  * /api/visual/pfp/* is the canonical path and works everywhere the relay is
+//    reachable directly (localhost, the other tunnel hostnames, tooling).
+//  * /studio/* is the path the CLIENT uses on prints.partyfavorphoto.com.
+//    A zone-level Cloudflare Access policy intercepts /api/* on that hostname
+//    and answers "Authentication required" before the request ever reaches us;
+//    I do not have a token with Access:Apps:Edit, so /studio/* is the path the
+//    zone does not gate. Same router — not a second implementation.
+//
+// Both mounts are registered BEFORE the host-scoped studio middleware below,
+// otherwise that middleware would short-circuit /studio/* to index.html.
+let pfpPrintsRouter = null;
+try {
+  pfpPrintsRouter = (await import('./routes/pfp-prints.mjs')).default;
+  app.use('/api/visual/pfp', pfpPrintsRouter);
+  app.use('/studio', pfpPrintsRouter);
+  console.log('  PFP Prints API: /api/visual/pfp  and  /studio');
+} catch (e) {
+  console.warn('  PFP Prints API: FAILED to mount -', e.message);
+}
+
+// The client follows a bare link like prints.partyfavorphoto.com, so the host
+// root has to serve the studio — otherwise they land on the relay dashboard.
+// Host-scoped, not path-scoped: taking the root from every other hostname on
+// this same origin would be a far worse break.
+const PFP_PRINTS_HOST = 'prints.partyfavorphoto.com';
+app.use((req, res, next) => {
+  const host = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (host !== PFP_PRINTS_HOST) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/studio/')) return next();
+  return res.sendFile(join(PFP_PRINTS_DIR, 'index.html'));
+});
+
+// Real brand assets, so the studio wears the actual PFP identity.
+app.get('/api/visual/pfp/brand/logo.png', (_req, res) =>
+  res.sendFile(join(PFP_BRAND_DIR, 'logo.png')));
+console.log(`  PFP Prints studio: ${existsSync(join(PFP_PRINTS_DIR, 'index.html')) ? PFP_PRINTS_DIR : 'NOT FOUND - skipping'}`);
+
+// ── PFP Booking funnel (book.partyfavorphoto.com) ──
+//
+// A SEPARATE HOSTNAME, deliberately. The studio is a client who has already
+// paid and is refining a template; the booking funnel is a stranger deciding
+// whether to trust us with money. They are different audiences with different
+// risk, and one Cloudflare Access policy or one blocked path should not be able
+// to take out both.
+//
+// Mounted twice for the same reason as the studio: /api/pfp-book is canonical
+// and works from anywhere the relay is reachable, /book is the path a zone-level
+// Cloudflare Access policy on this hostname does not intercept.
+const PFP_BOOK_DIR = join(__dirname, 'public', 'pfp-book');
+let pfpBookRouter = null;
+try {
+  pfpBookRouter = (await import('./routes/pfp-booking.mjs')).default;
+  app.use('/api/pfp-book', pfpBookRouter);
+  app.use('/book', pfpBookRouter);
+  console.log('  PFP Booking API: /api/pfp-book  and  /book');
+} catch (e) {
+  console.warn('  PFP Booking API: FAILED to mount -', e.message);
+}
+
+const PFP_BOOK_HOST = 'book.partyfavorphoto.com';
+app.use((req, res, next) => {
+  const host = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (host !== PFP_BOOK_HOST) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/book/')) return next();
+  return res.sendFile(join(PFP_BOOK_DIR, 'index.html'));
+});
+console.log(`  PFP Booking site: ${existsSync(join(PFP_BOOK_DIR, 'index.html')) ? PFP_BOOK_DIR : 'NOT FOUND - skipping'}`);
+
 // ── Elze Contract Suite™ ──
 // Landing page at /elze, Analyzer at /elze/analyzer, Writer at /elze/writer
 const ELZE_LANDING_DIR = join(__dirname, 'public', 'elze-landing');
@@ -4716,6 +4976,112 @@ if (existsSync(join(AGENCY_DIR, 'index.html'))) {
 } else {
   console.log(`  Agency Dashboard: NOT FOUND at ${AGENCY_DIR} — skipping`);
 }
+
+// ── Document Upload & Text Extraction (Suite dashboard document pane) ─────
+// The Suite dashboard DocDropzone posts the raw file body here (X-File-Name
+// header carries the original name). We store it under Desktop/xmrtdao/temp/
+// and extract text (pdf-parse / mammoth / utf8) so the document pane can
+// render it. Authenticated like any /api route: loopback is free, tunnel
+// requests need the relay key or a cert.
+app.post('/api/upload-temp', express.raw({ type: () => true, limit: '15mb' }), async (req, res) => {
+  trackRequest('/api/upload-temp');
+  try {
+    const buf = req.body;
+    if (!buf || !Buffer.isBuffer(buf) || buf.length === 0) {
+      return res.status(400).json({ success: false, error: 'No file body received. Send the raw file as the request body.' });
+    }
+    const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'document.bin'));
+    const safeName = rawName.replace(/[^\w.\- ]+/g, '_').slice(-120) || 'document.bin';
+    const ext = (safeName.match(/\.([A-Za-z0-9]{1,8})$/)?.[1] || '').toLowerCase();
+
+    const tempDir = join(__dirname, '..', 'temp');
+    mkdirSync(tempDir, { recursive: true });
+    const filePath = join(tempDir, `${Date.now()}-${safeName}`);
+    writeFileSync(filePath, buf);
+
+    let text = '';
+    if (ext === 'pdf' || buf.subarray(0, 5).toString('latin1') === '%PDF-') {
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: new Uint8Array(buf) });
+      try {
+        text = (await parser.getText()).text || '';
+      } finally {
+        await parser.destroy().catch(() => {});
+      }
+    } else if (ext === 'docx') {
+      const mammoth = require('mammoth');
+      text = (await mammoth.extractRawText({ buffer: buf })).value || '';
+    } else if (ext === 'txt' || ext === 'md' || String(req.headers['content-type'] || '').startsWith('text/')) {
+      text = buf.toString('utf8');
+    } else {
+      return res.status(415).json({ success: false, error: `Unsupported file type ".${ext || 'unknown'}". Use PDF, DOCX, or TXT.` });
+    }
+
+    const MAX_TEXT = 200000;
+    const truncated = text.length > MAX_TEXT;
+    if (truncated) text = text.slice(0, MAX_TEXT);
+
+    res.json({
+      success: true,
+      filePath,
+      fileName: safeName,
+      size: buf.length,
+      mime: req.headers['content-type'] || null,
+      truncated,
+      text,
+    });
+  } catch (e) {
+    console.error('[upload-temp] failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── In-window Web Browsing (Suite dashboard web pane) ─────────────────────
+// The Suite dashboard's web aside must never navigate the user off the app:
+// iframes of remote sites are blocked by X-Frame-Options on most of the web,
+// and a bare iframe lets in-page links take over the whole window. Instead
+// the pane posts here; we fetch the page through the stack's own browsing
+// tools (cloud Playwright/browserless with fetch fallback via
+// ef:playwright-browse, exa-powered web-search for queries) and return the
+// rendered HTML. The pane then renders it in a sandboxed srcDoc iframe and
+// intercepts link clicks so in-page navigation re-browses through this same
+// endpoint — the user never leaves Suite.
+app.post('/api/browse', express.json({ limit: '32kb' }), async (req, res) => {
+  trackRequest('/api/browse');
+  try {
+    const raw = String(req.body?.url || req.body?.query || '').trim();
+    if (!raw) return res.status(400).json({ success: false, error: 'url or query is required' });
+
+    const looksLikeUrl = /^https?:\/\//i.test(raw) || (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(raw) && !/\s/.test(raw));
+
+    // Not URL-shaped → treat as a search query through the exa-backed search tool.
+    if (!looksLikeUrl) {
+      const out = await toolHandlers['web-search']({ query: raw, maxResults: 8 });
+      if (out?.error) return res.status(502).json({ success: false, error: out.error });
+      return res.json({ success: true, kind: 'search', query: raw, results: out.results || [], source: out.source || null });
+    }
+
+    const url = /^https?:\/\//i.test(raw) ? raw : 'https://' + raw;
+    const out = await toolHandlers['ef:playwright-browse']({ url, timeout: Math.min(60000, Number(req.body?.timeout) || 45000) });
+    const data = out?.data;
+    if (!out?.success || !data || data.success === false) {
+      return res.status(502).json({ success: false, error: data?.error || out?.error || 'Browse failed', url });
+    }
+    res.json({
+      success: true,
+      kind: 'page',
+      url,
+      finalUrl: data.metadata?.finalUrl || url,
+      status: data.status,
+      contentType: data.metadata?.contentType || 'text/html',
+      loadTime: data.metadata?.loadTime ?? null,
+      content: data.content || '',
+    });
+  } catch (e) {
+    console.error('[browse] failed:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // ── Suite Dashboard REST API (agency.31harbor.com PG-backed) ────────────
 app.get('/api/suite/health', async (req, res) => {
@@ -5702,7 +6068,12 @@ app.get('/api/supervisor/status', async (req, res) => {
     // definitions, and it had drifted exactly the way a hand-copied list does: the
     // dashboard showed 11 services, was missing page-agent-mcp, resume-server and
     // dsh, and carried 31harbor-scheduler, which is deprecated and no longer
-    // supervised by anything. Meanwhile the supervisor was watching 14.
+    // supervised by anything. Meanwhile the supervisor was watching more.
+    //
+    // graytech is here because its port is per-service knowledge the state file
+    // does not carry. Without it the dashboard would fall back to a process-name
+    // liveness probe, which cannot tell a live uvicorn from a wedged one - and
+    // this service has already gone dark once.
     //
     // Only the ports stay hardcoded, because they are per-service knowledge the
     // state file does not carry and a service without one is health-checked by
@@ -5712,6 +6083,7 @@ app.get('/api/supervisor/status', async (req, res) => {
       'pg': 5432, 'local-sb': 54321, 'vite': 5173, 'relay': 8080,
       'cuttlefishclaws-mcp': 3120, 'xmrtdao-suite-mcp': 3121, 'suite-mcp': 3121,
       'resume-server': 5175,
+      'graytech': 8090,
     };
     const stateNames = Object.keys(stateData.services || {});
     const serviceDefs = (stateNames.length
@@ -6066,6 +6438,9 @@ app.get('/', (req, res, next) => {
   if (host.includes('agency.31harbor.com')) {
     return res.redirect(301, '/harbor/');
   }
+  if (host.includes('suite.mobilemonero.com')) {
+    return res.redirect(301, '/suite/');
+  }
   // cuttlefish.mobilemonero.com → Cuttlefish Claws SPA
   if (host.includes('cuttlefish.mobilemonero.com') || host.includes('cuttlefish.')) {
     return res.redirect(301, '/cuttlefishclaws/');
@@ -6078,29 +6453,12 @@ app.get('/', (req, res, next) => {
 });
 
 // Fleet dashboard — XMRT Nexus command center (extracted to campus-page.mjs)
+import { createCampusHandler } from './campus-page.mjs';
 app.get('/', createCampusHandler({
   RELAY_API_KEY, trackRequest, osHostname, state, SUPABASE_URL,
   toolHandlers, handlers, taskRunner, DATA_DIR, requestCounts,
   resendTileHtml, localFunctions, dashboardJsVersion,
 }));
-
-// ── Nexus Aside loopback endpoints ────────────────────────────────
-// Authed by the default middleware (not whitelisted). The dashboard polls
-// /current; agents use the aside-push tool or POST /push directly.
-app.get('/api/aside/current', (req, res) => {
-  trackRequest('/api/aside/current');
-  res.json({ item: state.get('nexusAside') || null });
-});
-app.post('/api/aside/push', async (req, res) => {
-  trackRequest('/api/aside/push');
-  const out = await toolHandlers['aside-push'](req.body || {});
-  res.status(out.error ? 400 : 200).json(out);
-});
-app.post('/api/aside/close', async (req, res) => {
-  trackRequest('/api/aside/close');
-  res.json(await toolHandlers['aside-close']());
-});
-
 // ════════════════════════════════════════════════════════════════
 // RESTORED ROUTES — 2026-06-03
 // Originally deleted in commit 7e70bac (mesh dashboard endpoints),
@@ -6567,6 +6925,20 @@ app.post('/webhook/resend-inbound', async (req, res) => {
     }
   }
 
+  // If this reply belongs to a candidate with an open check-in, close it.
+  // The candidate's own words close the question so the loop can speak again.
+  if (candidateClientId) {
+    try {
+      const { answerCheckin } = await import('./jobby/checkin.mjs');
+      const answered = await answerCheckin(candidateClientId, data.text || data.body || '');
+      if (answered) {
+        console.log(`[Resend Inbound] check-in answered for client ${candidateClientId}: ${answered.kind}`);
+      }
+    } catch (e) {
+      console.warn('[Resend Inbound] check-in close failed:', e.message);
+    }
+  }
+
   const emailEntry = {
     email_id: emailId,
     from: data.from,
@@ -6670,34 +7042,92 @@ app.post('/webhook/resend-inbound', async (req, res) => {
   }
 
   // Fetch full content from Resend's API (webhooks don't include body)
-  // Which key to use follows from the recipient domain, via the registry.
-  const RESEND_API_KEY = resendKeyFor(toDomainKey) || process.env.RESEND_API_KEY;
-  if (RESEND_API_KEY && emailId) {
-    fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}` }
-    }).then(r => r.json()).then(full => {
-      if (full && (full.html || full.text)) {
-        // Update legacy resend_inbox
-        const inbox2 = state.get('resend_inbox') || [];
-        const idx = inbox2.findIndex(e => e.email_id === emailId);
-        if (idx !== -1) {
-          inbox2[idx].body = full.text || full.html || '';
-          inbox2[idx].text = full.text || '';
-          inbox2[idx].html = full.html || '';
-          state.set('resend_inbox', inbox2);
-          console.log(`[Resend Inbound] Content fetched for ${emailId}`);
-        }
-        // Update unified email.inbox so /resend/inbox and Alice's parser see it
-        const unified = getInbox();
-        const unifiedKey = domainToInboxKey(toDomain);
-        if (unified[unifiedKey]) {
-          const u = unified[unifiedKey].find(e => e.id === emailId);
-          if (u) {
-            u.text = full.text || '';
-            u.html = full.html || '';
-            state.set(EMAIL_STORE_KEY, unified);
-            console.log(`[Resend Inbound] Content stored in email.inbox for ${emailId}`);
-          }
+  //
+  // PER RESEND: "Webhooks do not include the email body, headers, or attachments,
+  // only their metadata. You must call the Received emails API or the Attachments
+  // API to retrieve them." So this call is not an optimisation, it is the only way
+  // a body exists at all.
+  //
+  // Which key to use follows from the recipient domain, via the registry. This is
+  // load-bearing: a key scoped to one domain returns 404 for another domain's
+  // inbound id, and the 404 is indistinguishable from expiry. Twelve 31harbor
+  // messages were previously written off as expired for exactly this reason.
+  const webhookResendKey = resendKeyFor(toDomainKey) || process.env.RESEND_API_KEY;
+  if (webhookResendKey && emailId) {
+    fetchInboundBody(emailId, webhookResendKey).then(async (body) => {
+      if (!body.fetched) {
+        console.warn(`[Resend Inbound] No body for ${emailId}: ${body.reason}`);
+        return;
+      }
+      const full = body;
+
+      // ── PERSIST TO THE DATABASE ──
+      // This is the write that was missing. Everything below this line put the body
+      // into in-memory state that dies with the process, so an agent asking "what did
+      // the last email say?" after a restart got nothing, and app.inbox_emails - the
+      // table the boot sync creates expressly so mail survives a restart - stayed
+      // empty. The webhook is the only path that sees mail immediately, so it is the
+      // one that must write.
+      try {
+        await persistInboundEmail({
+          email_id: emailId,
+          sender: data.from || '',
+          recipient: Array.isArray(data.to) ? data.to.join(',') : (data.to || ''),
+          subject: full.subject || data.subject || '',
+          text: full.text,
+          html: full.html,
+          received_at: full.createdAt || data.created_at || new Date().toISOString(),
+          // The REGISTRY KEY, not the domain. `domain` in this column means the key
+          // everywhere else that reads it - the boot sync writes emailDomainName()'s
+          // return value, and every dashboard tile groups by it. Writing the bare
+          // domain here produced a table where partyfavorphoto.com rows and pfp rows
+          // were the same thing counted twice: 52 rows for one mailbox. The key is the
+          // canonical form; the human-readable domain is kept alongside it so the row
+          // is still legible without the registry.
+          domain: toDomainKey,
+          metadata: {
+            has_body: true,
+            body_fetched_at: new Date().toISOString(),
+            source: 'webhook',
+            domain_name: toDomain,
+            // Server-computed SPF/DKIM/DMARC. The only sender-identity signal in this
+            // system a sender cannot forge, and worth keeping for any business that
+            // takes instructions or contracts by email. null on mail received before
+            // Resend introduced the field.
+            authentication: full.authentication,
+            message_id: full.messageId,
+            attachment_count: full.attachmentCount,
+            // Recorded as a fact about the message, not a stored link: the signed URL
+            // expires about an hour after issue, so persisting it would only create a
+            // broken link that looks retrievable.
+            raw_available_until: full.rawExpiresAt,
+          },
+        });
+        console.log(`[Resend Inbound] Persisted ${emailId} to app.inbox_emails (${toDomain})`);
+      } catch (dbErr) {
+        console.error(`[Resend Inbound] DB persist failed for ${emailId}: ${dbErr.message}`);
+      }
+
+      // Update legacy resend_inbox
+      const inbox2 = state.get('resend_inbox') || [];
+      const idx = inbox2.findIndex(e => e.email_id === emailId);
+      if (idx !== -1) {
+        inbox2[idx].body = full.text || full.html || '';
+        inbox2[idx].text = full.text || '';
+        inbox2[idx].html = full.html || '';
+        state.set('resend_inbox', inbox2);
+        console.log(`[Resend Inbound] Content fetched for ${emailId}`);
+      }
+      // Update unified email.inbox so /resend/inbox and Alice's parser see it
+      const unified = getInbox();
+      const unifiedKey = domainToInboxKey(toDomain);
+      if (unified[unifiedKey]) {
+        const u = unified[unifiedKey].find(e => e.id === emailId);
+        if (u) {
+          u.text = full.text || '';
+          u.html = full.html || '';
+          state.set(EMAIL_STORE_KEY, unified);
+          console.log(`[Resend Inbound] Content stored in email.inbox for ${emailId}`);
         }
       }
     }).catch(err => {
@@ -7410,15 +7840,15 @@ app.post('/api/fleet/heartbeat', (req, res) => {
 
   // Append-only share ledger. Every accepted beat is recorded before the
   // state overwrite below; `fleet.agents` answers "where is each agent now",
-  // the ledger answers "what actually happened" - hashrate history, uptime,
+  // the ledger answers "what actually happened" — hashrate history, uptime,
   // gaps. The overwrite alone is why share history was unrecoverable
   // (xmrt-node 6d900e3: "no ledger exists yet").
   let shareLogResult = null;
   try {
     shareLogResult = shareLog.appendHeartbeat(req.body || {});
   } catch (e) {
-    // The beat still updates live state - liveness must not depend on the
-    // ledger - but the gap is recorded and reported, never swallowed.
+    // The beat still updates live state — liveness must not depend on the
+    // ledger — but the gap is recorded and reported, never swallowed.
     shareLog.recordFailure();
     console.error(`[share-log] append failed for ${agent_id}: ${e.message}`);
     shareLogResult = { error: e.message };
@@ -7484,8 +7914,7 @@ app.get('/api/reserve/identity', (req, res) => {
 
 // API: Read the share ledger. An append-only log nobody can read is not a
 // feature — this is the retrieval half of the history guarantee.
-app.get('/api/fleet/shares/history', (req, res) => {
-  trackRequest('/api/fleet/shares/history');
+app.get('/api/fleet/shares/history', (req, res) => {  trackRequest('/api/fleet/shares/history');
   const agentId = (req.query.agent_id || null) && String(req.query.agent_id);
   const limit = Math.min(parseInt(req.query.limit, 10) || 200, 5000);
   try {
@@ -8174,11 +8603,18 @@ async function getMcpToolSchemas() {
 // Curated parameter schemas for the tools agents reach for most. Keys are tool
 // names; values are JSON Schema objects for the tool's `parameters`.
 const CURATED_TOOL_SCHEMAS = {
+  'resolve-entity': {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Name, alias, organization, role phrase, or email (current or superseded) to resolve.' },
+      limit: { type: 'number', description: 'Max entity clusters to return (default 5).' },
+    },
+    required: ['query'],
+  },
   'aside-push': {
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['url', 'image', 'video', 'html', 'text', 'markdown'], description: 'Content kind to display in the aside pane.' },
-      url: { type: 'string', description: 'Required for url/image/video kinds.' },
+      kind: { type: 'string', enum: ['url', 'image', 'video', 'html', 'text', 'markdown'], description: 'Content kind to display in the aside pane.' },      url: { type: 'string', description: 'Required for url/image/video kinds.' },
       html: { type: 'string', description: 'Rendered HTML document for kind html (sandboxed iframe).' },
       text: { type: 'string', description: 'Plain text or markdown source for text/markdown kinds.' },
       title: { type: 'string', description: 'Short title shown in the aside header.' },
@@ -8186,7 +8622,13 @@ const CURATED_TOOL_SCHEMAS = {
     },
     required: ['kind'],
   },
-
+  'clerk-chat': {
+    type: 'object',
+    properties: {
+      message: { type: 'string', description: 'Operator message to route through the deterministic intent table.' },
+    },
+    required: ['message'],
+  },
   'shell-exec': {
     type: 'object',
     properties: {
@@ -8432,10 +8874,56 @@ app.get('/api/tools/catalog', async (req, res) => {
   });
 });
 
+// ── Nexus Aside loopback endpoints ────────────────────────────────
+// Authed by the default middleware (not whitelisted). The dashboard polls
+// /current; agents use the aside-push tool or POST /push directly.
+app.get('/api/aside/current', (req, res) => {
+  trackRequest('/api/aside/current');
+  res.json({ item: state.get('nexusAside') || null });
+});
+app.post('/api/aside/push', async (req, res) => {
+  trackRequest('/api/aside/push');
+  const out = await toolHandlers['aside-push'](req.body || {});
+  res.status(out.error ? 400 : 200).json(out);
+});
+app.post('/api/aside/close', async (req, res) => {
+  trackRequest('/api/aside/close');
+  res.json(await toolHandlers['aside-close']());
+});
+
+// ── Office Clerk — deterministic offline first responder ───────────
+// Zero-AI intent router: matches operator messages against
+// office-clerk-intents.mjs and calls relay tools directly. Works with
+// no internet; hands nothing off unless asked. Mutating intents are
+// gated behind a "confirm ..." prefix (handled inside the clerk).
+import { createClerk } from './office-clerk.mjs';
+const officeClerk = createClerk({
+  callTool: async (name, args) => {
+    const fn = toolHandlers[name];
+    if (!fn) return { error: `unknown tool: ${name}` };
+    return await fn(args || {});
+  },
+  // L1: small-model fallback for messages the deterministic table misses.
+  // Provider order: Ollama local (offline) → OpenCode Zen → OpenRouter free
+  // tier. Set CLERK_L1=0 to disable; CLERK_L1_MODEL to swap the Ollama model.
+  l1: process.env.CLERK_L1 === '0' ? null : {
+    url: process.env.OLLAMA_URL || 'http://localhost:11434',
+    model: process.env.CLERK_L1_MODEL || 'gemma3:1b',
+    timeoutMs: parseInt(process.env.CLERK_L1_TIMEOUT_MS || '60000'),
+    providers: [
+      { name: 'opencode', baseUrl: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/v1', key: process.env.OPENCODE_API_KEY || '', models: (process.env.OPENCODE_MODELS || 'space-bunny-free').split(',').map(s => s.trim()).filter(Boolean) },
+      { name: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', key: process.env.OPENROUTER_API_KEY || '', models: (process.env.CLERK_OPENROUTER_MODELS || 'liquid/lfm-2.5-2.6b:free,apodex/apodex-1.1-mini:free,poolside/laguna-xs-2.1:free,nvidia/nemotron-3.5-lightning:free,google/gemma-4-26b-a4b-it:free').split(',').map(s => s.trim()).filter(Boolean) },
+    ],
+  },
+});
+toolHandlers['clerk-chat'] = async (args) => await officeClerk.chat(args?.message ?? args?.text ?? '', { l1: args?.l1 });
+app.post('/api/clerk/chat', async (req, res) => {
+  trackRequest('/api/clerk/chat');
+  res.json(await officeClerk.chat(req.body?.message ?? req.body?.text ?? '', { l1: req.body?.l1 }));
+});
+
 function getToolDescription(name) {
   const descriptions = {
-    'aside-push': 'Push content into the dynamic aside pane of every open XMRT Nexus dashboard. Args: kind (url|image|video|html|text|markdown), url (for url/image/video) or html or text, title, by. The pane appears only when something is pushed.',
-    'aside-close': 'Close the aside pane on all open XMRT Nexus dashboards.',
     'web-search': 'Search the web via Ollama or DuckDuckGo fallback',
     'x402-request': 'Create an x402 agentic payment request (invoice). Returns a 402-style Payment-Request with invoice_id, amount, asset. Args: amount (required, positive), asset (default XMRT), purpose, customer_did, merchant_did.',
     'x402-pay': 'Execute payment for an x402 invoice via a provider (Stripe or crypto). Args: invoice_id (from x402-request), provider (default stripe). Returns provider_ref.',
@@ -8455,6 +8943,9 @@ function getToolDescription(name) {
     'state-get': 'Get a value from persistent state',
     'state-set': 'Set a value in persistent state',
     'task-stats': 'Get task runner statistics',
+    'aside-push': 'Push content into the dynamic aside pane of every open XMRT Nexus dashboard. Args: kind (url|image|video|html|text|markdown), url (for url/image/video) or html or text, title, by. The pane appears only when something is pushed — use it to show the operator a web page, file preview, generated image/video, or rendered document. To drive the contained browser (URL bar + agent harnesses), push kind url with url /browser?u=<target>; harness shortcuts: http://127.0.0.1:4130/ (opencode), http://127.0.0.1:4131/ (dsh) — both are relay loopback proxies that inject auth, so never push 4096/3080 directly.',
+    'aside-close': 'Close the aside pane on all open XMRT Nexus dashboards.',
+    'clerk-chat': 'Office Clerk — deterministic offline responder. Args: message. Matches the message against a wired intent table (status, resources, tasks, external, mining, ollama, remember/recall, aside open/close, restart) and executes the mapped relay tool with no AI involved. Returns { text, provenance, intent, tool }. Use as a zero-cost first responder or offline fallback.',
     'github-post': 'Post a comment on a GitHub issue',
     'elze-templates': 'Elze Contract Suite template & clause retrieval. Actions: templates (all with metadata), template {id} (single + ordered clauses), clauses {template_id}, search {q, category}. Filters: category, jurisdiction. Reads canonical DB (lease_templates / clause_definitions). Use to fetch template structure for the lease writer.',
     'elze-learnings': 'Elze AI-Learnings. Capture accept/reject/edit feedback (action: feedback with attorney_id, matter_id, clause_id, playbook_rule_id, action, edited_text) and query the learning dashboard (action: dashboard, by_attorney, preferences). Roll up per-rule acceptance and infer per-attorney preferences. Use to track how the firm learns over time.',
@@ -8475,6 +8966,7 @@ function getToolDescription(name) {
     'db-query': 'Run a raw SQL query against the local Postgres database (read-only; use SELECT only)',
     'db-rest': 'Query any database table via the local-sb REST API using path and optional method/body',
     'shared-context': 'Read or write shared context memory visible to all agents (action: read|write|search|recall_by_agent|recall_by_topic, key, value, search_term, agent_id, topic)',
+    'resolve-entity': 'Unified entity resolver — the ONE lookup for "who is X". Searches pfp_leads, pfp_contacts, pfp_partnerships, knowledge_entities, fleet_memory and shared_context, merges records that share a hard identifier (CRM record id or email — never just a first name), and returns canonical entities with current_email, superseded_emails, aliases, organization, relationship, per-field source provenance, and conflict_state. Args: query, limit. Prefer this over querying any single memory store.',
     'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
@@ -9316,6 +9808,7 @@ const FLEET_AGENTS = {
   // Job-search agent. Replies come from the Jobby chat loop, which has its own
   // tools, dossier state and outbound guard rails.
   'jobby': { name: 'Jobby McJobberson (Career Agent)', endpoint: 'local', type: 'relay', chatFunction: 'jobby-chat' },
+  'opencode': { name: 'OpenCode (AI Coding Agent)', endpoint: 'local', type: 'relay', chatFunction: 'opencode-chat' },
 };
 
 // ── Agent Push Notification Email Mapping ──────────────────────────
@@ -12539,6 +13032,89 @@ app.get('/api/jobby/outreach', async (req, res) => {
  * that are blocking or waiting on an answer, because that is the list a person
  * can act on. `prepared` counts packets written; it never implies they were sent.
  */
+// /api/jobby/desks — per-tenant marketing activity for the "Jobby's desk"
+// chips in each Nexus tenant section header. Jobby is the de facto marketing
+// agent, so every brand section shows his real numbers for that brand rather
+// than a static label.
+app.get('/api/jobby/desks', async (req, res) => {
+  trackRequest('GET /api/jobby/desks');
+  const desks = {};
+  const timeAgo = (ts) => {
+    if (!ts) return 'never';
+    const m = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm ago';
+    const h = Math.round(m / 60);
+    if (h < 24) return h + 'h ago';
+    return Math.round(h / 24) + 'd ago';
+  };
+
+  // Fleet-wide Jobby activity (core/suite desks)
+  try {
+    const act = await queryLocalPg(
+      `SELECT
+         (SELECT COUNT(*)::int FROM public.eliza_activity_log
+           WHERE agent_id = 'jobby' AND created_at > NOW() - INTERVAL '24 hours') AS n24,
+         (SELECT MAX(created_at) FROM public.eliza_activity_log
+           WHERE agent_id = 'jobby') AS last_at,
+         (SELECT title FROM public.eliza_activity_log
+           WHERE agent_id = 'jobby' ORDER BY created_at DESC LIMIT 1) AS last_title`
+    );
+    const r = act.rows[0] || {};
+    desks.jobby = {
+      actions_24h: r.n24 || 0,
+      last_activity_at: r.last_at || null,
+      last_activity: timeAgo(r.last_at),
+      last_title: r.last_title || null,
+    };
+  } catch (e) {
+    desks.jobby = { error: e.message };
+  }
+
+  // Mobilemonero: miners seen in the last 24h (recruitment desk)
+  try {
+    const workers = Object.values(getMiningWorkers());
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = workers.filter(w => w.last_seen && new Date(w.last_seen).getTime() > cutoff);
+    desks.mobilemonero = {
+      workers_24h: recent.length,
+      total_shares_24h: recent.reduce((a, w) => a + (w.total_shares || 0), 0),
+    };
+  } catch (e) {
+    desks.mobilemonero = { error: e.message };
+  }
+
+  res.json({ success: true, desks, ts: new Date().toISOString() });
+});
+
+// /api/jobby/fleet-stats — owner-dashboard aggregate over all Jobby clients:
+// how many applications exist per status, and the most recent few. Powers the
+// Nexus "Applications Tracker" tile; per-client detail stays behind the
+// session-scoped /api/jobby/applications.
+app.get('/api/jobby/fleet-stats', async (req, res) => {
+  trackRequest('GET /api/jobby/fleet-stats');
+  try {
+    const byStatus = await queryLocalPg(
+      `SELECT status, COUNT(*)::int AS n FROM app.job_applications GROUP BY status ORDER BY n DESC`
+    );
+    const recent = await queryLocalPg(
+      `SELECT company, role, status, updated_at FROM app.job_applications ORDER BY updated_at DESC LIMIT 6`
+    );
+    const clients = await queryLocalPg(
+      `SELECT COUNT(DISTINCT client_id)::int AS n FROM app.job_applications`
+    );
+    res.json({
+      success: true,
+      total: byStatus.rows.reduce((a, r) => a + r.n, 0),
+      by_status: byStatus.rows,
+      clients: clients.rows[0]?.n || 0,
+      recent: recent.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/api/jobby/applications', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   trackRequest('GET /api/jobby/applications');
@@ -12605,6 +13181,59 @@ app.get('/api/jobby/applications', async (req, res) => {
   } catch (e) {
     console.error('[jobby] applications error:', e.message);
     res.status(500).json({ error: 'could not load applications' });
+  }
+});
+
+/** POST /api/jobby/cycle — run one Jobby heartbeat tick for the current client. */
+app.post('/api/jobby/cycle', async (req, res) => {
+  trackRequest('POST /api/jobby/cycle');
+  try {
+    const { client, error, status } = await resolveJobbyClient(req, res, { create: false });
+    if (error) return res.status(status).json({ error });
+    const { runCycle } = await import('./jobby/loop.mjs');
+    const { createHeartbeat, defaultWorkerId } = await import('./jobby/loop.mjs');
+    const pool = await import('./lib/db.mjs').then(m => m.getSharedPool());
+
+    const workerId = defaultWorkerId();
+    const result = await runCycle({
+      pool,
+      clientId: client.id,
+      workerId,
+      steps: {
+        source: { run: async ({ clientId, pool }) => {
+          const { runSource } = await import('./jobby/sourcing.mjs');
+          return runSource({ pool, clientId });
+        }, only: ['source'] },
+        packet: { run: async ({ clientId, pool }) => {
+          const { preparePacket } = await import('./jobby/applications.mjs');
+          const { rows } = await pool.query(
+            `SELECT id FROM app.job_applications WHERE client_id = $1 AND status = 'pending' AND packet IS NULL ORDER BY created_at LIMIT 1`,
+            [clientId]
+          );
+          if (!rows[0]) return { ok: true, note: 'no unprepared applications' };
+          return preparePacket({ clientId, applicationId: rows[0].id, pool });
+        }, only: ['packet'] },
+        research: { run: async ({ clientId, pool }) => {
+          const { addOpportunity } = await import('./jobby/tools.mjs');
+          const { rows } = await pool.query(
+            `SELECT id FROM app.job_opportunities WHERE client_id = $1 AND status = 'researched' LIMIT 1`,
+            [clientId]
+          );
+          if (!rows[0]) return { ok: true, note: 'no researched opportunities' };
+          return { ok: true, note: 'opportunity already researched' };
+        }, only: ['research'] },
+        send: { run: async ({ clientId, pool }) => {
+          const { canSend } = await import('./jobby/store.mjs');
+          const gate = await canSend(clientId);
+          if (!gate.allowed) return { ok: false, reason: gate.reason };
+          return { ok: true, note: `send gate: ${gate.reason}` };
+        }, only: ['send'] },
+      },
+    });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[jobby] cycle error:', e.message);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -13198,6 +13827,94 @@ app.get('/api/jobby/board/health', async (req, res) => {
   } catch (e) {
     console.error('[board] health error:', e.message);
     res.status(500).json({ error: 'could not read board health' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Jobby — domain opportunities (phase 1: scan, score, surface — no send)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// These routes expose the domain-opportunities board. Phase 1 records and
+// scores only; there is deliberately no send path here. See
+// migrations/jobby_007_domain_ops.sql for why.
+
+/** GET /api/jobby/domains — the scored opportunity board. */
+app.get('/api/jobby/domains', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/jobby/domains');
+  try {
+    const q = req.query || {};
+    const [rows, count, health] = await Promise.all([
+      domainStore.readBoard({
+        limit: q.limit,
+        offset: q.offset,
+        minScore: q.minScore,
+        keyword: q.keyword,
+      }),
+      domainStore.boardCount({ minScore: q.minScore }),
+      domainStore.boardHealth(),
+    ]);
+    res.json({
+      ok: true,
+      rows,
+      count,
+      health,
+      // Stated explicitly so a reader of the response knows what this board is
+      // not. A board that does not say it sends nothing reads as a board that
+      // sends nothing yet.
+      sends: false,
+    });
+  } catch (e) {
+    console.error('[domains] read error:', e.message);
+    res.status(500).json({ error: 'could not read domain opportunities' });
+  }
+});
+
+/** GET /api/jobby/domains/health — what the scanner has found. */
+app.get('/api/jobby/domains/health', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('GET /api/jobby/domains/health');
+  try {
+    const [health, runs] = await Promise.all([
+      domainStore.boardHealth(),
+      domainStore.recentRuns(5),
+    ]);
+    res.json({ ok: true, health, runs });
+  } catch (e) {
+    console.error('[domains] health error:', e.message);
+    res.status(500).json({ error: 'could not read domain health' });
+  }
+});
+
+/**
+ * POST /api/jobby/domains/scan — run one scan pass now.
+ *
+ * Gated by a token, same as the board poll. A scan is real HTTP requests to
+ * real servers on someone's behalf; an unauthenticated endpoint that triggers
+ * it is a way to make this machine scan whatever an attacker asks for.
+ */
+app.post('/api/jobby/domains/scan', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('POST /api/jobby/domains/scan');
+  if (process.env.JOBBY_BOARD_POLL_TOKEN) {
+    const given = req.headers['x-poll-token'];
+    if (given !== process.env.JOBBY_BOARD_POLL_TOKEN) {
+      return res.status(401).json({ error: 'poll token required' });
+    }
+  } else {
+    return res.status(503).json({
+      error: 'scanning is not available',
+      detail: 'Set JOBBY_BOARD_POLL_TOKEN and restart to enable it.',
+    });
+  }
+  try {
+    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : undefined;
+    const budget = req.body?.budget;
+    const result = await runDomainPass({ keywords, budget });
+    res.json({ ok: result.ok, ...result });
+  } catch (e) {
+    console.error('[domains] scan error:', e.message);
+    res.status(500).json({ error: 'the scan failed' });
   }
 });
 
@@ -15386,42 +16103,33 @@ const relayHttpServer = app.listen(PORT, '0.0.0.0', async () => {
       // Sync recent emails from Resend API into the in-memory inbox cache
       // so agents can see them even after a relay restart
       try {
+        // Per-run body-fetch accounting, logged once at the end so a run that
+        // captured nothing says so rather than implying a healthy mailbox.
+        let bodyFetched = 0, bodyCaptured = 0, bodyUnavailable = 0, bodyFetchSkipped = 0;
         
         // Straight off the registry rather than a RESEND_KEYS map. That map was a
           // module-level literal that a refactor removed, and this loop was the one
           // remaining reference to it. The failure was logged as non-fatal on every
           // boot - "RESEND_KEYS is not defined" - so the cache quietly stopped being
           // populated and nothing surfaced it.
+          //
+          // The per-domain work lives in syncOneDomainInbox() so this boot pass and
+          // the periodic pass below cannot drift apart. It used to be inline here,
+          // which meant the timer could only be added by copying it - and a copy of
+          // an ingest path is exactly how two divergent writers get created.
           for (const domain of EMAIL_INBOX_KEYS) {
-            const apiKey = resendKeyFor(domain);
-          if (!apiKey) continue;
-          const res = await fetch(`https://api.resend.com/emails/receiving?limit=50`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            const emails = await res.json();
-            if (Array.isArray(emails)) {
-              for (const email of emails) {
-                // From the registry, for the same reason as the send path.
-        const toDomain = emailDomainName(email.to) || 'mobilemonero.com';
-                addToInbox(toDomain, {
-                  to: email.to,
-                  from: email.from,
-                  from_name: email.from_name,
-                  subject: email.subject,
-                  text: email.text || '',
-                  html: email.html || '',
-                  email_id: email.id,
-                  attachments: email.attachments,
-                });
-              }
-              // The domain name, not the inbox key: this line is read by a human
-      // diagnosing a sync, and "jobby" is less use than "jobbymcjobberson.com".
-      console.log(`[inbox-db] Synced ${emails.length} emails from Resend for ${EMAIL_DOMAINS[domain].domain}`);
-            }
+            await runInboundSyncPass({
+              domains: [{
+                key: domain,
+                spec: EMAIL_DOMAINS[domain],
+                apiKey: resendKeyFor(domain),
+              }],
+              query: queryLocalPg,
+              keyFor: emailDomainFor,
+              addToInbox,
+              trigger: 'boot:' + domain,
+            });
           }
-        }
       } catch (syncErr) {
         console.log('[inbox-db] Sync from Resend failed (non-fatal):', syncErr.message);
       }
@@ -15429,6 +16137,64 @@ const relayHttpServer = app.listen(PORT, '0.0.0.0', async () => {
       console.log('[inbox-db] Table creation error:', e.message);
     }
   }, 12000);
+
+  // ── Inbound mail sync, on a timer, not just at boot ──
+  //
+  // WHY THIS EXISTS
+  // --------------
+  // The sync above runs ONCE, 12s after start. Measured on 2026-10-05: four test
+  // messages were sent to all four registered domains right after a restart. PFP
+  // appeared within seconds, because its webhook works. The other three did not
+  // arrive at all - not late, not eventually, never - because:
+  //
+  //   31harbor     webhook -> inbox.partyfavorphoto.com/functions/v1/...
+  //                (a Supabase-style path on a host serving no edge functions)
+  //   mobilemonero webhook -> inbox.mobilemonero.com, behind Cloudflare Access (403)
+  //   jobby        webhook -> relay.mobilemonero.com (a different relay)
+  //
+  // So for three of four inboxes, boot-time sync was the ONLY ingest path, and it
+  // ran once. Mail that arrived afterwards waited for the next restart. That is
+  // the same "last email was September" symptom in slower motion: not a broken
+  // pipeline, but a pipeline with one chance to run.
+  //
+  // This does not fix those webhooks - they are registered in the Resend dashboard
+  // and point at infrastructure this relay does not control. It makes the system
+  // correct WITHOUT them, which is the property that matters: capture must not
+  // depend on an endpoint someone has to remember to fix.
+  //
+  // 10 minutes. Resend retains inbound 30 days, so there is no expiry pressure, and
+  // the per-run fetch cap (INBOUND_BODY_FETCH_CAP) bounds the cost of each pass.
+  // Bodies already stored are never re-fetched - the age gate skips rows outside
+  // the window and COALESCE protects a stored body from being overwritten.
+  const INBOUND_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+
+  // The per-domain work and the pass runner are in lib/inbound-email.mjs. This is
+  // wiring only: build the argument list from the registry and hand it over.
+  //
+  // `isRunning` is a mutable holder rather than a boolean so the guard state lives
+  // in the module that enforces it, not in a closure here that could drift.
+  const inboundSyncGuard = { value: false };
+  const inboundSyncArgs = () => ({
+    domains: EMAIL_INBOX_KEYS.map((key) => ({
+      key,
+      spec: EMAIL_DOMAINS[key],
+      // The key scoped to THIS domain. Never a shared one: a Resend key is scoped
+      // to one domain and returns 404 for another domain's inbound id, and a 404
+      // is indistinguishable from expiry.
+      apiKey: resendKeyFor(key),
+    })),
+    query: queryLocalPg,
+    keyFor: emailDomainFor,
+    addToInbox,
+    isRunning: inboundSyncGuard,
+  });
+
+  setInterval(
+    () => { runInboundSyncPass({ ...inboundSyncArgs(), trigger: 'periodic' }); },
+    INBOUND_SYNC_INTERVAL_MS
+  );
+  console.log(`[inbox-sync] periodic inbound sync every ${INBOUND_SYNC_INTERVAL_MS / 60000} min `
+    + `across ${EMAIL_INBOX_KEYS.length} domains (${EMAIL_INBOX_KEYS.map(k => EMAIL_DOMAINS[k].domain).join(', ')})`);
 
   // ── TrustGraph Violation Scanner (Layer 4) ──
   // Scans fleet chat every 15 min for false claims, writes FABRICATION_DETECTED
@@ -15669,6 +16435,25 @@ if (relayHttpServer && typeof relayHttpServer.on === 'function') {
   console.log('[realtime] WebSocket upgrade proxy registered for /realtime/v1 -> 127.0.0.1:54321');
 }
 
+// ── Harness proxies (opencode / dsh embedded in the Nexus aside browser) ──
+// Loopback auth-injecting reverse proxies; see relay/harness-proxy.mjs.
+// ROOT here is the xmrtdao dir (relay/..) — dsh's launch log lives there.
+try {
+  startHarnessProxies({ root: join(__dirname, '..'), logger: console });
+} catch (e) {
+  console.warn('[harness-proxy] failed to start:', e?.message || e);
+}
+
+// ── Entity sync listener ──
+// Drains app.entity_sync_outbox (populated by the pfp_leads trigger) so CRM
+// corrections propagate to knowledge_entities / fleet_memory / shared_context
+// automatically. See relay/lib/entity-sync-listener.mjs.
+try {
+  startEntitySyncListener({ logger: console });
+} catch (e) {
+  console.warn('[entity-sync] failed to start:', e?.message || e);
+}
+
 // ── Mining Pool Stats ──
 // XMRT-DAO fleet pool wallet (must match mmlauncher/scripts/mobile-signup.py)
 const XMRT_POOL_WALLET = '46UxNFuGM2E3UwmZWWJicaRPoRwqwW4byQkaTHkX8yPcVihp91qAVtSFipWUGJJUyTXgzSqxzDQtNLf2bsp2DX2qCCgC5mg';
@@ -15844,6 +16629,10 @@ app.get('/api/mining/local-xmrig', async (req, res) => {
           hashrate: data.hashrate?.total?.[0] || 0,
           threads: data.threads || [],
           uptime: data.uptime || 0,
+          // XMRig's accepted-share counters — the "approved shares submitted"
+          // the leaderboard ranks by.
+          shares_good: data.results?.shares_good || 0,
+          shares_total: data.results?.shares_total || 0,
           source: 'xmrig',
         });
       }
@@ -15854,6 +16643,7 @@ app.get('/api/mining/local-xmrig', async (req, res) => {
     const local = workers['vex-laptop'] || workers['xmrt-laptop'] || null;
     return res.json({
       hashrate: local ? local.current_hash : 0,
+      shares_good: local ? local.total_shares : 0,
       last_seen: local ? local.last_seen : null,
       source: 'heartbeat',
     });
@@ -15863,12 +16653,19 @@ app.get('/api/mining/local-xmrig', async (req, res) => {
 });
 
 // ── Mining Leaderboard ──
-// Combines live worker heartbeats with a static seed list so the card
-// is never empty during boot/demo. Workers seen in the last 24h are kept.
+// Real workers only, ranked by approved shares submitted (most first).
+// Worker rows come from two real sources, merged by worker name:
+//   1. heartbeat store — fleet clients POST /mining/heartbeat with the
+//      share count their miner reports accepted by the pool;
+//   2. SupportXMR identifiers — workers the pool itself lists for the
+//      XMRT-DAO wallet (they appear with 0 fleet-reported shares until
+//      their client starts heartbeating).
+// The old static seed entries (XMRT-Charger-01 / XMRT-Stick-01) were
+// fictional and were removed on 2026-10-11.
 app.get('/mining/leaderboard', async (req, res) => {
   const liveWorkers = getMiningWorkers();
   const now = Date.now();
-  const cutoff = 24 * 60 * 60 * 1000;
+  const cutoff = 7 * 24 * 60 * 60 * 1000; // 7d — the board ranks by lifetime approved shares, so a worker that mined last week still belongs on it
 
   // Live entries from heartbeats
   const live = Object.values(liveWorkers)
@@ -15882,19 +16679,33 @@ app.get('/mining/leaderboard', async (req, res) => {
       source: 'live',
     }));
 
-  // Static seed (so the card is never empty)
-  const seed = [
-    { worker: 'XMRT-Charger-01', current_hash: 495, total_shares: 12450, xmrt_earned: 0.0312, last_seen: new Date(now - 60_000).toISOString(), source: 'seed' },
-    { worker: 'XMRT-Stick-01',   current_hash: 220, total_shares: 5970,  xmrt_earned: 0.0111, last_seen: new Date(now - 120_000).toISOString(), source: 'seed' },
-  ];
-
-  // Merge: live entries override seed by worker name
   const merged = new Map();
-  for (const w of seed) merged.set(w.worker, w);
   for (const w of live) merged.set(w.worker, w);
 
+  // Pool-registered workers (SupportXMR identifiers for the XMRT-DAO wallet).
+  // A worker the pool knows but the fleet has not heartbeat-reported yet
+  // still belongs on the board — ranked by shares, so it sorts by its
+  // fleet-reported count (0 until the first heartbeat lands).
+  try {
+    const ids = await fetchSupportXMRIdentifiers();
+    for (const id of (ids.identifiers || [])) {
+      const name = typeof id === 'string' ? id : (id.identifier || id.name || id.worker || '');
+      if (!name || merged.has(name)) continue;
+      merged.set(name, {
+        worker: name,
+        current_hash: 0,
+        total_shares: 0,
+        xmrt_earned: 0,
+        last_seen: null,
+        source: 'pool',
+      });
+    }
+  } catch (_) { /* pool unreachable — heartbeats alone still render */ }
+
+  // Rank by approved shares submitted, most first; hashrate breaks ties.
   const workers = Array.from(merged.values())
-    .sort((a, b) => (b.current_hash || 0) - (a.current_hash || 0));
+    .sort((a, b) => (b.total_shares || 0) - (a.total_shares || 0)
+      || (b.current_hash || 0) - (a.current_hash || 0));
 
   // Pull live fleet totals from SupportXMR for the wallet summary header
   let fleet = null;
@@ -16096,8 +16907,9 @@ for (const key of EMAIL_INBOX_KEYS) registerInboxRoutes(key);
  * configuration - one careless edit in the registry would otherwise become
  * markup injection in the dashboard.
  */
-function resendTileHtml() {
-  return EMAIL_INBOX_KEYS.map((key) => {
+function resendTileHtml(onlyKey = null) {
+  const keys = onlyKey ? EMAIL_INBOX_KEYS.filter(k => k === onlyKey) : EMAIL_INBOX_KEYS;
+  return keys.map((key) => {
     const entry = EMAIL_DOMAINS[key];
     const label = String(entry.label)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -16667,6 +17479,466 @@ app.get('/api/obsidian-graph', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// /api/suite/telemetry — the data behind the Suite "Unified data
+// module". Two jobs, both of which the dashboard cannot answer for
+// itself because neither fact lives in a table the SPA can query:
+//
+//   1. Where this tenant sits in the ecosystem graph. The full graph
+//      is ~1900 nodes, which is unreadable at module size; we ship the
+//      ego network (this SPA + its direct neighbours) and the whole-
+//      graph totals alongside it for context.
+//
+//   2. Storage pressure. How full the logs have actually become, and
+//      specifically how much of that is reclaimable without deleting a
+//      row. See the bloat note on the storage block below — the naive
+//      reading of "the log table is 2.8 GB, delete rows" is wrong here
+//      and this endpoint exists partly to say so with numbers.
+//
+// Deliberately no exact count(*) on the large tables: count(*) on
+// public.eliza_activity_log measures ~6.6s, which would make this
+// endpoint unusable on a poll. Row counts come from pg_class.reltuples
+// and are returned flagged as estimates; the growth figures use
+// created_at, which is indexed on every table we report.
+// ═══════════════════════════════════════════════════════════════
+
+const SUITE_TENANT_NODE = 'Suite Dashboard';
+const SUITE_TENANT_HOST = 'suite.mobilemonero.com';
+
+// Log-shaped tables worth watching. Named explicitly rather than pattern-matched
+// so the panel cannot silently change shape when a table is renamed, and so
+// every entry here is a deliberate claim that this table accumulates.
+const SUITE_LOG_TABLES = [
+  { schema: 'public', table: 'eliza_activity_log' },
+  { schema: 'public', table: 'function_usage_logs' },
+  { schema: 'public', table: 'system_logs' },
+  { schema: 'public', table: 'fleet_messages' },
+  { schema: 'public', table: 'cron_execution_log' },
+];
+
+// The full graph costs 5-6s to build: it reads every vault .md file, queries
+// the catalog, and fires six outbound health probes (GitHub, Resend, four
+// localhost checks) with 2-3s timeouts. None of that changes minute to minute,
+// so the telemetry endpoint reuses one build for a minute instead of paying for
+// it on every dashboard poll. The graph endpoint itself is untouched.
+const SUITE_GRAPH_CACHE_TTL_MS = 60_000;
+let _suiteGraphCache = { at: 0, data: null };
+
+async function fetchGalaxyCached() {
+  const now = Date.now();
+  if (_suiteGraphCache.data && now - _suiteGraphCache.at < SUITE_GRAPH_CACHE_TTL_MS) {
+    return _suiteGraphCache.data;
+  }
+  const gr = await fetch(`http://localhost:${PORT}/api/obsidian-graph`, {
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!gr.ok) throw new Error(`graph endpoint returned ${gr.status}`);
+  const data = await gr.json();
+  _suiteGraphCache = { at: now, data };
+  return data;
+}
+
+// Suite's own neighbourhood: undirected adjacency, one hop.
+function egoNetwork(graph, rootId) {
+  const ids = new Set([rootId]);
+  const edges = [];
+  for (const e of graph.edges) {
+    if (e.source === rootId || e.target === rootId) {
+      edges.push(e);
+      ids.add(e.source === rootId ? e.target : e.source);
+    }
+  }
+  const nodes = graph.nodes.filter((n) => ids.has(n.id));
+  return { nodes, edges, root: rootId };
+}
+
+// The galaxy's backbone, for perspective.
+//
+// The full graph is ~1900 nodes, of which ~670 are catalog/memory/knowledge
+// leaves that carry no edges of their own. Drawing all of them says nothing and
+// costs a lot; drawing only the tenant's 16 neighbours says where it is but
+// not what it sits among. So: every node that is an endpoint of a real edge,
+// capped by degree, plus the tenant and its neighbourhood always kept.
+//
+// The cap is by degree because in this graph degree *is* importance — the
+// things everything else connects to are the things worth drawing. Ties are
+// broken by id so the picture does not reshuffle between polls.
+function galaxyCore(graph, rootId, { maxNodes = 90 } = {}) {
+  const deg = new Map();
+  for (const e of graph.edges) {
+    deg.set(e.source, (deg.get(e.source) || 0) + 1);
+    deg.set(e.target, (deg.get(e.target) || 0) + 1);
+  }
+
+  const keep = new Set([rootId]);
+  const neighbours = new Set();
+  for (const e of graph.edges) {
+    if (e.source === rootId) neighbours.add(e.target);
+    if (e.target === rootId) neighbours.add(e.source);
+  }
+  for (const n of neighbours) keep.add(n);
+
+  const ranked = graph.nodes
+    .filter((n) => !keep.has(n.id))
+    .map((n) => ({ n, d: deg.get(n.id) || 0 }))
+    // degree 0 nodes are isolated leaves: no edge would be drawn to them
+    .filter((x) => x.d > 0)
+    .sort((a, b) => (b.d - a.d) || a.n.id.localeCompare(b.n.id));
+
+  const room = Math.max(0, maxNodes - keep.size);
+  for (const { n } of ranked.slice(0, room)) keep.add(n.id);
+
+  const nodes = graph.nodes.filter((n) => keep.has(n.id));
+  const kept = new Set(nodes.map((n) => n.id));
+  const edges = graph.edges.filter((e) => kept.has(e.source) && kept.has(e.target));
+
+  return {
+    nodes: nodes.map((n) => ({
+      ...n,
+      degree: deg.get(n.id) || 0,
+      // True only for the tenant's own hop, so the UI can ring those
+      // differently from galaxy hubs the tenant merely sits near.
+      isNeighbour: neighbours.has(n.id),
+    })),
+    edges,
+    root: rootId,
+    omittedNodes: graph.nodes.length - nodes.length,
+    omittedEdges: graph.edges.length - edges.length,
+  };
+}
+
+// /api/entity-resolver/metrics — observability for the unified entity
+// resolver (Eliza recall path, relay-tool, entity-sync listener). Counters
+// live in lib/entity-resolver.mjs and reset on relay restart.
+app.get('/api/entity-resolver/metrics', (req, res) => {
+  res.json({ success: true, metrics: getResolverMetrics() });
+});
+
+app.get('/api/suite/telemetry', async (req, res) => {
+  const startedAt = Date.now();
+  const warnings = [];
+  // Set by the storage block so the stats block can reuse the activity-log
+  // counts instead of scanning 2.8GB a second time for the same numbers.
+  let execCountsFromGrowth = null;
+
+  // ── Storage: on-disk vs live vs reclaimable ──────────────────
+  // pg_total_relation_size = heap + free space + indexes. The free-space
+  // term is what VACUUM returns to the filesystem and DELETE does not.
+  // On this database it is the single largest reclaimable quantity, and
+  // it is invisible to row counts, so it is measured directly.
+  let storage = null;
+  try {
+    const dbRow = await localQuery(
+      `SELECT pg_database_size(current_database()) AS bytes`
+    );
+    const sizeRows = await localQuery(
+      `SELECT n.nspname AS schema,
+              c.relname AS name,
+              pg_total_relation_size(c.oid) AS on_disk,
+              pg_relation_size(c.oid)      AS heap,
+              pg_total_relation_size(c.reltoastrelid) AS toast,
+              pg_indexes_size(c.oid)       AS indexes,
+              c.reltuples::bigint          AS est_rows,
+              EXISTS (SELECT 1 FROM information_schema.columns col
+                       WHERE col.table_schema = n.nspname
+                         AND col.table_name   = c.relname
+                         AND col.column_name   = 'created_at') AS has_created_at
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r'
+          AND n.nspname NOT IN ('pg_catalog','information_schema')
+          AND pg_total_relation_size(c.oid) > 0
+        ORDER BY pg_total_relation_size(c.oid) DESC
+        LIMIT 40`
+    );
+
+    // Decompose the relation instead of subtracting.
+    //
+    // An earlier version reported `on_disk - heap - indexes` as "reclaimable"
+    // and told the dashboard that a VACUUM would return 2.4GB of it. That was
+    // wrong: pg_relation_size() counts ONLY the main fork, so the difference is
+    // dominated by the TOAST relation holding live out-of-line jsonb/text — not
+    // free space. Running VACUUM on the three worst tables reclaimed 0.2MB,
+    // which is what proved it. The remainder below is the free space map,
+    // visibility map and init fork, which is real but is not what a plain
+    // VACUUM gives back either.
+    const tables = sizeRows.map((r) => {
+      const onDisk = Number(r.on_disk);
+      const heap = Number(r.heap);
+      const toast = Number(r.toast);
+      const indexes = Number(r.indexes);
+      const maps = Math.max(0, onDisk - heap - toast - indexes);
+      return {
+        schema: r.schema,
+        name: r.name,
+        qualified: `${r.schema}.${r.name}`,
+        onDisk,
+        heap,
+        toast,
+        indexes,
+        maps,
+        toastPct: onDisk > 0 ? Math.round((toast / onDisk) * 1000) / 10 : 0,
+        indexPct: onDisk > 0 ? Math.round((indexes / onDisk) * 1000) / 10 : 0,
+        // reltuples is the planner's estimate, not a count. Flagged so the
+        // UI never renders it as an exact figure.
+        estRows: Number(r.est_rows),
+        rowsAreEstimate: true,
+        hasCreatedAt: !!r.has_created_at,
+      };
+    });
+
+    const dbBytes = Number(dbRow[0]?.bytes || 0);
+    const totals = tables.reduce(
+      (acc, t) => {
+        acc.onDisk += t.onDisk;
+        acc.toast += t.toast;
+        acc.indexes += t.indexes;
+        acc.maps += t.maps;
+        return acc;
+      },
+      { onDisk: 0, toast: 0, indexes: 0, maps: 0 }
+    );
+
+    // Growth + retention, per watched log table.
+    //
+    // Sequential on purpose. These are seq scans over the same disk, and
+    // measured on this database running them concurrently cost 5584ms against
+    // 1919ms one after another — the scans contend for I/O, so "parallel" was
+    // three times slower. One combined scan per table also beats three separate
+    // statements: ~540ms against ~750ms on the 2.8GB table, because the two
+    // FILTERs share one pass.
+    const growth = [];
+    for (const t of SUITE_LOG_TABLES) {
+      const meta = tables.find((x) => x.schema === t.schema && x.name === t.table);
+      try {
+        const rows = await localQuery(
+          `SELECT min(created_at) AS oldest,
+                  max(created_at) AS newest,
+                  count(*) FILTER (
+                    WHERE created_at > now() - interval '24 hours') AS rows_24h,
+                  count(*) FILTER (
+                    WHERE created_at > now() - interval '7 days')  AS rows_7d
+             FROM "${t.schema}"."${t.table}"`
+        );
+        const r = rows[0] || {};
+        growth.push({
+          qualified: `${t.schema}.${t.table}`,
+          present: true,
+          oldest: r.oldest || null,
+          newest: r.newest || null,
+          retentionDays: r.oldest
+            ? Math.floor((Date.now() - new Date(r.oldest).getTime()) / 86400000)
+            : null,
+          rows24h: Number(r.rows_24h || 0),
+          rows7d: Number(r.rows_7d || 0),
+          onDisk: meta ? meta.onDisk : null,
+          toast: meta ? meta.toast : null,
+        });
+      } catch (e) {
+        // A missing table is a fact about the database, not a failure of the
+        // endpoint. Report it as absent and keep the rest.
+        growth.push({ qualified: `${t.schema}.${t.table}`, present: false, reason: e.message });
+      }
+    }
+    growth.sort((a, b) => (b.onDisk || 0) - (a.onDisk || 0));
+
+    // Handed to the stats block below so the activity log is not scanned twice
+    // in one request — it was, for ~400ms, purely because the two blocks were
+    // written independently.
+    execCountsFromGrowth = growth.find((g) => g.qualified === 'public.eliza_activity_log');
+
+    storage = {
+      databaseBytes: dbBytes,
+      topTables: tables,
+      growth,
+      totals: {
+        countedBytes: totals.onDisk,
+        toastBytes: totals.toast,
+        indexBytes: totals.indexes,
+        mapBytes: totals.maps,
+        toastPctOfDatabase: dbBytes > 0
+          ? Math.round((totals.toast / dbBytes) * 1000) / 10
+          : 0,
+        indexPctOfDatabase: dbBytes > 0
+          ? Math.round((totals.indexes / dbBytes) * 1000) / 10
+          : 0,
+      },
+    };
+  } catch (e) {
+    console.error('[suite-telemetry] storage failed:', e && e.stack ? e.stack : e);
+    warnings.push(`storage: ${e.message}`);
+  }
+
+  // ── Workflow / cron registry: counts and last run ────────────
+  let workflows = null;
+  try {
+    const rows = await localQuery(
+      `SELECT count(*)                                        AS jobs,
+              count(*) FILTER (WHERE is_active)               AS active,
+              count(*) FILTER (WHERE last_status = 'failed')  AS last_run_failed,
+              count(*) FILTER (WHERE failure_count > 0)       AS with_failures,
+              max(last_run_at)                                AS last_run_at,
+              max(run_count)                                  AS most_runs
+         FROM public.cron_registry`
+    );
+    const r = rows[0] || {};
+    workflows = {
+      jobs: Number(r.jobs || 0),
+      active: Number(r.active || 0),
+      inactive: Number(r.jobs || 0) - Number(r.active || 0),
+      lastRunFailed: Number(r.last_run_failed || 0),
+      withFailures: Number(r.with_failures || 0),
+      lastRunAt: r.last_run_at || null,
+      mostRuns: Number(r.most_runs || 0),
+    };
+  } catch (e) {
+    console.error('[suite-telemetry] workflows failed:', e.message);
+    warnings.push(`workflows: ${e.message}`);
+  }
+
+  // ── Headline stats, from the tables that actually hold the data ──
+  // These used to come from fetchDashboardStats() in the SPA, which returned
+  // hardcoded zeros for four of them and read a health endpoint whose response
+  // shape did not contain the fields it looked for — so "System Health 100%"
+  // was a fallback constant, not a measurement. Every number here is counted.
+  const statsTask = (async () => {
+    const [exec, counts, know, ctx, mem, wf, tasks, agents] = await Promise.all([
+      // Two statements, not one join: a LEFT JOIN of pg_class against the
+      // activity log to read its own reltuples materialises the whole 2.8GB
+      // table and cost ~18s. The catalog lookup and the row count are both
+      // cheap on their own.
+      localQuery(
+        `SELECT c.reltuples::bigint AS est_rows
+           FROM pg_class c WHERE c.oid = 'public.eliza_activity_log'::regclass`
+      ),
+      // Reused from the storage block when it ran; only scanned here if the
+      // storage block failed, so a broken block does not silently zero this.
+      execCountsFromGrowth
+        ? Promise.resolve([{
+            last_24h: execCountsFromGrowth.rows24h,
+            last_7d: execCountsFromGrowth.rows7d,
+          }])
+        : localQuery(
+            `SELECT count(*) FILTER (WHERE created_at > now() - interval '24 hours') AS last_24h,
+                    count(*) FILTER (WHERE created_at > now() - interval '7 days')  AS last_7d
+               FROM public.eliza_activity_log`
+          ),
+      localQuery(`SELECT count(*) AS n FROM public.knowledge_entities`),
+      localQuery(`SELECT count(*) AS n FROM knowledge.shared_context`),
+      localQuery(`SELECT count(*) AS n FROM public.memory_contexts`),
+      localQuery(
+        `SELECT (SELECT count(*) FROM public.workflow_templates)    AS templates,
+                (SELECT count(*) FROM public.workflow_executions)  AS executions,
+                (SELECT count(*) FROM public.generated_workflows)  AS generated`
+      ),
+      localQuery(`SELECT status, count(*)::bigint AS n FROM public.tasks GROUP BY status`),
+      localQuery(`SELECT status, count(*)::bigint AS n FROM public.agents GROUP BY status`),
+    ]);
+
+    // count(*) on the 2.8GB activity log is ~6.6s, so the lifetime figure is
+    // the planner's reltuples. It is returned flagged: it was within 7% of the
+    // exact count when measured, but it is still an estimate and the UI must
+    // not present it as exact.
+    const execRow = exec[0] || {};
+    const execCounts = counts[0] || {};
+    const lifetimeExecutions = Number(execRow.est_rows || 0);
+    const executionsAreEstimate = lifetimeExecutions > 0;
+
+    const tally = (rows) => {
+      const out = {};
+      for (const r of rows || []) out[r.status] = Number(r.n || 0);
+      return out;
+    };
+    const taskByStatus = tally(tasks);
+    const agentByStatus = tally(agents);
+
+    return {
+      executions: {
+        source: 'public.eliza_activity_log',
+        lifetime: lifetimeExecutions,
+        lifetimeIsEstimate: executionsAreEstimate,
+        last24h: Number(execCounts.last_24h || 0),
+        last7d: Number(execCounts.last_7d || 0),
+      },
+      knowledgeEntities: Number(know[0]?.n || 0),
+      sharedContext: Number(ctx[0]?.n || 0),
+      memoryContexts: Number(mem[0]?.n || 0),
+      workflows: {
+        templates: Number(wf[0]?.templates || 0),
+        executions: Number(wf[0]?.executions || 0),
+        generated: Number(wf[0]?.generated || 0),
+      },
+      tasks: { total: Object.values(taskByStatus).reduce((a, b) => a + b, 0), byStatus: taskByStatus },
+      agents: { total: Object.values(agentByStatus).reduce((a, b) => a + b, 0), byStatus: agentByStatus },
+    };
+  })().catch((e) => {
+    console.error('[suite-telemetry] stats failed:', e && e.stack ? e.stack : e);
+    warnings.push(`stats: ${e.message}`);
+    return null;
+  });
+
+  // ── Ecosystem slice ──────────────────────────────────────────
+  // Reuse the graph endpoint's own output rather than rebuilding it:
+  // the handler above is ~800 lines and its node set is the definition of
+  // the galaxy. Self-fetch is already the pattern used elsewhere in this file.
+  let graph = null;
+  try {
+    const full = await fetchGalaxyCached();
+
+    const trim = (n) => ({
+      id: n.id,
+      label: n.label,
+      category: n.category,
+      source: n.source,
+      status: n.status || null,
+      description: typeof n.description === 'string' ? n.description.slice(0, 200) : null,
+      ...(n.degree != null ? { degree: n.degree } : {}),
+      ...(n.isNeighbour != null ? { isNeighbour: n.isNeighbour } : {}),
+    });
+
+    const slice = egoNetwork(full, SUITE_TENANT_NODE);
+    const core = galaxyCore(full, SUITE_TENANT_NODE, { maxNodes: 90 });
+
+    graph = {
+      root: SUITE_TENANT_NODE,
+      host: SUITE_TENANT_HOST,
+      // Two views of one graph. `slice` answers "what does this tenant
+      // touch"; `core` answers "where does that sit in the whole thing".
+      slice: { nodes: slice.nodes.map(trim), edges: slice.edges, depth: 1 },
+      core: {
+        nodes: core.nodes.map(trim),
+        edges: core.edges,
+        omittedNodes: core.omittedNodes,
+        omittedEdges: core.omittedEdges,
+        cap: 90,
+      },
+      totals: {
+        nodes: full.summary?.totalNodes ?? full.nodes.length,
+        edges: full.summary?.totalEdges ?? full.edges.length,
+        byCategory: full.summary?.byCategory || {},
+      },
+      // Present in the slice when the galaxy knows about it; false when it
+      // does not, which is a different statement from "no neighbours".
+      rootFound: slice.nodes.some((n) => n.id === SUITE_TENANT_NODE),
+    };
+  } catch (e) {
+    console.error('[suite-telemetry] graph slice failed:', e.message);
+    warnings.push(`graph: ${e.message}`);
+  }
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    tenant: { node: SUITE_TENANT_NODE, host: SUITE_TENANT_HOST },
+    storage,
+    workflows,
+    stats: await statsTask,
+    graph,
+    warnings,
+    tookMs: Date.now() - startedAt,
+  });
+});
+
+
 // ── Suite Dashboard API (31 Harbor multi-tenant app) ────────────────
 // registerSuiteRoutes(app) used to be called here. It lived at the BOTTOM of
 // this file while every route it registered also existed up here, so all 29 of
@@ -17188,6 +18460,31 @@ app.post('/api/suite/validate-token', express.json(), async (req, res) => {
   }
 
   return res.status(401).json({ valid: false, error: 'Invalid API token' });
+});
+
+// ── XMRT University → Edge Function Proxy ──
+// Proxies /api/ef-university to the xmrt-university edge function
+// so that the graduation flow (POST /api/ef-university/graduate, etc.)
+// reaches the real University logic instead of returning 405.
+app.all('/api/ef-university', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/ef-university');
+  try {
+    const efUrl = `${SUPABASE_URL}/functions/v1/xmrt-university`;
+    const response = await fetch(efUrl, {
+      method: req.method,
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      ...(req.method !== 'GET' && req.body ? { body: JSON.stringify(req.body) } : {}),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await response.json().catch(() => ({}));
+    res.status(response.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: 'University edge function unreachable', detail: e.message });
+  }
 });
 
 // ── XMRT University → CuttlefishClaws Bridge ──
