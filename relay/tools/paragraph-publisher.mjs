@@ -1,3 +1,10 @@
+import crypto from 'node:crypto';
+import { Client as PgClient } from 'pg';
+
+async function getPgClient() {
+  return new PgClient({ host: '127.0.0.1', port: 5432, user: 'postgres', password: process.env.PG_PASSWORD || 'postgres', database: 'xmrt_suite' });
+}
+
 /**
  * Paragraph Publisher — Direct API tool for the relay
  *
@@ -6,14 +13,34 @@
  *
  * Usage via /tools/run:
  *   { "tool": "paragraph-publish", "args": { "title": "...", "markdown": "...", "status": "published" } }
- */
-
+ * */
 export async function paragraphPublish(args) {
-  const { title, markdown, body, status = 'published', categories, subtitle, imageUrl, slug } = args || {};
+  const { title, markdown, body, status = 'published', categories, subtitle, imageUrl, slug: requestedSlug } = args || {};
   const content = markdown || body;
 
   if (!title || !content) {
     return { error: 'title and markdown (or body) are required' };
+  }
+
+  // ── Dedup Gate ─────────────────────────────────────────────────────
+  const contentHash = crypto.createHash('sha256').update(title + content).digest('hex');
+  const pg = await getPgClient();
+  try {
+    await pg.connect();
+    const existing = await pg.query('SELECT url FROM app.publication_dedup WHERE content_hash = $1', [contentHash]);
+    if (existing.rows.length > 0) {
+      await pg.end();
+      return {
+        success: false,
+        error: 'Duplicate content detected',
+        published_url: existing.rows[0].url,
+        message: 'This content has already been published to Paragraph.com'
+      };
+    }
+  } catch (e) {
+    console.warn('[Paragraph] Dedup check failed:', e.message);
+  } finally {
+    if (pg) await pg.end().catch(() => {});
   }
 
   const apiKey = process.env.PARAGRAPH_API_KEY || '';
@@ -37,7 +64,33 @@ export async function paragraphPublish(args) {
   };
   if (subtitle) payload.subtitle = subtitle.substring(0, 300);
   if (imageUrl) payload.imageUrl = imageUrl;
-  if (slug) payload.slug = slug;
+  
+  // ── Slug Collision Prevention ──────────────────────────────────────
+  let finalSlug = requestedSlug;
+  if (finalSlug) {
+    try {
+      const pgCheck = await getPgClient();
+      await pgCheck.connect();
+      let count = 0;
+      while (true) {
+        const currentSlug = count === 0 ? finalSlug : `${requestedSlug}-${count}`;
+        const res = await pgCheck.query('SELECT id FROM app.publication_dedup WHERE slug = $1', [currentSlug]);
+        if (res.rows.length === 0) {
+          finalSlug = currentSlug;
+          break;
+        }
+        count++;
+        if (count > 100) {
+          finalSlug = `${requestedSlug}-${Date.now()}`;
+          break;
+        }
+      }
+      await pgCheck.end();
+    } catch (e) {
+      console.warn('[Paragraph] Slug check failed:', e.message);
+    }
+  }
+  payload.slug = finalSlug;
   if (defaultAuthor && !payload.author) payload.author = defaultAuthor;
 
   const response = await fetch('https://public.api.paragraph.com/api/v1/posts', {
@@ -61,8 +114,21 @@ export async function paragraphPublish(args) {
   }
 
   const pubHandle = (process.env.PARAGRAPH_PUBLICATION_HANDLE || 'mobilemonero').replace(/^@/, '');
-  const publishedSlug = data?.slug || slug;
+  const publishedSlug = data?.slug || finalSlug;
   const publishedUrl = `https://paragraph.com/@${pubHandle}/${publishedSlug || data?.id || ''}`.replace(/\/+$/, '');
+
+  // Record success for future dedup
+  try {
+    const pgRecord = await getPgClient();
+    await pgRecord.connect();
+    await pgRecord.query(
+      'INSERT INTO app.publication_dedup (content_hash, slug, url) VALUES ($1, $2, $3)',
+      [contentHash, publishedSlug, publishedUrl]
+    );
+    await pgRecord.end();
+  } catch (e) {
+    console.warn('[Paragraph] Failed to record publication:', e.message);
+  }
 
   return {
     success: true,
