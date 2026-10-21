@@ -15,7 +15,7 @@
  */
 import express from 'express';
 import fs from 'node:fs/promises';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -147,14 +147,56 @@ router.use(express.json({ limit: '24mb' }));
 // client sees on the selection chip, and what the design engine uses to pick
 // a palette direction.
 const BACKDROP_DIR = path.join(REPO, 'partyfavorphoto', 'assets', 'backdrops');
+
+// The order the client is offered them in.
+//
+// The alphabetical list put "black-gold-mermaid" and "black-sequin" first,
+// which is the opposite of what a client reaches for: they want gold, or
+// silver, or the iridescent one, and the two black curtains are the
+// last-resort choices. So the lighter and the common ones lead, and the
+// dark ones are at the end - where a client who really wants one will find
+// it, and a client who does not will not scroll past three good options to
+// get to it.
+const BACKDROP_ORDER = [
+  'gold-sequin',
+  'silver-sequin',
+  'iridescent',
+  'rose-gold',
+  'premium-gold-large-sequin',
+  'premium-rose-large-sequin',
+  'white-gold-mermaid',
+  'black-gold-mermaid',
+  'blue-sequin',
+  'black-sequin',
+  'flat-black',
+];
+
 const BACKDROPS = (() => {
   try {
-    return readdirSync(BACKDROP_DIR)
+    const found = readdirSync(BACKDROP_DIR)
       .filter(f => /\.png$/i.test(f))
-      .sort()
-      .map(f => {
-        const slug = f.replace(/\.png$/i, '');
-        return { slug, url: `/api/visual/pfp/backdrops/${slug}.png` };
+      .map(f => f.replace(/\.png$/i, ''));
+    const rank = (slug) => {
+      const at = BACKDROP_ORDER.indexOf(slug);
+      return at === -1 ? BACKDROP_ORDER.length : at;
+    };
+    return found
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+      .map((slug) => {
+        // The picker shows the plain curtain, at a size a row of eleven can
+        // afford. The version is the thumbnail's own mtime, so a regenerated
+        // picture is a new URL - otherwise a client with a week of cache in
+        // their browser keeps seeing the old one, which is exactly what
+        // happened when the gold curtain was re-cropped.
+        let version = 0;
+        try {
+          version = statSync(path.join(BACKDROP_DIR, 'thumbs', `${slug}.jpg`)).mtimeMs;
+        } catch { /* no thumbnail yet */ }
+        return {
+          slug,
+          url: `/api/visual/pfp/backdrops/${slug}.png`,
+          thumb: `/api/visual/pfp/backdrops/thumb/${slug}.jpg?v=${version}`,
+        };
       });
   } catch (e) {
     // NOT swallowed into an empty list. This module imports fs from
@@ -180,8 +222,16 @@ router.get('/backdrops', (_req, res) => {
  *  The PLAIN curtain - the colour and the texture on its own - is what the
  *  PICKER shows, because that is the choice being made. */
 const BACKDROP_SLUGS = new Set(BACKDROPS.map(b => b.slug));
-const backdropFile = (slug) =>
-  BACKDROP_SLUGS.has(slug) ? path.join(BACKDROP_DIR, `${slug}-backdrop.jpg`) : null;
+const backdropFile = (slug) => {
+  if (!BACKDROP_SLUGS.has(slug)) return null;
+  // "-photo" is the photograph itself, cropped out of a sample sheet. One of
+  // the sample sheets carried a white band with "Sample Photo" written on it,
+  // and a print that shows that band behind the photo windows shows the
+  // caption to the client.
+  const cropped = path.join(BACKDROP_DIR, `${slug}-photo.jpg`);
+  if (existsSync(cropped)) return cropped;
+  return path.join(BACKDROP_DIR, `${slug}-backdrop.jpg`);
+};
 
 // Serve the backdrop images. They are static assets, so they are served
 // directly from disk with a long cache header.

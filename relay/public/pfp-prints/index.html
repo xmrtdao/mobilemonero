@@ -807,7 +807,7 @@
       $('#ob-bd').innerHTML = list.map(b => `
         <button class="ob-bd" type="button" data-slug="${b.slug}"
                 aria-label="Use the ${prettyBackdrop(b.slug)} backdrop">
-          <img src="${API}/backdrops/thumb/${b.slug}.jpg" alt="" loading="lazy" />
+          <img src="${b.thumb}" alt="" loading="lazy" />
           <span>${prettyBackdrop(b.slug)}</span>
         </button>`).join('');
       $('#ob-bd').querySelectorAll('.ob-bd').forEach(el => {
@@ -1411,7 +1411,7 @@
     box.innerHTML =
       `<button class="bd none${backdrop ? '' : ' sel'}" data-slug="" title="No curtain">None</button>` +
       list.map(b => `<button class="bd${backdrop === b.slug ? ' sel' : ''}" data-slug="${b.slug}"
-        title="${prettyBackdrop(b.slug)}"><img src="${API}/backdrops/thumb/${b.slug}.jpg"
+        title="${prettyBackdrop(b.slug)}"><img src="${b.thumb}"
         alt="${prettyBackdrop(b.slug)}" loading="lazy" /></button>`).join('');
     box.querySelectorAll('.bd').forEach(el => {
       el.onclick = () => chooseCurtain(el.dataset.slug);
