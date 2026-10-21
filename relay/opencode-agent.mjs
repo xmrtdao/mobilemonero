@@ -22,8 +22,23 @@
  */
 
 import { startAgentDaemon } from './lib/agent-bridge.mjs';
+import { acquireOpencodeLock } from './lib/opencode-lock.mjs';
+import { runOpencodePrompt } from './lib/opencode-runner.mjs';
 import { join } from 'path';
 import http from 'http';
+import { fileURLToPath } from 'url';
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
+
+// The lock that keeps one agent at a time on this machine. The harness is a
+// node process with a tool-calling loop, and this box has 8GB with most of
+// it already in use. The board is the queue; this is what makes "one at a
+// time" true of everything that reaches the harness.
+const LOCK_PATH = process.env.OPENCODE_LOCK_PATH || join(ROOT, 'relay-data', 'opencode.lock');
+// Someone is WAITING for the answer here, so this one holds its place for a
+// while rather than standing down. The executor, which has a queue of tasks
+// behind it, does not wait - it takes the next task next cycle.
+const LOCK_WAIT_MS = Number(process.env.OPENCODE_AGENT_LOCK_WAIT_MS || 90_000);
 
 // The loopback proxy. It injects the server's credential for requests that
 // arrive without one, so nothing here has to know a password.
@@ -83,49 +98,36 @@ async function executePrompt(entry) {
 }
 
 async function runPrompt(prompt) {
-  const created = await api('POST', '/api/session', { title: String(prompt).slice(0, 80) });
-  const sessionId = created?.data?.id;
-  if (!sessionId) {
-    throw new Error(`could not create a session on ${BASE} (the OpenCode server may be down)`);
-  }
-
-  const sent = await api('POST', `/api/session/${sessionId}/prompt`, {
-    text: prompt,
-    ...(MODEL ? { model: { providerID: 'opencode', modelID: MODEL } } : {}),
-    agent: 'build',
-  });
-  if (!sent) throw new Error('the OpenCode server did not accept the prompt');
-
-  // The server answers in the background, so the reply is polled for. A
-  // message that has not finished streaming has only the model's reasoning in
-  // it, and reading it early is how a finished piece of work was once
-  // recorded as "the worker replied with nothing".
-  const deadline = Date.now() + MAX_WAIT_MS;
-  while (Date.now() < deadline) {
-    const msgs = await api('GET', `/api/session/${sessionId}/message`);
-    const arr = Array.isArray(msgs?.data) ? msgs.data : [];
-    const assistant = arr.filter((m) => m.type === 'assistant').pop();
-    if (assistant) {
-      if (assistant.finish === 'error' || assistant.error) {
-        throw new Error(`worker failed: ${JSON.stringify(assistant.error).slice(0, 300)}`);
-      }
-      if (assistant.time?.completed === undefined && assistant.finish === undefined) {
-        await new Promise((r) => setTimeout(r, 2000));
-        continue;
-      }
-      const parts = Array.isArray(assistant.content) ? assistant.content : [];
-      const text = parts.filter((c) => c.type === 'text').map((c) => c.text).join(' ').trim();
-      const tools = [...new Set(parts
-        .filter((c) => c.type === 'tool' || c.tool || c.name)
-        .map((c) => c.name || c.tool || (c.state && c.state.title) || 'tool'))];
-      const out = [text, tools.length ? `Tools used: ${tools.join('; ')}` : '']
-        .filter(Boolean).join('\n').trim();
-      if (!out) throw new Error('the worker replied with nothing');
-      return out;
+  // Take the harness, or wait for it. One agent at a time, and the wait is
+  // bounded so a stuck holder cannot hold this agent forever.
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let lock = null;
+  for (;;) {
+    lock = acquireOpencodeLock(LOCK_PATH, { label: 'inbox-daemon' });
+    if (lock.ok) break;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the OpenCode harness is in use by ${lock.heldBy} and only one agent may use it `
+        + `at a time - I will take this again shortly`);
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
-  throw new Error(`the worker did not answer within ${Math.round(MAX_WAIT_MS / 1000)}s`);
+
+  try {
+    return await runPromptLocked(prompt);
+  } finally {
+    lock.release();
+  }
+}
+
+async function runPromptLocked(prompt) {
+  const r = await runOpencodePrompt(prompt, {
+    base: BASE,
+    model: MODEL,
+    timeoutMs: MAX_WAIT_MS,
+  });
+  return [r.text, r.tools.length ? `Tools used: ${r.tools.join('; ')}` : '']
+    .filter(Boolean).join('\n').trim();
 }
 
 startAgentDaemon({

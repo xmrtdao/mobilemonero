@@ -224,6 +224,13 @@ export function listAgents() {
 // PUBLIC: Web search, web scrape, ollama chat, system monitor
 
 export const TOOL_SECURITY = {
+  // ── The harness: the agents' HANDS ──────────────────────────────────────
+  // OpenCode runs code on this machine - it reads the repository, changes
+  // files, runs commands. So it is CORE, and it is named here rather than
+  // left to the default, so the reason is on the record next to the rule.
+  'opencode': TRUST_LEVELS.CORE,
+  'opencode-status': TRUST_LEVELS.CORE,
+
   // ── CRITICAL INFRASTRUCTURE (CORE only) ──
   'ef:generate-payment-link': TRUST_LEVELS.CORE,
   'ef:auth-health': TRUST_LEVELS.CORE,

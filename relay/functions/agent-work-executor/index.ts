@@ -1,6 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.58.0";
 import { startUsageTrackingWithRequest } from "../../../suite/supabase/functions/_shared/functionUsageLogger.ts";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { acquireOpencodeLock } from "../../lib/opencode-lock.mjs";
+
+// The repository root, from this file's own location: relay/functions/
+// agent-work-executor/ is three levels down.
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 // The relay's address, used to point the completion artifact at a URL that
 // resolves to the work log. The guard on task completion demands an artifact
@@ -925,6 +932,12 @@ const OPENCODE_URL = Deno.env.get('OPENCODE_PROXY_URL') || 'http://127.0.0.1:413
 const OPENCODE_WORKER_PROVIDER = Deno.env.get('OPENCODE_WORKER_PROVIDER') || 'openrouter';
 const OPENCODE_WORKER_MODEL = Deno.env.get('OPENCODE_WORKER_MODEL') || 'minimax/minimax-m3.1-flash:free';
 
+// The lock that keeps one agent at a time on this machine. It is a file in
+// the relay's own data directory, shared with the inbox daemon, because the
+// harness is one process and two agents in it is what crashes a small box.
+const OPENCODE_LOCK_PATH = Deno.env.get('OPENCODE_LOCK_PATH')
+  || join(REPO_ROOT, 'relay-data', 'opencode.lock');
+
 // A verb that means "change something".
 const WORK_VERB = /\b(implement|fix|write|create|add|build|deploy|refactor|migrate|port|replace|rename|remove|delete|wire|integrate|patch|ship|publish|merge|install|configure|update)\b/;
 // An item that only asks to be understood.
@@ -1038,6 +1051,29 @@ async function untrackedFiles(): Promise<Set<string>> {
 }
 
 async function runOpenCodeWorker(task: Task, item: string): Promise<{ ok: boolean; summary?: string; error?: string; deliverable?: string }> {
+  // ONE agent at a time on this box. The harness is a node process with a
+  // tool-calling loop, and this machine has 8GB with most of it already in
+  // use. A second agent does not queue behind the first - it stands down and
+  // the task is picked up on the next cycle, which is what the task's own
+  // progress record is for.
+  const lock = acquireOpencodeLock(OPENCODE_LOCK_PATH, { label: `executor:${task.id}` });
+  if (!lock.ok) {
+    console.log(`   Another agent is using the OpenCode harness (${lock.holder}, ` +
+      `${Math.round(lock.ageMs / 1000)}s ago) - standing down, this task waits for the next cycle.`);
+    return {
+      ok: false,
+      error: `the OpenCode harness is in use by ${lock.holder} - only one agent may use it at a time`,
+    };
+  }
+
+  try {
+    return await runOpenCodeWorkerLocked(task, item);
+  } finally {
+    lock.release();
+  }
+}
+
+async function runOpenCodeWorkerLocked(task: Task, item: string): Promise<{ ok: boolean; summary?: string; error?: string; deliverable?: string }> {
   const base = OPENCODE_URL.replace(/\/$/, '');
   const prompt = [
     `TASK: ${task.title}`,

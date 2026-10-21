@@ -68,6 +68,16 @@ function loadEnv() {
 }
 loadEnv();
 
+// The OpenCode harness: the agents' hands, and the one part of the stack that
+// is not just HTTP to somewhere else. ONE AT A TIME - see the lock module.
+// These are read after the .env is loaded, so an operator can point the
+// harness or the lock somewhere else without editing this file.
+import { acquireOpencodeLock, opencodeLockState } from './lib/opencode-lock.mjs';
+import { runOpencodePrompt } from './lib/opencode-runner.mjs';
+const OPENCODE_PROXY_URL = (process.env.OPENCODE_PROXY_URL || 'http://127.0.0.1:4130').replace(/\/$/, '');
+const OPENCODE_LOCK_PATH = process.env.OPENCODE_LOCK_PATH
+  || join(__dirname, '..', 'relay-data', 'opencode.lock');
+
 // ── Module imports ──────────────────────────────────────────
 import { webSearch, formatResults } from './tools/web-search.mjs';
 import { webScrape } from './tools/web-scrape.mjs';
@@ -1010,6 +1020,79 @@ const toolHandlers = {
     globalThis.__PFP_MONEY_TOOL_DESCRIPTIONS = PFP_MONEY_TOOL_DESCRIPTIONS;
     return tools;
   })(),
+
+  // ── The harness: the agents' hands ──────────────────────────────────────
+  // OpenCode is the one thing in the relay that can actually DO something:
+  // read the repository, change a file, run a command, commit. Every other
+  // tool here asks somebody else to do the work.
+  //
+  // ONE AGENT AT A TIME. The harness is a node process with a tool-calling
+  // loop, and this box has 8GB with most of it already in use. The board is
+  // the queue; this lock is what makes "one at a time" true of everything
+  // that reaches the harness, including the operator's own pane. A caller that
+  // cannot get it is told plainly who has it.
+  'opencode': async (args) => {
+    const prompt = args?.prompt || args?.instruction || args?.task;
+    if (!prompt) return { error: 'prompt is required' };
+    const waitMs = Math.max(0, Math.min(10 * 60 * 1000, Number(args?.waitMs) || 90_000));
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const lock = await acquireOpencodeLock(OPENCODE_LOCK_PATH, {
+        label: `relay-tool:${args?._agent?.id || 'agent'}`,
+      });
+      if (lock.ok) {
+        try {
+          const r = await runOpencodePrompt(String(prompt), {
+            base: OPENCODE_PROXY_URL,
+            model: args?.model || '',
+            timeoutMs: Number(args?.timeoutMs) || 5 * 60 * 1000,
+            title: args?.title || '',
+          });
+          return {
+            success: true,
+            text: r.text,
+            tools: r.tools,
+            sessionId: r.sessionId,
+            seconds: r.seconds,
+          };
+        } finally {
+          lock.release();
+        }
+      }
+      if (Date.now() >= deadline) {
+        return {
+          success: false,
+          error: `the OpenCode harness is in use by ${lock.holder || 'another agent'} and only one agent `
+            + `may use it at a time - try again shortly, or leave the work on the board where it will `
+            + `be picked up`,
+          heldBy: lock.holder || null,
+        };
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  },
+
+  'opencode-status': async () => {
+    const state = opencodeLockState(OPENCODE_LOCK_PATH);
+    let harness = 'unknown';
+    try {
+      const r = await fetch(`${OPENCODE_PROXY_URL}/api/session`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      harness = r.ok ? 'up' : `answering ${r.status}`;
+    } catch (e) {
+      harness = 'not reachable';
+    }
+    return {
+      success: true,
+      harness,
+      inUse: state.held,
+      heldBy: state.holder,
+      heldForSeconds: Math.round((state.ageMs || 0) / 1000),
+      rule: 'one agent at a time - the board is the queue',
+    };
+  },
 
   'page-agent-task': async (args) => {
     const task = args?.task || args?.instruction;
@@ -9287,6 +9370,8 @@ function getToolDescription(name) {
     'x402-status': 'Check x402 invoice payment status. Args: invoice_id (optional — omit for all recent invoices). Returns status pending/paid.',
     'x402-settle': 'Reconcile/settle an x402 invoice as paid (webhook or manual confirmation). Args: invoice_id, provider_ref. Records an audit row in pfp_payments.',
     'web-scrape': 'Extract readable text content from any URL',
+    'opencode': 'THE HANDS. Give the OpenCode harness a job and it will do it: read the repository, change files, run commands, commit. Args: prompt (required - what to do), title, model, waitMs (how long to wait for the harness, default 90s), timeoutMs. ONE AGENT AT A TIME: the harness is a node process with a tool-calling loop and this machine is small, so a caller that cannot get it is told who has it rather than piling on. The board is the queue.',
+    'opencode-status': 'Whether the OpenCode harness is up, and whether an agent is using it right now. Read-only, cheap - check before a long job.',
     'ollama-chat': 'Chat with local LLM via Ollama',
     'ollama-models': 'List available Ollama models',
     'ollama-health': 'Check Ollama service health',
