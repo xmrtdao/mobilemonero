@@ -34,6 +34,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import http from 'http';
 import https from 'https';
 
@@ -349,6 +350,19 @@ async function createFollowupTask(email, classification, extracted) {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
     body: JSON.stringify({
+      // The id has to be supplied.
+      //
+      // app.tasks.id is NOT NULL with NO DEFAULT - the route that creates
+      // tasks over SQL passes gen_random_uuid()::text itself, because a
+      // column with no default and a NOT NULL constraint rejects any insert
+      // that does not name it. PostgREST cannot add one, so every
+      // email-originated task creation failed with "null value in column id
+      // ... violates not-null constraint" - and the parse log still reported
+      // "0 errors", because the failure was logged and not counted.
+      //
+      // That is why every task on the board came from the founder: the path
+      // that would have created the others had never worked.
+      id: randomUUID(),
       title: taskTitle,
       description: taskBody,
       status: 'BLOCKED',
@@ -375,6 +389,14 @@ async function createFollowupTask(email, classification, extracted) {
   });
   if (!res.ok) {
     const err = await res.text();
+    // An open task with the same title already exists, so this email is
+    // already being worked. That is the dedupe index doing its job, not a
+    // failure - and the parse log counts errors, so calling it one would
+    // report a healthy inbox as broken.
+    if (/tasks_one_open_per_title|duplicate key value/.test(err)) {
+      console.log('[inbound-parser] an open task with this title already exists - not filing it again');
+      return null;
+    }
     console.error(`[inbound-parser] task create failed: ${err}`);
     return null;
   }
