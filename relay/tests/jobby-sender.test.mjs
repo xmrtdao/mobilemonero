@@ -187,9 +187,31 @@ section('a request still cannot choose its own From');
     !/function resolveJobbySender\(\s*(from|address|email)/.test(body));
   check('it reads the address off the client row',
     /client && client\.mailbox/.test(body));
+  // The From is the agent's, never the caller's. The agent table is the
+  // source. Jobby's row is resolved per send, from the store, because a
+  // candidate's own address has to come from the candidate's own record -
+  // so the spelling of the assignment has changed, but the property has
+  // not: the request does not get to name a From.
+  //
+  // The first version of this check looked for one literal line, and it
+  // failed when the Jobby branch was added - not because the property had
+  // broken, but because the check had been a proxy for the property rather
+  // than the property itself. So it now checks the property: the From
+  // comes from a table or the store, and NOWHERE does it come from the
+  // request.
+  const fromComesFromATable =
+    /const from = AGENT_FROM\[agent\]/.test(src)
+    || /const from = agent === 'jobby'/.test(src)
+    || /const from = AGENT_FROM_LOCAL\[agent\]/.test(src)
+    || /const from = sender\.from/.test(src);
+  const fromNeverComesFromTheRequest =
+    !/\bfrom\s*[:=]\s*(args\b|args\?\.|req\.body\b|req\.query\b|req\.params\b)/.test(src);
   check('the send tool still refuses a from in its arguments',
-    /const from = AGENT_FROM\[agent\]/.test(src),
+    fromComesFromATable && fromNeverComesFromTheRequest,
     'the From must come from the agent table, not from args');
+  check('and no From anywhere in the file comes from the request',
+    fromNeverComesFromTheRequest,
+    'a From was taken from the request');
 }
 
 console.log('\n' + (fails === 0 ? 'all sender tests passed' : fails + ' FAILED'));

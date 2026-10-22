@@ -689,63 +689,130 @@
 
   setTimeout(function() { updateTrustTrajectory(); setInterval(updateTrustTrajectory, 30000); }, 200);
 
-  // ── Activity Log (centralized log viewer) ──
+  // ── Activity Log (centralized log viewer) ───────────────────────────────
+  //
+  // The row format changed on 2026-10-22, and the reason was that the log
+  // was showing "unknown" for a third of its rows and nothing else about
+  // them. The endpoint now resolves the actor (an agent when one is known,
+  // a classified client when one is not) and returns the metadata, so each
+  // row can show what it was, who did it, how long it took and what it
+  // returned. "unknown" is not an acceptable answer to "who did this".
+  function activityColor(type, status) {
+    if (type === 'fleet_message' || type === 'fleet-chat') return '#A98AD6';
+    if (type === 'ai_chat') return '#8FC97A';
+    if (type === 'system_health_check') return status === 'completed' ? '#8FC97A' : '#E4695A';
+    if (type === 'rate_limit' || type === 'auth_failure' || type === 'slow_request') return '#DC8A1E';
+    if (type === 'db_error' || type === 'email_error' || type === 'fleet_error' || type === 'memory_error'
+        || type === 'kg_error' || type === 'system_error' || type === 'http_error' || type === 'tool_failed') return '#E4695A';
+    if (type === 'ollama_error' || type === 'mesh_rejection') return '#DC8A1E';
+    if (type === 'cron_execution') return '#E4BB3A';
+    if (type === 'edge_function') return '#63C7D4';
+    if (type === 'tool_execution' || type === 'tool_success' || type === 'tool_running' || type === 'tool_pending') return '#B9BEB0';
+    if (status === 'failed' || status === 'error') return '#E4695A';
+    if (status === 'success' || status === 'completed') return '#8FC97A';
+    if (status === 'in_progress' || status === 'pending' || status === 'warning') return '#DC8A1E';
+    return '#63C7D4';
+  }
+  function activityIcon(type, status) {
+    if (type === 'fleet_message' || type === 'fleet-chat') return '📨';
+    if (type === 'ai_chat') return '💬';
+    if (type === 'system_health_check') return '🏥';
+    if (type === 'daemon_scan') return '🔍';
+    if (type === 'rate_limit') return '🚦';
+    if (type === 'auth_failure') return '🔑';
+    if (type === 'db_error') return '🗄️';
+    if (type === 'email_error') return '📧';
+    if (type === 'fleet_error') return '📡';
+    if (type === 'memory_error') return '🧠';
+    if (type === 'ollama_error') return '🤖';
+    if (type === 'kg_error') return '🕸️';
+    if (type === 'mesh_rejection') return '🌐';
+    if (type === 'system_error') return '💥';
+    if (type === 'http_error') return '❌';
+    if (type === 'tool_failed') return '❌';
+    if (type === 'cron_execution') return '⏱';
+    if (type === 'edge_function') return '⚡';
+    if (type === 'tool_execution' || type === 'tool_success') return '🔧';
+    if (type === 'api_call') return '·';
+    if (type === 'slow_request') return '🐢';
+    if (status === 'failed' || status === 'error') return '❌';
+    if (status === 'success' || status === 'completed') return '✅';
+    return '●';
+  }
+  function activityAge(iso) {
+    if (!iso) return '';
+    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    if (s < 86400) return Math.floor(s / 3600) + 'h';
+    return Math.floor(s / 86400) + 'd';
+  }
+  function activityRow(a) {
+    var type = a.activity_type || 'system';
+    var status = a.status || 'info';
+    var title = (a.title || a.description || type).slice(0, 90);
+    var color = activityColor(type, status);
+    var icon = activityIcon(type, status);
+    var actor = a.actor || a.agent_id || '—';
+    var bits = [];
+    if (a.status_code) bits.push(a.status_code);
+    if (a.actor_kind === 'client') bits.push('client');
+    var dur = a.duration_ms != null
+      ? (a.duration_ms >= 1000 ? (a.duration_ms / 1000).toFixed(1) + 's' : a.duration_ms + 'ms')
+      : activityAge(a.created_at);
+    return '<div class="stat" style="font-size:0.6rem;line-height:1.35;">'
+      + '<span class="label" style="color:' + color + ';">' + icon + ' ' + escapeHtml(title) + '</span>'
+      + '<span class="value" style="color:' + color + ';font-size:0.55rem;">' + dur + '</span>'
+      + '<br/><span style="color:#6C7263;font-size:0.5rem;">' + escapeHtml(actor) + (bits.length ? ' · ' + bits.join(' · ') : '') + '</span>'
+      + '</div>';
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   function updateShipsLog() {
     var logEl = document.getElementById('qds-activity-log');
     if (!logEl) return;
     var typeFilter = document.getElementById('log-filter-type') ? document.getElementById('log-filter-type').value : '';
     var search = document.getElementById('log-search') ? document.getElementById('log-search').value.toLowerCase() : '';
-    var url = '/api/activity-log?limit=50';
+    var url = '/api/activity-log?limit=120';
     if (typeFilter) url += '&activity_type=' + encodeURIComponent(typeFilter);
     apiFetch(url, { signal: AbortSignal.timeout(25000) }).then(function(r) { return r.json(); }).then(function(rows) {
-          if (!rows.length) { logEl.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">No activity yet</span></div>'; return; }
-          // Filter out the noise: dashboard polling every 3s drowns the log
+          if (!rows || !rows.length) {
+            logEl.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">No activity yet</span></div>';
+            return;
+          }
+          // Filter out the noise: dashboard polling every 3s drowns the log.
+          // The actor is now resolved, so this matches on the resolved actor
+          // — the dashboard's own fleet-chat poll is the row that was
+          // drowning everything else out.
           rows = rows.filter(function(a) {
             var title = (a.title || '').toLowerCase();
-            if (title === 'get /api/fleet-chat/messages' && a.agent_id === 'dashboard') return false;
-            if (search && !title.includes(search) && !(a.agent_id || '').toLowerCase().includes(search)) return false;
+            if (title === 'get /api/fleet-chat/messages' && (a.actor === 'dashboard' || a.actor === 'nexus-dashboard')) return false;
+            if (search && !(a.title || '').toLowerCase().includes(search)
+                && !(a.actor || '').toLowerCase().includes(search)
+                && !(a.description || '').toLowerCase().includes(search)) return false;
             return true;
-          }).slice(0, 50);
-          logEl.innerHTML = rows.map(function(a) {
-        var type = a.activity_type || 'system';
-        var title = (a.title || a.description || type).slice(0, 80);
-        var status = a.status || 'info';
-        var agent = a.agent_id || '';
-        var time = a.created_at ? (function() { var d = new Date(a.created_at); var s = Math.floor((Date.now()-d)/1000); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; })() : '';
-        var color = '#9AA091';
-        if (status === 'failed' || status === 'error') color = '#E4695A';
-        else if (status === 'success' || status === 'completed') color = '#8FC97A';
-        else if (status === 'in_progress' || status === 'pending') color = '#DC8A1E';
-        else if (status === 'info') color = '#63C7D4';
-        if (type === 'fleet_message') color = '#A98AD6';
-        else if (type === 'ai_chat') color = '#8FC97A';
-        else if (type === 'system_health_check') color = status === 'completed' ? '#8FC97A' : '#E4695A';
-        else if (type === 'rate_limit' || type === 'auth_failure') color = '#DC8A1E';
-        else if (type === 'db_error' || type === 'email_error' || type === 'fleet_error' || type === 'memory_error' || type === 'kg_error' || type === 'system_error') color = '#E4695A';
-        else if (type === 'ollama_error' || type === 'mesh_rejection') color = '#DC8A1E';
-        var icon = '●';
-        if (type === 'fleet_message') icon = '📨';
-        else if (type === 'ai_chat') icon = '💬';
-        else if (type === 'system_health_check') icon = '🏥';
-        else if (type === 'daemon_scan') icon = '🔍';
-        else if (type === 'rate_limit') icon = '🚦';
-        else if (type === 'auth_failure') icon = '🔑';
-        else if (type === 'db_error') icon = '🗄️';
-        else if (type === 'email_error') icon = '📧';
-        else if (type === 'fleet_error') icon = '📡';
-        else if (type === 'memory_error') icon = '🧠';
-        else if (type === 'ollama_error') icon = '🤖';
-        else if (type === 'kg_error') icon = '🕸️';
-        else if (type === 'mesh_rejection') icon = '🌐';
-        else if (type === 'system_error') icon = '💥';
-        else if (status === 'failed' || status === 'error') icon = '❌';
-        else if (status === 'success' || status === 'completed') icon = '✅';
-        return '<div class="stat" style="font-size:0.6rem;line-height:1.4;"><span class="label" style="color:' + color + ';">' + icon + ' ' + title + '</span><span class="value" style="color:' + color + ';font-size:0.55rem;">' + time + '</span><br/><span style="color:#6C7263;font-size:0.5rem;">' + agent + '</span></div>';
-      }).join('');
-    }).catch(function() {
-      var el = document.getElementById('qds-activity-log');
-      if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">Activity feed unavailable</span></div>';
-    });
+          }).slice(0, 60);
+          logEl.innerHTML = rows.map(activityRow).join('');
+          var statsEl = document.getElementById('qds-activity-stats');
+          if (statsEl) {
+            var errs = rows.filter(function(a) { return a.status === 'error' || a.status === 'failed' || a.activity_type === 'http_error'; }).length;
+            var slow = rows.filter(function(a) { return a.activity_type === 'slow_request'; }).length;
+            var actors = {}; rows.forEach(function(a) { actors[a.actor || '—'] = 1; });
+            var unknown = rows.filter(function(a) { return !a.actor || a.actor === 'unknown'; }).length;
+            statsEl.innerHTML = '<span>rows <b style="color:var(--text-secondary);">' + rows.length + '</b></span>'
+              + '<span>errors <b style="color:' + (errs ? '#E4695A' : '#8FC97A') + ';">' + errs + '</b></span>'
+              + '<span>slow <b style="color:' + (slow ? '#DC8A1E' : '#8FC97A') + ';">' + slow + '</b></span>'
+              + '<span>actors <b style="color:var(--text-secondary);">' + Object.keys(actors).length + '</b></span>'
+              + (unknown ? '<span style="color:#DC8A1E;">unattributed <b>' + unknown + '</b></span>' : '');
+          }
+        }).catch(function() {
+          var el = document.getElementById('qds-activity-log');
+          if (el) el.innerHTML = '<div class="stat"><span class="label" style="color:#E4695A;">Activity feed unavailable</span></div>';
+        });
   }
   function refreshLogViewer() { updateShipsLog(); }
   setTimeout(function() { updateShipsLog(); setInterval(updateShipsLog, 5000); }, 1000);
@@ -3786,3 +3853,497 @@ window.openBrowserPane = function(u, title) {
     body: JSON.stringify({ kind: 'url', url: url, title: title || 'Browser', by: 'operator' }),
   }).catch(function(){});
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTIVITY INTELLIGENCE — the fullscreen board behind the Activity Log tile.
+//
+// What it shows, and why each piece is here:
+//
+//   Jantt timeline    — what ran when, and for how long. The Activity Log is
+//                       a list of instants; a list of instants cannot tell
+//                       you that one job held the stack for four minutes.
+//   Traffic           — every request, counted live. The database only
+//                       stores the interesting ones, so the stored rows
+//                       cannot describe the shape of the load.
+//   Functions         — what the fleet actually calls, and how often it
+//                       fails when it does.
+//   Errors            — grouped by shape, so a fault that fires sixty times
+//                       reads as one fault and not sixty.
+//   Key file versions — the fingerprint, line count and last commit of the
+//                       files that get refactored. This is how you answer
+//                       "was the code I am reading the code that threw?".
+//   GitHub activity   — the commits behind those fingerprints.
+//   Ship logs         — the log files on disk. No database connection, so
+//                       nothing in them ever reaches the feed.
+//   Coverage          — which log sources exist, and which of them the
+//                       Activity Log is actually a view of.
+//
+// Nothing here is decorative: every panel is a number the server counted.
+// ═══════════════════════════════════════════════════════════════════════════
+(function () {
+  var intelWindow = 60;
+  var intelData = null;
+  var intelTimer = null;
+  var intelGithub = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function el(id) { return document.getElementById(id); }
+  function setText(id, text) { var e = el(id); if (e) e.textContent = text; }
+  function setHtml(id, html) { var e = el(id); if (e) e.innerHTML = html; }
+
+  function fmtAge(iso) {
+    if (!iso) return '—';
+    var ms = Date.now() - new Date(iso).getTime();
+    if (ms < 0) ms = 0;
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function fmtBytes(b) {
+    if (b == null) return '—';
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1048576).toFixed(1) + ' MB';
+  }
+  function fmtMs(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    return (ms / 60000).toFixed(1) + 'm';
+  }
+
+  // ── Open / close ──────────────────────────────────────────────────────
+  window.openActivityIntel = function () {
+    var overlay = el('intel-overlay');
+    if (!overlay) return;
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    refreshIntel(true);
+    if (intelTimer) clearInterval(intelTimer);
+    intelTimer = setInterval(function () { refreshIntel(false); }, 15000);
+  };
+  window.closeActivityIntel = function () {
+    var overlay = el('intel-overlay');
+    if (overlay) overlay.classList.remove('open');
+    document.body.style.overflow = '';
+    if (intelTimer) { clearInterval(intelTimer); intelTimer = null; }
+  };
+  window.setIntelWindow = function (minutes) {
+    intelWindow = minutes;
+    var buttons = document.querySelectorAll('#intel-head .intel-btn[data-window]');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle('on', buttons[i].getAttribute('data-window') === String(minutes));
+    }
+    refreshIntel(true);
+  };
+  window.refreshIntel = function (force) { loadIntel(force); };
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      var overlay = el('intel-overlay');
+      if (overlay && overlay.classList.contains('open')) window.closeActivityIntel();
+    }
+  });
+
+  // ── Load ──────────────────────────────────────────────────────────────
+  function loadIntel(force) {
+    if (!force && intelData && Date.now() - intelData._loaded < 5000) return;
+    setText('intel-generated', 'loading…');
+    window.apiFetch('/api/log-intel?window=' + intelWindow, { signal: AbortSignal.timeout(30000) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || d.error) {
+          setText('intel-generated', 'unavailable: ' + (d && d.error ? d.error : 'no data'));
+          return;
+        }
+        intelData = d;
+        intelData._loaded = Date.now();
+        renderIntel(d);
+        loadIntelLog();
+        loadIntelGithub();
+      })
+      .catch(function (e) {
+        setText('intel-generated', 'unavailable: ' + e.message);
+      });
+  }
+
+  function loadIntelLog() {
+    window.apiFetch('/api/activity-log?limit=200', { signal: AbortSignal.timeout(25000) })
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        if (!rows || !rows.length) {
+          setHtml('intel-log', '<div class="intel-empty">No log rows in this window.</div>');
+          return;
+        }
+        var html = rows.map(function (a) {
+          var status = a.status || '';
+          var isErr = status === 'error' || status === 'failed' || a.activity_type === 'http_error' || a.activity_type === 'tool_failed';
+          var isWarn = a.activity_type === 'slow_request' || status === 'warning';
+          var meta = [];
+          if (a.status_code) meta.push('<span class="' + (isErr ? 'err' : 'ok') + '">' + a.status_code + '</span>');
+          if (a.duration_ms != null) meta.push('<span class="' + (isWarn ? 'warn' : '') + '">' + fmtMs(a.duration_ms) + '</span>');
+          if (a.function_name) meta.push('<span>' + esc(a.function_name) + '</span>');
+          var t = a.created_at ? new Date(a.created_at).toISOString().slice(11, 19) : '--:--:--';
+          var what = a.title || a.description || a.activity_type || '';
+          return '<div class="intel-log-row" title="' + esc(a.description || '') + '">'
+            + '<span class="t">' + t + '</span>'
+            + '<span class="who">' + esc(a.actor || a.agent_id || '—') + '</span>'
+            + '<span class="what" style="color:' + (isErr ? '#E4695A' : isWarn ? '#DC8A1E' : '#ECEDE6') + ';">' + esc(String(what).slice(0, 120)) + '</span>'
+            + '<span class="meta">' + meta.join(' · ') + '</span>'
+            + '</div>';
+        }).join('');
+        setHtml('intel-log', html);
+        setText('intel-log-hint', rows.length + ' most recent rows');
+      })
+      .catch(function () { setHtml('intel-log', '<div class="intel-empty">Log stream unavailable.</div>'); });
+  }
+
+  function loadIntelGithub() {
+    if (intelGithub) return;
+    window.apiFetch('/api/dao/github', { signal: AbortSignal.timeout(25000) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        intelGithub = d;
+        var commits = (d && d.recent_commits) || [];
+        if (!commits.length) {
+          setHtml('intel-github', '<div class="intel-empty">No commits returned' + (d && d.has_token === false ? ' (no GitHub token configured)' : '') + '.</div>');
+          return;
+        }
+        var html = '<div class="intel-kv" style="margin-bottom:4px;"><span>repos <b>' + (d.total_repos || 0) + '</b></span></div>';
+        html += commits.map(function (c) {
+          var msg = (c.commit && c.commit.message) ? c.commit.message.split('\n')[0] : '?';
+          var when = c.commit && c.commit.author ? c.commit.author.date : null;
+          var sha = c.sha ? String(c.sha).slice(0, 7) : '';
+          return '<div class="intel-row">'
+            + '<span class="grow">' + (c._repo ? '<span style="color:#8FC97A;">' + esc(c._repo) + '</span> ' : '') + esc(msg.slice(0, 70)) + '</span>'
+            + '<span class="intel-num">' + esc(sha) + ' · ' + fmtAge(when) + '</span>'
+            + '</div>';
+        }).join('');
+        setHtml('intel-github', html);
+      })
+      .catch(function () { setHtml('intel-github', '<div class="intel-empty">GitHub unreachable.</div>'); });
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────
+  function renderIntel(d) {
+    setText('intel-generated', d.generated_at ? 'as of ' + new Date(d.generated_at).toISOString().slice(11, 19) + ' UTC · last ' + d.window_minutes + ' min' : '—');
+    renderJantt(d);
+    renderTraffic(d);
+    renderFunctions(d);
+    renderErrors(d);
+    renderFiles(d);
+    renderShip(d);
+    renderCoverage(d);
+    renderSlow(d);
+    renderSources(d);
+  }
+
+  function renderJantt(d) {
+    var host = el('intel-jantt');
+    if (!host) return;
+    var lanes = d.lanes || [];
+    if (!lanes.length) {
+      host.innerHTML = '<div class="intel-empty">Nothing ran in this window.</div>';
+      return;
+    }
+    var now = Date.now();
+    var start = now - d.window_minutes * 60000;
+    var span = now - start;
+
+    // Axis
+    var ticks = '';
+    var step = d.window_minutes <= 60 ? 10 : (d.window_minutes <= 180 ? 30 : 120);
+    for (var t = start; t <= now; t += step * 60000) {
+      var pct = ((t - start) / span) * 100;
+      var label = new Date(t).toISOString().slice(11, 16);
+      ticks += '<span class="jantt-tick" style="left:' + pct.toFixed(2) + '%;">' + label + '</span>';
+    }
+
+    var rows = '';
+    lanes.forEach(function (lane, li) {
+      var bars = '';
+      lane.bars.forEach(function (b, bi) {
+        var left = ((b.start_ms - start) / span) * 100;
+        var width = ((b.end_ms - b.start_ms) / span) * 100;
+        if (left > 100) return;
+        if (left < 0) { width += left; left = 0; }
+        if (width <= 0) width = 0.18;
+        var kind = 'request';
+        if (b.type === 'cron' || b.type === 'cron_execution') kind = 'cron';
+        else if (b.type === 'edge' || b.type === 'edge_function') kind = 'edge';
+        else if (b.type === 'tool_execution') kind = 'tool';
+        var bad = b.error || b.status === 'failed' || b.status === 'error';
+        var warn = b.status === 'warning' || b.status === 'warn';
+        if (bad) kind = 'err'; else if (warn) kind = 'warn';
+        var title = b.label + ' · ' + fmtMs(b.duration_ms) + (b.error ? ' · ' + b.error : '');
+        bars += '<div class="jbar ' + kind + '" style="left:' + left.toFixed(3) + '%;--w:' + width.toFixed(3) + '%;--i:' + (li * 6 + bi) + ';" title="' + esc(title) + '">' + esc(String(b.label).slice(0, 28)) + '</div>';
+      });
+      rows += '<div class="jantt-lane">'
+        + '<div class="jantt-lane-label" title="' + esc(lane.actor) + '">' + esc(lane.actor) + ' <span class="kind">' + esc(lane.kind) + '</span></div>'
+        + '<div class="jantt-track">' + bars + '</div>'
+        + '</div>';
+    });
+
+    host.innerHTML = '<div class="jantt-axis">' + ticks + '</div>' + rows
+      + '<div class="jantt-now" style="left:calc(132px + (100% - 132px) * 1);"></div>';
+    // The playhead is positioned over the track area, not the whole lane, so
+    // it is placed with a wrapper rather than a percentage of the page.
+    var nowEl = host.querySelector('.jantt-now');
+    if (nowEl) {
+      nowEl.style.left = '100%';
+      nowEl.style.marginLeft = '-132px';
+      nowEl.style.position = 'absolute';
+      nowEl.style.top = '16px';
+      nowEl.style.height = 'calc(100% - 16px)';
+    }
+    setText('intel-jantt-hint', lanes.length + ' lanes · window ' + d.window_minutes + ' min');
+  }
+
+  function renderTraffic(d) {
+    var host = el('intel-traffic');
+    if (!host) return;
+    var buckets = d.traffic && d.traffic.length ? d.traffic : [];
+    if (!buckets.length) {
+      setHtml('intel-traffic', '<div class="intel-empty">No live traffic counted yet — the relay counts every request as it passes.</div>');
+      return;
+    }
+    var max = 1;
+    buckets.forEach(function (b) { if (b.total > max) max = b.total; });
+    // The viewBox is wider than the panel so the stroke is not stretched
+    // into a band by preserveAspectRatio="none".
+    var W = 240, H = 54;
+    var step = buckets.length > 1 ? W / (buckets.length - 1) : W;
+    var pts = [], errPts = [], area = [];
+    buckets.forEach(function (b, i) {
+      var x = (i * step).toFixed(2);
+      var y = (H - (b.total / max) * (H - 6) - 3).toFixed(2);
+      pts.push(x + ',' + y);
+      area.push(x + ',' + H + ' ' + x + ',' + y);
+      if (b.errors) {
+        var ey = (H - (b.errors / max) * (H - 6) - 3).toFixed(2);
+        errPts.push(x + ',' + ey);
+      }
+    });
+    var svg = '<svg class="intel-spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">'
+      + '<defs><linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop offset="0%" stop-color="#C9A227" stop-opacity="0.5"/><stop offset="100%" stop-color="#C9A227" stop-opacity="0"/>'
+      + '</linearGradient></defs>'
+      + '<polygon class="spark-area" points="' + area.join(' ') + '"/>'
+      + '<polyline class="spark-line" points="' + pts.join(' ') + '"/>'
+      + (errPts.length > 1 ? '<polyline class="spark-err" points="' + errPts.join(' ') + '"/>' : '')
+      + '</svg>';
+    var total = buckets.reduce(function (n, b) { return n + b.total; }, 0);
+    var errs = buckets.reduce(function (n, b) { return n + b.errors; }, 0);
+    var html = svg + '<div class="intel-kv" style="margin-top:4px;">'
+      + '<span>requests <b>' + total + '</b></span>'
+      + '<span>errors <b style="color:' + (errs ? '#E4695A' : '#8FC97A') + ';">' + errs + '</b></span>'
+      + '<span>peak/min <b>' + max + '</b></span>'
+      + '<span>minutes <b>' + buckets.length + '</b></span>'
+      + '</div>'
+      + '<div class="intel-empty" style="padding:2px 0;">counted in memory since the relay process started</div>';
+    var top = d.traffic_top || [];
+    if (top.length) {
+      html += '<div style="margin-top:6px;">';
+      top.slice(0, 6).forEach(function (t) {
+        html += '<div class="intel-bar-row"><span class="intel-name" title="' + esc(t.path) + '">' + esc(t.path) + '</span><span class="intel-num">' + t.calls + '</span></div>';
+      });
+      html += '</div>';
+    }
+    setHtml('intel-traffic', html);
+  }
+
+  function renderFunctions(d) {
+    var host = el('intel-functions');
+    if (!host) return;
+    var fns = d.functions || [];
+    if (!fns.length) { setHtml('intel-functions', '<div class="intel-empty">No function calls recorded in this window.</div>'); return; }
+    var max = fns[0].calls || 1;
+    var html = fns.slice(0, 18).map(function (f, i) {
+      var pct = (f.calls / max) * 100;
+      var color = f.failures ? '#E4695A' : '#C9A227';
+      return '<div class="intel-bar-row">'
+        + '<span class="intel-name" title="' + esc(f.name) + ' · ' + esc((f.sources || []).join(', ')) + '">' + esc(f.name) + '</span>'
+        + '<span class="intel-num">' + f.calls + ' call' + (f.calls === 1 ? '' : 's')
+        + (f.failures ? ' · <span style="color:#E4695A;">' + f.failures + ' fail</span>' : '')
+        + ' · ' + fmtMs(f.avg_ms) + '</span>'
+        + '<span class="intel-bar-track"><span class="intel-bar-fill" style="background:' + color + ';--w:' + pct.toFixed(1) + '%;--i:' + i + ';"></span></span>'
+        + '</div>';
+    }).join('');
+    setHtml('intel-functions', html);
+  }
+
+  function renderErrors(d) {
+    var host = el('intel-errors');
+    if (!host) return;
+    var errs = d.errors || [];
+    if (!errs.length) { setHtml('intel-errors', '<div class="intel-empty">No errors in this window.</div>'); return; }
+    var html = errs.slice(0, 16).map(function (e) {
+      var owner = (e.files && e.files.length) ? e.files[0] : null;
+      var ver = e.file_version
+        ? '<span class="intel-badge" title="the version of this file that was live when the error fired' + (e.file_version.estimated ? ' (estimated — watching started later)' : '') + '">@ ' + esc(e.file_version.version || '?')
+          + (e.file_version.lines ? ' · ' + e.file_version.lines.toLocaleString() + 'ln' : '') + '</span>'
+        : '';
+      return '<div class="intel-row" title="' + esc(e.sample) + '">'
+        + '<span class="grow" style="color:' + (e.stale ? '#9AA091' : '#E4695A') + ';">' + esc(e.sample.slice(0, 90)) + '</span>'
+        + '<span class="intel-badge">' + e.count + '×</span>'
+        + (owner ? '<span class="intel-badge" title="the file that owns the route">' + esc(owner.replace(/^relay\//, '')) + '</span>' : '')
+        + ver
+        + '<span class="intel-num">' + fmtAge(e.last_at) + '</span>'
+        + '</div>';
+    }).join('');
+    var unresolved = errs.filter(function (e) { return !(e.files && e.files.length); }).length;
+    if (unresolved) {
+      html += '<div class="intel-empty" style="margin-top:4px;">' + unresolved + ' of these have no watched file owning the route.</div>';
+    }
+    setHtml('intel-errors', html);
+  }
+
+  function renderFiles(d) {
+    var host = el('intel-files');
+    if (!host) return;
+    var files = d.infra || [];
+    if (!files.length) { setHtml('intel-files', '<div class="intel-empty">No key files tracked.</div>'); return; }
+    var html = files.map(function (f) {
+      if (!f.exists) {
+        return '<div class="file-row"><span class="path" style="color:#E4695A;">' + esc(f.path) + '</span><span class="ver">missing</span>'
+          + '<span class="detail">the file this project depends on is not on disk</span></div>';
+      }
+      var churn = f.git && f.git.week_commits ? '<span class="churn">' + f.git.week_commits + ' commit' + (f.git.week_commits === 1 ? '' : 's') + ' this week</span>' : '';
+      return '<div class="file-row">'
+        + '<span class="path" title="' + esc(f.path) + '">' + esc(f.label) + '</span>'
+        + '<span class="ver">' + esc(f.version || '—') + '</span>'
+        + '<span class="detail">'
+        + '<span>' + (f.lines != null ? f.lines.toLocaleString() : '—') + ' lines</span>'
+        + '<span>' + fmtBytes(f.bytes) + '</span>'
+        + '<span>' + f.function_count + ' fn · ' + f.route_count + ' routes</span>'
+        + '<span>' + fmtAge(f.mtime) + '</span>'
+        + (f.git ? '<span title="' + esc(f.git.subject || '') + '">git ' + esc(f.git.short) + '</span>' : '')
+        + churn
+        + '</span></div>';
+    }).join('');
+    setHtml('intel-files', html);
+  }
+
+  function renderShip(d) {
+    var host = el('intel-ship');
+    if (!host) return;
+    var ship = d.ship;
+    if (!ship) { setHtml('intel-ship', '<div class="intel-empty">Ship logs unavailable.</div>'); return; }
+    var html = '<div class="intel-kv" style="margin-bottom:4px;">'
+      + '<span>files <b>' + ship.file_count + '</b></span>'
+      + '<span>live <b style="color:#8FC97A;">' + ship.live_count + '</b></span>'
+      + '<span>error lines <b style="color:' + (ship.error_line_count ? '#E4695A' : '#8FC97A') + ';">' + ship.error_line_count + '</b></span>'
+      + '</div>';
+
+    // Every log file on disk, with the newest first. Clicking one tails it.
+    var files = (ship.files || []).slice(0, 14);
+    if (files.length) {
+      html += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin:4px 0;">';
+      files.forEach(function (f) {
+        html += '<button class="intel-filebtn" data-file="' + esc(f.name) + '" title="' + esc(f.name) + ' · ' + fmtBytes(f.bytes) + ' · ' + fmtAge(f.mtime) + '"'
+          + ' onclick="tailShipLog(this)">' + esc(f.name.replace(/\.log$|\.err$/, '')) + '</button>';
+      });
+      html += '</div>';
+    }
+
+    var errs = (ship.error_lines || []).slice(0, 6);
+    if (errs.length) {
+      html += '<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border);">'
+        + '<div class="intel-empty" style="padding:2px 0;">recent error lines</div>';
+      errs.forEach(function (e) {
+        html += '<div class="intel-row" title="' + esc(e.line) + '">'
+          + '<span class="intel-badge">' + esc(e.file.slice(0, 18)) + '</span>'
+          + '<span class="grow" style="color:#E4695A;">' + esc(e.line.slice(0, 80)) + '</span>'
+          + '</div>';
+      });
+      html += '</div>';
+    }
+    html += '<div id="intel-ship-tail"></div>';
+    setHtml('intel-ship', html);
+  }
+
+  // Tail one log file. The files under logs/ are written by processes with
+  // no database connection, so this is the only way to read what they say.
+  window.tailShipLog = function (btn) {
+    var host = el('intel-ship-tail');
+    if (!host || !btn) return;
+    var name = btn.getAttribute('data-file') || (btn.textContent || '').trim();
+    var buttons = document.querySelectorAll('#intel-ship .intel-filebtn');
+    for (var i = 0; i < buttons.length; i++) buttons[i].classList.remove('on');
+    btn.classList.add('on');
+    host.innerHTML = '<div class="intel-empty">reading ' + esc(name) + '…</div>';
+    window.apiFetch('/api/ship-logs?file=' + encodeURIComponent(name) + '&lines=40')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var tail = (data.tails && data.tails[0] && data.tails[0].lines) || [];
+        if (!tail.length) { host.innerHTML = '<div class="intel-empty">no readable lines in ' + esc(name) + '</div>'; return; }
+        var pre = document.createElement('div');
+        pre.className = 'intel-tail';
+        pre.textContent = tail.join('\n');
+        host.innerHTML = '<div class="intel-empty" style="padding:2px 0;">tail of ' + esc(name) + '</div>';
+        host.appendChild(pre);
+      })
+      .catch(function () { host.innerHTML = '<div class="intel-empty">could not read ' + esc(name) + '</div>'; });
+  };
+
+  function renderCoverage(d) {
+    var host = el('intel-coverage');
+    if (!host) return;
+    var cov = d.coverage || [];
+    if (!cov.length) { setHtml('intel-coverage', '<div class="intel-empty">No coverage data.</div>'); return; }
+    var max = cov[0].rows || 1;
+    var html = cov.map(function (c, i) {
+      var pct = (c.rows / max) * 100;
+      var color = c.in_feed ? '#C9A227' : '#63C7D4';
+      return '<div class="intel-bar-row">'
+        + '<span class="intel-name" title="' + esc(c.table) + '">' + esc(c.label) + (c.in_feed ? ' <span class="intel-badge">in feed</span>' : '') + '</span>'
+        + '<span class="intel-num">' + c.rows.toLocaleString() + ' · ' + fmtAge(c.last_at) + '</span>'
+        + '<span class="intel-bar-track"><span class="intel-bar-fill" style="background:' + color + ';--w:' + pct.toFixed(1) + '%;--i:' + i + ';"></span></span>'
+        + '</div>';
+    }).join('');
+    var outside = cov.filter(function (c) { return !c.in_feed; }).length;
+    html += '<div class="intel-empty" style="margin-top:4px;">' + outside + ' source' + (outside === 1 ? '' : 's') + ' hold rows the Activity Log does not show.</div>';
+    setHtml('intel-coverage', html);
+  }
+
+  function renderSlow(d) {
+    var host = el('intel-slow');
+    if (!host) return;
+    var slow = d.slowest || [];
+    if (!slow.length) { setHtml('intel-slow', '<div class="intel-empty">Nothing slow enough to report.</div>'); return; }
+    var max = slow[0].avg_ms || 1;
+    var html = slow.map(function (s, i) {
+      var pct = (s.avg_ms / max) * 100;
+      return '<div class="intel-bar-row">'
+        + '<span class="intel-name" title="' + esc(s.path) + '">' + esc(s.path) + '</span>'
+        + '<span class="intel-num">avg ' + fmtMs(s.avg_ms) + ' · max ' + fmtMs(s.max_ms) + ' · ' + s.calls + ' calls</span>'
+        + '<span class="intel-bar-track"><span class="intel-bar-fill" style="background:#DC8A1E;--w:' + pct.toFixed(1) + '%;--i:' + i + ';"></span></span>'
+        + '</div>';
+    }).join('');
+    setHtml('intel-slow', html);
+  }
+
+  function renderSources(d) {
+    var host = el('intel-sources');
+    if (!host) return;
+    var srcs = d.unknown_sources || [];
+    if (!srcs.length) { setHtml('intel-sources', '<div class="intel-empty">Every row had a named agent — no unattributed traffic.</div>'); return; }
+    var max = srcs[0].calls || 1;
+    var html = srcs.map(function (s, i) {
+      var pct = (s.calls / max) * 100;
+      return '<div class="intel-bar-row" title="' + esc((s.paths || []).join(', ')) + '">'
+        + '<span class="intel-name">' + esc(s.source) + '</span>'
+        + '<span class="intel-num">' + s.calls.toLocaleString() + ' calls' + (s.failures ? ' · <span style="color:#E4695A;">' + s.failures + ' fail</span>' : '') + '</span>'
+        + '<span class="intel-bar-track"><span class="intel-bar-fill" style="background:' + (s.failures ? '#E4695A' : '#63C7D4') + ';--w:' + pct.toFixed(1) + '%;--i:' + i + ';"></span></span>'
+        + '</div>';
+    }).join('');
+    html += '<div class="intel-empty" style="margin-top:4px;">These callers send no agent id. They are clients, not agents — naming them as agents would be a guess.</div>';
+    setHtml('intel-sources', html);
+  }
+})();

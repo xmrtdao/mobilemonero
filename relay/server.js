@@ -74,9 +74,38 @@ loadEnv();
 // harness or the lock somewhere else without editing this file.
 import { acquireOpencodeLock, opencodeLockState } from './lib/opencode-lock.mjs';
 import { runOpencodePrompt } from './lib/opencode-runner.mjs';
+import { sendMail } from './lib/agent-email.mjs';
+import { renderEmail, sanitizeHtml, markdownToHtml } from './lib/rich-email.mjs';
+import {
+  resolveRecipient, knownAddress, rememberAddress, openEscalation, recordEscalation,
+} from './lib/task-escalation.mjs';
+import { TENANTS } from './lib/tenants.mjs';
+import { brandGuide, guideFor } from './lib/brand-guide.mjs';
+import { buildWeekly } from './lib/weekly.mjs';
 const OPENCODE_PROXY_URL = (process.env.OPENCODE_PROXY_URL || 'http://127.0.0.1:4130').replace(/\/$/, '');
 const OPENCODE_LOCK_PATH = process.env.OPENCODE_LOCK_PATH
   || join(__dirname, '..', 'relay-data', 'opencode.lock');
+
+// The address each agent signs from.
+//
+// SECURITY: no custom From override. The From comes from this table and from
+// nowhere else - a caller cannot name the address an email goes out as.
+//
+// Jobby is the exception and it is resolved per send, because its sender can
+// change: it sends job-search outreach on a client's behalf, and it sends as
+// the agent, not as the candidate.
+const AGENT_FROM = {
+  'vex': 'Vex Relay <vex@mobilemonero.com>',
+  'eliza': 'Eliza Cloud <eliza@partyfavorphoto.com>',
+  'hermes': 'Hermes Mobile <hermes@mobilemonero.com>',
+  'pfp': 'Party Favor Photo <bookings@partyfavorphoto.com>',
+  'harbor': '31 Harbor <hello@31harbor.com>',
+  // Alice is the studio's own voice on the XMRT side of the house: she reads
+  // the inbox, she parses what arrives, and she is who asks a person for
+  // something the fleet cannot work out for itself.
+  'alice': 'Alice <alice@mobilemonero.com>',
+  'jobby': null,   // resolved per send
+};
 
 // ── Module imports ──────────────────────────────────────────
 import { webSearch, formatResults } from './tools/web-search.mjs';
@@ -171,6 +200,14 @@ import {
 } from './lib/inbound-email.mjs';
 import { parseObsidianWikiLinks } from './lib/obsidian-graph-links.mjs';
 import { registerUniversityBridge } from './lib/university-bridge.mjs';
+// Log intelligence: attribution, aggregates, ship logs, and the file-version
+// history that says which version of the code was live when something broke.
+import {
+  fetchActivity, buildIntel, scanShipLogs, classifyRequest, classifyPath, recordTraffic,
+} from './lib/log-intel.mjs';
+import {
+  scanInfraFiles, recordVersions, versionAt, versionHistory,
+} from './lib/infra-files.mjs';
 
 import pg from 'pg';
 const { Client: PgClient, Pool: PgPool } = pg;
@@ -372,7 +409,7 @@ async function logEdgeFunctionCall(functionName, status, durationMs, metadata = 
 }
 
 // ── Log relay HTTP requests ─────────────────────────────────
-async function logRelayRequest(method, path, statusCode, durationMs, agentId = 'unknown') {
+async function logRelayRequest(method, path, statusCode, durationMs, agentId = 'unknown', extra = {}) {
   // Only log interesting events: errors, slow requests, and key endpoints
   const isError = statusCode >= 400;
   const isSlow = durationMs > 5000;
@@ -382,10 +419,18 @@ async function logRelayRequest(method, path, statusCode, durationMs, agentId = '
   if (!isError && !isSlow && !isKeyEndpoint) return;
   
   const activityType = isError ? 'http_error' : (isSlow ? 'slow_request' : 'api_call');
+  // The source is the client that made the call, and it is recorded even
+  // when the agent is known — "hermes called /tools/run" and "the Nexus
+  // dashboard called /api/suite/tasks" are different facts, and a log that
+  // keeps only the first one cannot tell you who is loading the stack.
   await logToDb(activityType, `${method} ${path}`,
     `${method} ${path} → ${statusCode} (${durationMs}ms)`,
     isError ? 'error' : (isSlow ? 'warning' : 'info'),
-    { method, path, status_code: statusCode, duration_ms: durationMs },
+    {
+      method, path, status_code: statusCode, duration_ms: durationMs,
+      source: extra.source || null, actor_kind: extra.actor_kind || null,
+      ip: extra.ip || null, user_agent: extra.user_agent || null,
+    },
     agentId
   );
 }
@@ -589,6 +634,18 @@ const EMAIL_DOMAINS = {
     // they were, because other code and the inbox pages call those paths.
     path: '',
     key_scope: 'partyfavorphoto.com',
+    // Whether an inbound message gets an automatic acknowledgment.
+    //
+    // OFF for every domain, and it is a property of the TENANT rather than a
+    // hardcoded domain check, because "does this business answer its own
+    // inbox automatically" is a decision about the business, not about mail.
+    //
+    // It was on for PFP: every lead got "your message has been sent along to
+    // Joe" plus the Stripe booking link, which is noise in the client's inbox
+    // and noise in the shared agent inbox. Nothing else about inbound mail
+    // depends on it - capture into app.inbox_emails, the PFP lead model and
+    // the Joe handoff are separate paths and all still run.
+    auto_ack: false,
     // Whether a webhook for this domain must carry a valid signature.
     //
     // False for the three older domains: their signing secrets have never been
@@ -609,6 +666,9 @@ const EMAIL_DOMAINS = {
   },
   mobilemonero: {
     domain: 'mobilemonero.com', label: 'MobileMonero',
+    // Automatic acknowledgment is off here too. See the note on the PFP
+    // entry: it is a property of the tenant, and no tenant wants it.
+    auto_ack: false,
     // The outbound key is RESEND_XMRT_API_KEY, which is scoped to this domain
     // and nothing else. Verified live against the provider: it sees
     // mobilemonero.com(verified) and no other domain.
@@ -1092,6 +1152,217 @@ const toolHandlers = {
       heldForSeconds: Math.round((state.ageMs || 0) / 1000),
       rule: 'one agent at a time - the board is the queue',
     };
+  },
+
+  // ── The brand, and the weekly ─────────────────────────────────────────────
+  // An agent that writes for a tenant needs to know what that tenant looks
+  // like and what it may say, and it needs the weekly's content without
+  // having to know where the numbers come from.
+  //
+  // Both are read from relay/lib/tenants.mjs, which is the same file the
+  // mailer reads, so the guide cannot describe a brand the mailer does
+  // not use.
+  'brand-style-guide': async (args) => {
+    const which = args?.tenant || args?.domain || args?.brand;
+    if (!which) {
+      return {
+        success: true,
+        tenants: Object.values(TENANTS).map((t) => ({
+          key: t.key, domain: t.domain, brand: t.brand, mode: t.palette.mode,
+        })),
+        note: 'name a tenant to read its guide',
+      };
+    }
+    const tenant = TENANTS[String(which).toLowerCase()]
+      || Object.values(TENANTS).find((t) => t.domain === String(which).toLowerCase());
+    if (!tenant) {
+      return {
+        success: false,
+        error: `no tenant named "${which}". Known: ${Object.keys(TENANTS).join(', ')}.`,
+      };
+    }
+    return { success: true, tenant: tenant.key, domain: tenant.domain, guide: brandGuide(tenant) };
+  },
+
+  'tenant-weekly': async (args) => {
+    const which = args?.tenant || args?.domain;
+    if (!which) {
+      return {
+        success: false,
+        error: `tenant is required. Known: ${Object.keys(TENANTS).join(', ')}.`,
+      };
+    }
+    try {
+      const weekly = await buildWeekly({
+        tenant: which,
+        subject: args?.subject || undefined,
+      });
+      return {
+        success: true,
+        tenant: weekly.tenant.key,
+        domain: weekly.tenant.domain,
+        from: weekly.tenant.from,
+        subject: weekly.subject,
+        issue: weekly.issue,
+        pinned: weekly.pinned,
+        // The markdown body. Send it with resend-send-email or the fleet
+        // chat email tool - this tool does not send anything.
+        body: weekly.text,
+        html_length: weekly.html.length,
+        missing: weekly.missing,
+        note: weekly.missing.length
+          ? 'some sections could not be fetched; the body says so'
+          : 'every figure was fetched live',
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  },
+
+  // ── Ask a human ──────────────────────────────────────────────────────────
+  // A task that needs a person used to wait in silence. This tells somebody.
+  //
+  // WHO it goes to is never a guess: the address has to be one this system
+  // already knows how to reach, or it goes to the founder, who is the default
+  // for everything. An agent that wants somebody else and does not have an
+  // address is told to ask the client - it does not get to invent one.
+  //
+  // It is sent ONCE. A task that emails its owner every ten minutes is a
+  // task nobody reads.
+  'escalate-to-human': async (args) => {
+    const taskId = args?.task_id || args?.task;
+    const question = args?.question || args?.ask;
+    if (!taskId || !question) {
+      return { error: 'task_id and question are required - say what you need and why' };
+    }
+    const task = await queryLocalPg(
+      `SELECT id, title, status, category, created_by_user_id, metadata
+         FROM app.tasks WHERE id = $1 LIMIT 1`, [taskId]);
+    if (!task.rows.length) return { error: `no task with id ${taskId}` };
+    const row = task.rows[0];
+
+    const already = await openEscalation(taskId);
+    if (already) {
+      return {
+        success: true,
+        already_escalated: true,
+        to: already.to_address,
+        sent_at: already.sent_at,
+        note: 'this task is already waiting on somebody; it has not been sent again',
+      };
+    }
+
+    const recipient = await resolveRecipient(row, { to: args?.to });
+    if (!recipient) {
+      return {
+        success: false,
+        needs_address: true,
+        error: `I do not have an address for ${args?.to}. I will not guess at one - `
+          + `ask the client how to reach them, or leave it on the board for the operator.`,
+      };
+    }
+
+    // Who sends it. The agent that OWNS the task sends it, because that is
+    // who is asking - the lanes are the agent's own judgement, not a rule
+    // written into the tool. The founder's desk is the default for work that
+    // has no owner, and Jobby speaks when the work is a job or a contract.
+    const owner = String(row.assignee_agent_id || '').toLowerCase();
+    const agent = String(args?.agent || (AGENT_FROM[owner] ? owner : 'alice')).toLowerCase();
+    // Jobby's sender is resolved per send, because it can change; everyone
+    // else signs from the table.
+    const from = agent === 'jobby'
+      ? resolveJobbySender().from
+      : (AGENT_FROM[agent] || AGENT_FROM.alice);
+    const fromAddress = (from.match(/<([^>]+)>/) || [])[1] || from;
+    const domain = (fromAddress.match(/@([^>]+)/) || [])[1] || 'mobilemonero.com';
+    const apiKey = resendKeyFor(domain);
+
+    // The token that comes back in the reply. A reply keeps the subject, so
+    // the answer can be matched to the question it is answering - otherwise
+    // "Re: Needs you: Fix the thing" is a puzzle.
+    const replyToken = `esc_${crypto.randomBytes(6).toString('hex')}`;
+
+    const subject = `Needs you: ${row.title} [${replyToken}]`.slice(0, 160);
+
+    // The email carries the question as a RICH card, not as four lines of
+    // plain text.
+    //
+    // This is the one email a person is guaranteed to read - it is how a task
+    // that cannot move on its own gets unstuck - so it is the one that must
+    // look like it came from something other than a cron job. The reply
+    // address and the task id stay in the text version, because that is what
+    // a human reads when they reply, and the reply has to match what the
+    // ingester is looking for.
+    const escalationHtml = renderEmail({
+      subject: row.title,
+      agentName: 'Alice',
+      agentRole: 'one question, one reply',
+      fromAddress: from,
+      body: [
+        `A task is waiting on a person, and it is you.`,
+        ``,
+        `**TASK ID:** \`${row.id}\``,
+        row.status ? `**STATUS:** ${row.status}` : null,
+        ``,
+        `## What is needed`,
+        String(question).slice(0, 4000),
+      ].filter((l) => l !== null).join('\n'),
+      footerNote: 'Reply to this email and the answer comes back to the fleet. One line is enough.',
+      preheader: `A task is waiting on you: ${row.title}`,
+    }).html;
+
+    const body = [
+      `A task is waiting on a person, and it is you.`,
+      ``,
+      `TASK: ${row.title}`,
+      `TASK ID: ${row.id}`,
+      row.status ? `STATUS: ${row.status}` : null,
+      ``,
+      `WHAT IS NEEDED:`,
+      String(question).slice(0, 4000),
+      ``,
+      `Reply to this email and the answer comes back to the fleet.`,
+    ].filter((l) => l !== null).join('\n');
+
+    const sent = await sendMail({
+      apiKey, from, to: recipient.address, subject, body, html: escalationHtml,
+    });
+    if (sent.error) {
+      return { success: false, error: sent.error, status: sent.status, to: recipient.address };
+    }
+
+    await recordEscalation({
+      taskId: row.id,
+      reason: String(args?.reason || 'needs a human'),
+      question: String(question),
+      address: recipient.address,
+      userId: recipient.userId || null,
+      source: recipient.source,
+      from,
+      subject,
+      body,
+      replyToken,
+    });
+
+    return {
+      success: true,
+      to: recipient.address,
+      to_name: recipient.name || null,
+      matched_by: recipient.source,
+      sent_at: new Date().toISOString(),
+      resend_id: sent.id || null,
+    };
+  },
+
+  'task-escalations': async (args) => {
+    const taskId = args?.task_id || args?.task;
+    const rows = await queryLocalPg(
+      `SELECT id, task_id, reason, question, to_address, to_source, from_address,
+              sent_at, answered_at, answered_text, still_open
+         FROM app.task_escalations
+        WHERE ($1::text IS NULL OR task_id = $1)
+        ORDER BY sent_at DESC LIMIT 50`, [taskId || null]);
+    return { success: true, escalations: rows.rows };
   },
 
   'page-agent-task': async (args) => {
@@ -3929,15 +4200,15 @@ const toolHandlers = {
 
   // ── Resend Send Email (agent sends email via fleet-chat endpoint) ──
   'resend-send-email': async (args) => {
-    const { agent, to, subject, body } = args || {};
-    if (!agent || !to || !subject || !body) {
-      return { error: 'agent, to, subject, and body are required. agent: vex|eliza|hermes|pfp|harbor|jobby' };
+    const { agent, to, subject, body, html } = args || {};
+    if (!agent || !to || !subject || !(body || html)) {
+      return { error: 'agent, to, subject, and body (or html) are required. agent: vex|eliza|hermes|pfp|harbor|jobby' };
     }
     try {
       const res = await fetch(`http://localhost:${PORT}/api/fleet-chat/send-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent, to, subject, body }),
+        body: JSON.stringify({ agent, to, subject, body, ...(html ? { html } : {}) }),
         signal: AbortSignal.timeout(20000),
       });
       const data = await res.json();
@@ -4730,13 +5001,31 @@ app.use(async (req, res, next) => {
 // ── Request logging middleware (captures status, duration, agent for activity feed) ──
 app.use((req, res, next) => {
   const start = Date.now();
-  const agentId = req.headers['x-agent-id'] || req.headers['x-agent'] || 'unknown';
+  // Attribution. The old code read only the x-agent-id header and fell back
+  // to the literal string "unknown", which is where most of the log's
+  // "unknown" rows came from: the suite dashboard, the monitor page and
+  // other first-party clients never send that header. Now the caller is
+  // resolved from the header, the authenticated agent key, or the path the
+  // request hit — and the path-based answer is labelled as a *client*, not
+  // passed off as an agent.
+  const { actor, actor_kind, source } = classifyRequest(req);
   const originalEnd = res.end;
   res.end = function(...args) {
     const duration = Date.now() - start;
     const statusCode = res.statusCode;
     // Log interesting requests to activity feed with agent attribution
-    logRelayRequest(req.method, req.path, statusCode, duration, agentId).catch(() => {});
+    logRelayRequest(req.method, req.path, statusCode, duration, actor, {
+      source, actor_kind, ip: req.ip, user_agent: req.headers['user-agent'] || null,
+    }).catch(() => {});
+    // Every request is counted in memory, whether or not it is worth a row
+    // in the database, so the traffic timeline shows the whole shape of the
+    // load rather than only the interesting slice of it.
+    try {
+      recordTraffic({
+        method: req.method, path: req.path, status: statusCode, duration,
+        actor, source,
+      });
+    } catch { /* counting must never break a response */ }
     return originalEnd.apply(this, args);
   };
   next();
@@ -5930,9 +6219,29 @@ app.post('/api/suite/tasks', async (req, res) => {
     }
 
     const r = await queryLocalPg(
-      `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id) VALUES (gen_random_uuid()::text, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [title, description||null, stage||'PENDING', status||'PENDING', priority||0, category||null, assignee_agent_id||null, blocking_reason||null, auto_advance_threshold_hours||null, progress_percentage||0, organization_id||null, created_by_user_id||null]
+      `INSERT INTO app.tasks (id, title, description, stage, status, priority, category, assignee_agent_id, blocking_reason, auto_advance_threshold_hours, progress_percentage, organization_id, created_by_user_id, metadata) VALUES (gen_random_uuid()::text, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [title, description||null, stage||'PENDING', status||'PENDING', priority||0, category||null, assignee_agent_id||null, blocking_reason||null, auto_advance_threshold_hours||null, progress_percentage||0, organization_id||null, created_by_user_id||null, JSON.stringify({
+        ...(req.body?.metadata || {}),
+        // WHERE THIS CAME FROM, so that a task that later needs a person can
+        // work out who to ask. The address is the client's, as Cloudflare sees
+        // it; the user id is what the caller said it was, which is why it is
+        // only ever a SUGGESTION of who to write to, never the proof.
+        originated_from_ip: requestIp(req),
+        originated_by_user_id: created_by_user_id || null,
+      })]
     );
+
+    // Remember that this address belongs to this person, so a task started
+    // later can find the human. A connection, not a merge: two people behind
+    // one office share an address, and this table records what was seen
+    // rather than deciding who anybody is.
+    if (created_by_user_id) {
+      await rememberAddress(requestIp(req), {
+        userId: created_by_user_id,
+        email: req.body?.originator_email || null,
+      });
+    }
+
     res.status(201).json(r.rows[0]);
   } catch (e) {
     // tasks_one_open_per_title: one open task per title. A duplicate is a
@@ -7559,8 +7868,18 @@ app.post('/webhook/resend-inbound', async (req, res) => {
     });
   }
 
-  // Fire auto-responder only for PFP domain (not 31harbor.mail)
-  if (toDomain === 'partyfavorphoto.com') {
+  // Fire the auto-acknowledgment only for a tenant that wants it.
+  //
+  // The switch is per domain (EMAIL_DOMAINS[...].auto_ack) and it is off for
+  // every domain we have. It used to be a hardcoded check for the PFP domain
+  // inside a function that had no idea which tenant it was serving, so the
+  // answer to "does this business answer its own inbox automatically" was
+  // buried in the middle of the mail plumbing.
+  //
+  // Nothing else about inbound mail depends on this. Inbound capture into
+  // app.inbox_emails, the PFP lead model and the Joe handoff are separate
+  // paths and all still run.
+  if (EMAIL_DOMAINS[toDomainKey]?.auto_ack === true) {
     handleInboundEmail(emailEntry).then(result => {
       if (result.action === 'ack_sent') {
         logActivity('auto-responder', data.email_id, 'REPLIED', `Ack sent to ${result.from}`);
@@ -9370,6 +9689,10 @@ function getToolDescription(name) {
     'x402-status': 'Check x402 invoice payment status. Args: invoice_id (optional — omit for all recent invoices). Returns status pending/paid.',
     'x402-settle': 'Reconcile/settle an x402 invoice as paid (webhook or manual confirmation). Args: invoice_id, provider_ref. Records an audit row in pfp_payments.',
     'web-scrape': 'Extract readable text content from any URL',
+    'escalate-to-human': 'Ask a person. Use this when a task cannot move without a human - a decision only they can make, a missing detail, something you are not sure about. Args: task_id (required), question (required - what you need and why), reason, to (optional - who; only an address this system already knows), agent (optional - who signs it). The LANES: Alice or Eliza for the studio and the fleet in general; Jobby for work about a job, a contract or a rate. The task owner signs it unless you name another. WHO IT GOES TO IS NEVER GUESSED: if you name somebody whose address this system does not have, you will be told to ask the client how to reach them - do not invent an address. Sent once per task: a task already waiting on somebody will not be emailed again.',
+    'brand-style-guide': 'The brand guide for a tenant: its colours, its voice, the shape of its emails and the rules it may not break. READ THIS BEFORE WRITING AN EMAIL FOR A TENANT - it is generated from the same file the mailer reads, so it cannot describe a brand the mailer does not use. Args: tenant (optional - mobilemonero, 31harbor, pfp, jobby, or a domain; omit for the list).',
+    'tenant-weekly': 'Build a tenant\'s weekly from live data. Args: tenant (required - mobilemonero, 31harbor, pfp, jobby, or a domain), subject (optional). Returns the issue as markdown, ready to send with resend-send-email. It SENDS NOTHING. Every figure is fetched live, and a source that could not be reached is reported in the body rather than hidden.',
+    'task-escalations': 'The escalations: who has been asked, when, what was asked, and whether they answered. Read-only. Args: task_id (optional - one task, or all of them).',
     'opencode': 'THE HANDS. Give the OpenCode harness a job and it will do it: read the repository, change files, run commands, commit. Args: prompt (required - what to do), title, model, waitMs (how long to wait for the harness, default 90s), timeoutMs. ONE AGENT AT A TIME: the harness is a node process with a tool-calling loop and this machine is small, so a caller that cannot get it is told who has it rather than piling on. The board is the queue.',
     'opencode-status': 'Whether the OpenCode harness is up, and whether an agent is using it right now. Read-only, cheap - check before a long job.',
     'ollama-chat': 'Chat with local LLM via Ollama',
@@ -9406,7 +9729,7 @@ function getToolDescription(name) {
     'resend-get-email': 'Fetch the full content of a specific email by ID. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Returns full text, html, attachments, and raw data.',
     'sent-emails': 'Search sent email history from suite_email_activity table. Use search param to find by email address or subject. Columns: id, email_from, email_to, subject, status, sent_at.',
     'pfp-leads': 'Manage PFP leads. Actions: list (all leads), search (by name/email/notes), add (create new lead), update (modify existing). Columns: contact_name, contact_email, event_type, event_date, venue_name, venue_address, status, source, notes.',
-    'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor)',
+    'resend-send-email': 'Send an email via Resend as a fleet agent (vex, eliza, hermes, pfp, harbor). Args: agent, to, subject, body (or html). THE BODY IS AN EMAIL, NOT A STRING - write it in markdown and it is rendered: headings, tables, code blocks and lists become the things they are, and the email goes out styled, with motion, in the fleet\'s house style. Add a ```chart block with JSON ({"type":"bar|donut|spark|ring","title":"...","data":[{"label":"...","value":1}]}) for a real chart, and a ```stats block ({"title":"...","data":[{"label":"...","value":"..."}]}) for a row of figures. Both render as inline SVG, so they need no image host. A plain-text body is fine too - it still goes out as a designed card. There is no length limit any more: a long report is what email is FOR. A text/plain version of every email is sent alongside it.',
     'db-query': 'Run a raw SQL query against the local Postgres database (read-only; use SELECT only)',
     'db-rest': 'Query any database table via the local-sb REST API using path and optional method/body',
     'shared-context': 'Read or write shared context memory visible to all agents (action: read|write|search|recall_by_agent|recall_by_topic, key, value, search_term, agent_id, topic)',
@@ -11537,7 +11860,7 @@ ${ctxJson}
 GROUNDING RULES:
 - If a fact is in the JSON block, reference it directly.
 - If something is NOT in the JSON but a tool in the \`tools\` array can help (web-search, db-query, db-rest, resend-inbox, shared-context, etc.), output a single line \`TOOL_CALL: {"tool":"<name>","args":{...}}\` on its own line. I will execute it, then come back for your final answer.
-- For resend-send-email: ALWAYS include the "agent" field (use "eliza" if you are Eliza). Keep the email body SHORT — under 200 words — to avoid output truncation. Do NOT include long numbered lists in the body.
+- For resend-send-email: ALWAYS include the "agent" field (use "eliza" if you are Eliza). The email body is RENDERED, not printed: write markdown and it becomes a styled email with headings, tables, code blocks and motion. There is no length limit — a full report belongs in the email, and nothing gets truncated. Include a \`\`\`chart block (JSON) for a real chart or a \`\`\`stats block for figures when the numbers matter.
 - Read the \`infrastructure\` field first. It explains the architecture: the database is local Postgres, NOT cloud Supabase. Cloud Supabase is DEPRECATED. A \`supabase.status\` of "error" or "unreachable" means the local-sb REST layer is down, NOT the cloud database.
 - Never claim "all systems nominal" or "no anomalies" without a matching field in the JSON.
 - For questions about PFP leads, bookings, money, or campaigns: use resend-inbox or db-query to check. For web info: use web-search or web-scrape. For DB queries: use db-query or db-rest. For shared agent memory: use shared-context. For marking emails as read: use resend-inbox-read with the email ID and domain.
@@ -11850,7 +12173,7 @@ The \`tools\` array in the JSON block above lists ALL available tools with descr
 - \`activity_log\` — Query the activity feed (filter by activity_type, limit)
 - \`resend-inbox\` — Read emails from an inbox (domain: pfp, mobilemonero, or 31harbor)
 - \`resend-inbox-read\` — Mark an email as read. Args: id (email ID from resend-inbox), domain (pfp, mobilemonero, or 31harbor). Use after you have handled an email.
-- \`resend-send-email\` — Send an email via Resend. Args: agent (use "eliza"), to, subject, body. KEEP THE BODY SHORT (under 200 words) to avoid output truncation.
+- \`resend-send-email\` — Send an email via Resend. Args: agent (use "eliza"), to, subject, body (or html). THE BODY IS AN EMAIL, NOT A STRING: write it in markdown and it is rendered into a real, styled email — headings, tables, code blocks, lists, motion, the fleet's house style. Put a \`\`\`chart block with JSON ({"type":"bar|donut|spark|ring","title":"...","data":[{"label":"...","value":1}]}) in for a real chart, or a \`\`\`stats block for a row of figures; both render as inline SVG. Do NOT keep it short for my sake: a long report is what email is FOR, and nothing gets truncated. If there is a page or a document worth showing, put it in the email rather than describing it.
 - \`sent-emails\` — Search sent email history. Args: search (email address or subject), limit.
 - \`db-query\` — Run a read-only SQL query against local Postgres. Args: sql, params (array).
 - \`db-rest\` — Query any database table via local-sb REST API. Args: path (table name), method, body.
@@ -14924,17 +15247,6 @@ app.post('/api/fleet-chat/email-webhook', async (req, res) => {
   // Sanitize subject and body to prevent em-dash / Unicode corruption
   // bash/curl on Windows mangles U+2014 (em dash) to U+FFFD (replacement char)
   const cleanSubject = sanitizeText(subject);
-  
-  // Strip HTML tags from body for text/plain version
-  // If body contains HTML tags, use the stripped version as text and original as html
-  let cleanBody = body ? sanitizeText(body) : '';
-  let cleanHtml = html || undefined;
-  const hasHtmlTags = /<[a-z][\s\S]*>/i.test(cleanBody);
-  if (hasHtmlTags && !cleanHtml) {
-    // Body has HTML but no explicit html field — strip tags for text, use body as html
-    cleanHtml = cleanBody;
-    cleanBody = cleanBody.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s*\n\s*/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  }
 
   // Jobby's sending address. 31harbor.com is the default because its Resend
   // key is live and the domain is verified; the mobilemonero.com key is
@@ -14945,29 +15257,65 @@ app.post('/api/fleet-chat/email-webhook', async (req, res) => {
   // security property — a request can never choose its own From — while still
   // letting the operator move the sender.
   const JOBBY_SENDER = resolveJobbySender();
-  const AGENT_FROM = {
-    'vex': 'Vex Relay <vex@mobilemonero.com>',
-    'eliza': 'Eliza Cloud <eliza@partyfavorphoto.com>',
-    'hermes': 'Hermes Mobile <hermes@mobilemonero.com>',
-    'pfp': 'Party Favor Photo <bookings@partyfavorphoto.com>',
-    'harbor': '31 Harbor <hello@31harbor.com>',
-    // Jobby sends job-search outreach on a client's behalf. It sends as the
-    // agent, not as the candidate: a verified sending domain for the candidate
-    // is the only way to change that, and that is a decision for the client,
-    // not something an outbound path should be able to do to itself.
-    'jobby': JOBBY_SENDER.from,
-  };
+  // Jobby's own sending address. It is resolved per send because it can
+  // change; every other agent's address is the table at the top of this file.
+  const AGENT_FROM_LOCAL = { ...AGENT_FROM, 'jobby': JOBBY_SENDER.from };
 
   // SECURITY: No custom from override. The From comes from the agent table and
   // from nowhere else. The candidate path does not go through this route at all -
   // it resolves the From from a client row inside the module, so there is no
   // request, internal or otherwise, that can name a From.
-  const from = AGENT_FROM[agent];
+  const from = AGENT_FROM_LOCAL[agent];
   if (!from) return res.status(400).json({ error: `Unknown agent: ${agent}. Try 'pfp' for bookings@partyfavorphoto.com or 'harbor' for hello@31harbor.com` });
+
+  // The body becomes an EMAIL, not a string.
+  //
+  // This is where the fleet's rich output used to die. An agent - or ai-chat
+  // writing on an agent's behalf - could hand over a document with headings,
+  // a table, a code block and a chart, and all of it arrived as wrapped
+  // plain text. The content was never lost by the agent; it was lost HERE,
+  // because this route had one field and that field was a string.
+  //
+  // So the body is now rendered: markdown becomes HTML, a ```chart block
+  // becomes an inline SVG chart, a ```stats block becomes a row of figures,
+  // and the whole thing goes out in the fleet's house style with the
+  // animation and the charts and the rest.
+  //
+  // An explicit `html` argument still wins - a caller that already has
+  // markup keeps it - but it is sanitised, because an email is a document
+  // that other people's mail clients will open.
+  //
+  // And every send carries a plain-text version as well, generated from the
+  // same source. Half the people reading an email are reading it in a client
+  // that shows nothing but text.
+  const isHtml = html ? true : /<[a-z][\s\S]*>/i.test(String(body || ''));
+  const rich = renderEmail({
+    subject: cleanSubject,
+    body: isHtml ? '' : body,
+    html: isHtml ? (html || body) : '',
+    agentName: (FLEET_AGENTS[agent]?.name || agent),
+    agentRole: FLEET_AGENTS[agent]?.name ? 'fleet agent' : '',
+    fromAddress: from,
+    footerNote: 'Reply to this email and it comes back to the fleet.',
+    preheader: String(body || '').replace(/<[^>]*>/g, '').slice(0, 140),
+  });
+  // The plain-text part. When the body was HTML there is no plain source to
+  // fall back on, so the tags come out and the result is a readable letter
+  // rather than a wall of markup.
+  const cleanBody = isHtml
+    ? sanitizeHtml(String(html || body))
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, '\n\n').trim()
+    : rich.text;
+  const cleanHtml = rich.html;
 
   try {
     const sent = await sendViaResend({
-      from, to, subject: cleanSubject, text: cleanBody, html: html || undefined,
+      from, to, subject: cleanSubject, text: cleanBody, html: cleanHtml,
     });
     if (sent.error) {
       return res.status(sent.status || 500).json({ error: sent.error });
@@ -18783,14 +19131,107 @@ app.post('/api/migrate/copy-data', async (req, res) => {
 });
 
 // ── Activity Log ──
+//
+// The Activity Log used to return seven columns and cap at fifty rows. That
+// is why the panel showed "unknown" for half of its rows (the agent was
+// never resolved) and why the duration and status code of each request were
+// invisible (they live in the metadata column, which was not selected).
+//
+// The response is a superset of the old one — every previous field is still
+// there, unchanged — plus the metadata, the resolved actor, and the derived
+// duration/status/path. The limit is now 500 and the filters are real.
 app.get('/api/activity-log', async (req, res) => {
   trackRequest('/api/activity-log');
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-    const result = await queryLocalPg('SELECT id, activity_type, title, description, status, agent_id, created_at FROM public.eliza_activity_log ORDER BY created_at DESC LIMIT $1', [limit]);
-    res.json(result.rows);
+    const rows = await fetchActivity({
+      limit: req.query.limit || 50,
+      activity_type: req.query.activity_type,
+      status: req.query.status,
+      agent_id: req.query.agent_id,
+      since: req.query.since,
+      before: req.query.before,
+      q: req.query.q,
+      include_meta: req.query.include_meta !== '0',
+    });
+    res.json(rows);
   } catch (e) {
+    console.warn('[activity-log] query failed:', e.message);
     res.json([]);
+  }
+});
+
+// ── Log intelligence ───────────────────────────────────────────────────────
+//
+// One call that returns everything the Activity Log panel's fullscreen view
+// draws: the traffic timeline, the Jantt lanes, the hot functions, the
+// recurring errors, the slowest endpoints, which log sources exist, what the
+// ship logs on disk say, and the version of every key infra file.
+//
+// The bundle is cached for a few seconds because the dashboard polls it and
+// the underlying counts do not change meaningfully between polls.
+app.get('/api/log-intel', async (req, res) => {
+  trackRequest('/api/log-intel');
+  try {
+    const data = await buildIntel({
+      windowMinutes: req.query.window || 60,
+      root: __dirname + '/..',
+      refresh: req.query.refresh === '1',
+    });
+    res.json(data);
+  } catch (e) {
+    console.error('[log-intel] bundle failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Ship logs ─────────────────────────────────────────────────────────────
+//
+// The log files under logs/ are written by processes that have no database
+// connection, so nothing in them ever reaches the activity feed. They are
+// the only place some failures are visible at all. This endpoint is the HTTP
+// face of the ship_logs tool: inventory, tail, and the error lines.
+app.get('/api/ship-logs', async (req, res) => {
+  trackRequest('/api/ship-logs');
+  try {
+    const data = await scanShipLogs({
+      root: __dirname + '/..',
+      file: req.query.file || null,
+      lines: Math.min(parseInt(req.query.lines, 10) || 60, 400),
+      limit: Math.min(parseInt(req.query.limit, 10) || 12, 40),
+    });
+    res.json(data);
+  } catch (e) {
+    console.error('[ship-logs] scan failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Infra file versions ───────────────────────────────────────────────────
+//
+// "Which version of the file was live when this error fired?" — the file
+// list, its current fingerprint, the git commit that last touched it, the
+// functions and routes it defines, and the history of its past versions.
+app.get('/api/infra-files', async (req, res) => {
+  trackRequest('/api/infra-files');
+  try {
+    const root = __dirname + '/..';
+    const files = scanInfraFiles(root);
+    await recordVersions(files);
+    const path = req.query.path;
+    const history = path ? await versionHistory(path, 40) : [];
+    res.json({
+      generated_at: new Date().toISOString(),
+      files: files.map((f) => ({
+        path: f.path, label: f.label, kind: f.kind, repo: f.repo, exists: f.exists,
+        bytes: f.bytes, lines: f.lines, version: f.version, mtime: f.mtime,
+        age_minutes: f.age_minutes, function_count: f.function_count, route_count: f.route_count,
+        functions: f.functions, routes: f.routes, git: f.git,
+      })),
+      history,
+    });
+  } catch (e) {
+    console.error('[infra-files] scan failed:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

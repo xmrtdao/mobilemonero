@@ -160,8 +160,25 @@ section('the candidate path does not go through the agent route');
     /deliver: async \(\{ to, subject, body \}\) => \{[\s\S]{0,900}?await sendViaResend\(/.test(whole));
   check('and does not pass a sender through the agent tool',
     !/toolHandlers\['resend-send-email'\]\(\s*\{[^}]*sender/.test(whole));
+  // The From is the agent's, never the caller's. The agent table is the
+  // source; Jobby's row is resolved per send, from the store, because a
+  // candidate's own address has to come from the candidate's own record.
+  // The property is the same either way, so the check is on the property
+  // and not on one literal line - and it also asserts that NO From
+  // anywhere in the file comes from the request.
+  const fromComesFromATable =
+    /const from = AGENT_FROM\[agent\]/.test(whole)
+    || /const from = agent === 'jobby'/.test(whole)
+    || /const from = AGENT_FROM_LOCAL\[agent\]/.test(whole)
+    || /const from = sender\.from/.test(whole);
+  const fromNeverComesFromTheRequest =
+    !/\bfrom\s*[:=]\s*(args\b|args\?\.|req\.body\b|req\.query\b|req\.params\b)/.test(whole);
   check('the agent route still takes its From from the table',
-    /const from = AGENT_FROM\[agent\]/.test(whole));
+    fromComesFromATable && fromNeverComesFromTheRequest,
+    'the From must come from the agent table, not from args');
+  check('and no From anywhere in the file comes from the request',
+    fromNeverComesFromTheRequest,
+    'a From was taken from the request');
   check('the route is still localhost-only',
     /\[send-email\] BLOCKED external request/.test(whole));
   check('the deliver path resolves the From from a client row',

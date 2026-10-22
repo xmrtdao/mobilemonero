@@ -37,6 +37,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import http from 'http';
 import https from 'https';
+import { findEscalationByToken, findEscalationBySubject, answerEscalation } from './task-escalation.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(__dirname);
@@ -128,7 +129,10 @@ function scalePriority(internal) {
   return Math.max(1, Math.min(10, Math.round(internal * 2)));
 }
 
-function classify(subject, text, from) {
+// Exported so the backlog can be measured against the real classifier rather
+// than a guess at it: "how many of these would become tasks?" is a question
+// about this function, not about an approximation of it.
+export function classify(subject, text, from) {
   const subj = (subject || '').toLowerCase();
   const body = (text || '').toLowerCase();
   const fromLc = (from || '').toLowerCase();
@@ -229,6 +233,130 @@ async function fetchRelayInbox(domain) {
     return (data?.emails || []).filter(e => !e.read);
   } catch (e) {
     return [];
+  }
+}
+
+// ── Fetch recent durable mail ──────────────────────────────
+//
+// app.inbox_emails is where the Resend webhook writes every inbound message,
+// and it is the only place that survives a relay restart. The two sources
+// above miss most of it: the relay's own inbox is in-memory state that the
+// boot poller only partly refills, and inbox_messages is a different table
+// the edge function wrote years ago.
+//
+// That gap is not academic. Six replies to the questions Alice asked arrived
+// as mail, landed in this table, and were never seen by anything - because
+// nothing read this table. The task asked "please confirm" and the answer sat
+// in a table no one was watching.
+//
+// TWO THINGS BOUND IT, AND BOTH MATTER
+//
+// 1. THE READ FLAG IS NOT A WORK QUEUE.
+//
+//    `read` was never maintained for the rows the boot polyer wrote - 898
+//    rows sat at read=false, and most of them are mail from weeks ago that
+//    was handled at the time. Reading "everything unread" would replay a
+//    week of history as if it had just arrived. So the marker used here is
+//    metadata->>'parsed_by', which this parser sets itself, and the window
+//    is recent mail only.
+//
+// 2. AN ANSWER IS NOT NEW WORK.
+//
+//    A reply to a question we asked is the answer to work already on the
+//    board. Filing it as an inquiry would create a SECOND task for a task
+//    that already exists - and the reply would sit there while the task it
+//    answers stayed parked. Those rows are excluded here and handled by
+//    relay/scripts/ingest-task-replies.mjs, which reads them, interprets
+//    them and attaches them to the task they answer.
+//
+// The body is read, not just the subject: the reply IS the answer, and a
+// subject line is not an answer.
+async function fetchDurableInbox(domainKey, limit = 50, withinHours = 48) {
+  try {
+    const { query: localQuery } = await import('./localDb.mjs');
+    const rows = await localQuery(
+      `SELECT id, email_id, sender, recipient, subject, body_text, body_html,
+              received_at, read, domain, metadata
+         FROM app.inbox_emails m
+        WHERE m.domain = $1
+          AND m.body_text IS NOT NULL
+          AND btrim(m.body_text) <> ''
+          AND COALESCE(m.metadata->>'parsed_by', '') <> $2
+          AND m.received_at > now() - ($3 || ' hours')::interval
+          -- Not the answer to a question we asked. Those belong to the task
+          -- they answer, and the reply ingester handles them.
+          --
+          -- EVERY escalation, open or answered: a second reply to a question
+          -- we already answered is still an answer to that question, and
+          -- still not new work. Only an escalation that is still open is
+          -- matched here, because the ingester closes the escalation as it
+          -- reads it - so an answered one would fall through to here and be
+          -- filed as an inquiry.
+          AND NOT EXISTS (
+            SELECT 1 FROM app.task_escalations e
+             WHERE (
+                 (e.subject LIKE '%[esc_%'
+                  AND m.subject LIKE '%' || substring(e.subject from '%\[esc_[a-f0-9]+\]%') || '%')
+                 OR lower(m.subject) ILIKE '%' || lower(replace(e.subject, 'Needs you: ', '')) || '%'
+               )
+          )
+        ORDER BY m.received_at DESC
+        LIMIT $4`,
+      [domainKey, ALICE_ID, String(withinHours), limit]
+    ).catch(() => []);
+
+    return rows.map(r => ({
+      id: r.email_id || r.id,
+      email_id: r.email_id,
+      from: r.sender || '',
+      to: r.recipient || '',
+      subject: r.subject || '',
+      text: r.body_text || '',
+      html: r.body_html || '',
+      received_at: r.received_at,
+      read: r.read,
+      metadata: r.metadata || {},
+      // Which table this came from, so the reader knows how to mark it.
+      _source: 'db',
+      _domain_key: r.domain,
+      _db_id: r.id,
+    }));
+  } catch (e) {
+    console.warn(`[inbound-parser] could not read app.inbox_emails for ${domainKey}: ${e.message}`);
+    return [];
+  }
+}
+
+// ── Mark a durable row as read and parsed ───────────────────
+//
+// Without this the same row is re-read on every pass. The parsed_by marker
+// is what the fetch filters on, so this is the idempotency record.
+//
+// `read` is set as well, but it is not what the fetch filters on: it was
+// never maintained for the rows the boot poller wrote, so on its own it
+// would either replay the whole history or hide the new mail. The marker
+// this writes is the one that means "Alice has seen this".
+async function markDurableParsed(dbId, classification, extracted) {
+  if (!dbId) return false;
+  try {
+    const { query: localQuery } = await import('./localDb.mjs');
+    await localQuery(
+      `UPDATE app.inbox_emails
+          SET read = true,
+              metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1::int`,
+      [dbId, JSON.stringify({
+        parsed_by: ALICE_ID,
+        parsed_at: new Date().toISOString(),
+        category: classification?.category || null,
+        priority: classification?.priority ?? null,
+        extracted: extracted || {},
+      })]
+    );
+    return true;
+  } catch (e) {
+    console.warn(`[inbound-parser] could not mark durable row ${dbId} parsed: ${e.message}`);
+    return false;
   }
 }
 
@@ -418,11 +546,13 @@ export async function parseInboundEmails(opts = {}) {
     duration_ms: 0,
   };
 
-  // Gather from both sources
-  const [pfpInbox, mmInbox, supaInbox] = await Promise.all([
+  // Gather from every source
+  const [pfpInbox, mmInbox, supaInbox, pfpDurable, mmDurable] = await Promise.all([
     fetchRelayInbox('partyfavorphoto.com'),
     fetchRelayInbox('mobilemonero.com'),
     fetchSupabaseInbox(),
+    fetchDurableInbox('pfp'),
+    fetchDurableInbox('mobilemonero'),
   ]);
 
   // Build a unified work list, deduping by email_id / message_id / from+subject
@@ -445,6 +575,21 @@ export async function parseInboundEmails(opts = {}) {
     work.push({ ...entry, _source: source });
   }
 
+  // The durable table goes FIRST.
+  //
+  // It is first because it is the only source that holds everything the
+  // others miss, and because the order decides who gets processed. The relay's
+  // own inbox holds 46 unread pfp messages and every one of them is older
+  // than the durable table's newest; put the durable table last and those 46
+  // fill the whole 25-slot budget every hour, and the mail that actually
+  // arrived today is never read.
+  //
+  // addWork dedupes on the id, and both sources use Resend's message id, so
+  // a message that is in both is still processed once - from the durable
+  // table, which has the body and the durable marker.
+  for (const e of pfpDurable) addWork(e, 'db-pfp');
+  for (const e of mmDurable) addWork(e, 'db-mm');
+
   for (const e of pfpInbox) addWork({ ...e, _domain: 'partyfavorphoto.com' }, 'relay-pfp');
   for (const e of mmInbox) addWork({ ...e, _domain: 'mobilemonero.com' }, 'relay-mm');
   for (const e of supaInbox) addWork({ ...e, _domain: e.metadata?.account_label === 'mobilemonero' ? 'mobilemonero.com' : 'partyfavorphoto.com' }, 'supabase');
@@ -464,6 +609,57 @@ export async function parseInboundEmails(opts = {}) {
         if (fetched) {
           text = fetched.text || (fetched.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
         }
+      }
+
+      // An ANSWER to a question we asked.
+      //
+      // The question went out with a token in the subject, and a reply keeps
+      // the subject, so the answer finds the task it belongs to. It is
+      // recorded against the task, the escalation is closed, and NO task is
+      // created for it: this is not new work, it is the answer to work that
+      // is already on the board.
+      const tokenMatch = subject.match(/\[(esc_[a-f0-9]+)\]/i);
+      const esc = tokenMatch
+        ? await findEscalationByToken(tokenMatch[1])
+        // The questions that went out before the token existed are still
+        // waiting for their answers, and a reply carries the subject it was
+        // sent with.
+        : await findEscalationBySubject(subject);
+
+      if (esc) {
+        const answered = await answerEscalation(esc.id, text, { from });
+        if (email._source.startsWith('relay') && email.id) {
+          await markRelayParsed(email._domain, email.id,
+            { category: 'reply', event: 'escalation_answered' },
+            { escalation_id: esc.id, task_id: esc.task_id });
+        }
+        if (email._source === 'supabase' && email.id) {
+          await persistSupabaseParse(email.id,
+            { category: 'reply', event: 'escalation_answered' },
+            { escalation_id: esc.id, task_id: esc.task_id }, account);
+        }
+        if (email._source.startsWith('db') && email._db_id) {
+          await markDurableParsed(email._db_id,
+            { category: 'reply', event: 'escalation_answered', priority: 1 },
+            { escalation_id: esc.id, task_id: esc.task_id });
+        }
+        results.parsed.push({
+          source: email._source,
+          id: email.id || email.email_id,
+          subject, from, account,
+          classification: { category: 'reply', event: 'escalation_answered' },
+          answered_escalation: esc.id,
+          answered_task: esc.task_id,
+          answered: !!answered,
+          task_created: null,
+        });
+        continue;
+      }
+      if (tokenMatch) {
+        // A token we do not know: the question was sent, the record was not
+        // kept, or it was answered twice. Say so rather than filing it as
+        // new work.
+        console.warn(`[inbound-parser] the reply carries the token ${tokenMatch[1]} and it matches nothing`);
       }
 
       const classification = classify(subject, text, from);
@@ -490,6 +686,9 @@ export async function parseInboundEmails(opts = {}) {
       // Mark relay email as read + parsed (idempotency marker)
       if (email._source.startsWith('relay') && email.id) {
         await markRelayParsed(email._domain, email.id, classification, extracted);
+      }
+      if (email._source.startsWith('db') && email._db_id) {
+        await markDurableParsed(email._db_id, classification, extracted);
       }
 
       // Create follow-up task for inquiries

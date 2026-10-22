@@ -231,6 +231,26 @@ export const TOOL_SECURITY = {
   'opencode': TRUST_LEVELS.CORE,
   'opencode-status': TRUST_LEVELS.CORE,
 
+  // ── Asking a person ──────────────────────────────────────────────────────
+  // This one sends mail. It goes to a human this system already knows how to
+  // reach, or to the founder, and it is sent once per task - but an agent
+  // that can email a person on demand can email a person on demand a lot, so
+  // it is CORE.
+  'escalate-to-human': TRUST_LEVELS.CORE,
+  'task-escalations': TRUST_LEVELS.CORE,
+
+  // ── The brand, and the weekly ────────────────────────────────────────────
+  // Both are READS. The brand guide is a document; the weekly is built from
+  // figures this system already has and is returned as text. Neither sends
+  // anything - sending is resend-send-email's job, and that one is CORE.
+  //
+  // The weekly is TRUSTED rather than PUBLIC because building it reads the
+  // tenant's ledgers: the bookings, the leads, the candidates, the trust
+  // ledger. Those are the business's own figures and they are not every
+  // agent's business.
+  'brand-style-guide': TRUST_LEVELS.PUBLIC,
+  'tenant-weekly': TRUST_LEVELS.TRUSTED,
+
   // ── CRITICAL INFRASTRUCTURE (CORE only) ──
   'ef:generate-payment-link': TRUST_LEVELS.CORE,
   'ef:auth-health': TRUST_LEVELS.CORE,

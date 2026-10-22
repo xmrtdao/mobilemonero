@@ -802,8 +802,14 @@ export function createCampusHandler(deps) {
        overlays explicitly above content, and it means a future change to the
        canvas cannot silently reintroduce the same class of bug. Every direct
        child of <body> is listed, including .status-strip and .archive, which
-       is what the whitelist got wrong before. */
-    body > *:not(.scanline):not(canvas#mesh-bg):not(script) { position: relative; z-index: 10; }
+       is what the whitelist got wrong before.
+
+       #intel-overlay is excluded because it is a fixed, full-screen layer:
+       this rule's specificity (1,1,3 — the :not() arguments carry their own)
+       beats a plain id selector, so without the exclusion the overlay was
+       silently forced to position:relative and z-index:10, which pushed it
+       into the flow of the page and put it behind the content. */
+    body > *:not(.scanline):not(canvas#mesh-bg):not(script):not(#intel-overlay) { position: relative; z-index: 10; }
 
     /* ── Lumen Component Enhancements ── */
     /* Typography */
@@ -958,6 +964,179 @@ export function createCampusHandler(deps) {
       body.aside-open #nexus-aside { flex: none; max-width: 100%; width: 100%; height: 60vh; position: static; order: -1; }
     }
 
+    /* ═══════════════════════════════════════════════════════════════════════
+       ACTIVITY INTELLIGENCE — the fullscreen Activity Log board.
+
+       The tile in Campus Command is a summary. This is the room behind it:
+       a Jantt timeline of what ran when, the functions that are hot, the
+       errors that repeat, the version of every key file, the commits, the
+       log files on disk, and which log sources exist at all.
+
+       It is a fixed overlay rather than a page so the operator never loses
+       the board they are watching, and it is built from the same Lumen
+       tokens as the rest of the page so it does not read as a different
+       application.
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    #intel-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 400;
+      background: rgba(9, 11, 9, 0.97);
+      backdrop-filter: blur(3px);
+      font-family: var(--font-sans);
+    }
+    #intel-overlay.open { display: flex; flex-direction: column; }
+
+    #intel-head {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+    #intel-head h3 {
+      font-family: var(--font-display); font-size: 0.95rem; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--accent-orange); margin: 0;
+    }
+    #intel-head .intel-sub { color: var(--text-dim); font-size: 0.65rem; }
+    #intel-head .spacer { flex: 1; }
+    .intel-btn {
+      background: transparent; border: 1px solid var(--border); color: var(--text-secondary);
+      border-radius: 4px; cursor: pointer; padding: 3px 9px; font-size: 0.62rem;
+      font-family: 'Space Mono', monospace; letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .intel-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+    .intel-btn.on { color: var(--bg-primary); background: var(--accent-orange); border-color: var(--accent-orange); }
+    #intel-body { flex: 1; overflow: auto; padding: 10px 12px 24px; }
+
+    .intel-grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
+    @media (min-width: 1000px) { .intel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (min-width: 1500px) { .intel-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    .intel-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px; min-width: 0;
+    }
+    .intel-card h4 {
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--accent-yellow); margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px;
+    }
+    .intel-card h4 .hint { color: var(--text-dim); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 0.58rem; }
+    .intel-scroll { max-height: 260px; overflow-y: auto; }
+
+    /* ── Jantt ──────────────────────────────────────────────────────────────
+       The bars grow from the left when the board opens. The animation is on
+       width (not transform) so the label inside a bar is never stretched,
+       and the target width travels as a custom property so one keyframe
+       serves every bar. */
+    .jantt { position: relative; }
+    .jantt-axis {
+      position: relative; height: 16px; margin-left: 132px;
+      border-bottom: 1px solid var(--border); margin-bottom: 3px;
+    }
+    .jantt-tick {
+      position: absolute; top: 0; font-family: 'Space Mono', monospace; font-size: 0.5rem;
+      color: var(--text-dim); transform: translateX(-50%); white-space: nowrap;
+    }
+    .jantt-tick::after {
+      content: ''; position: absolute; left: 50%; top: 12px; width: 1px; height: calc(100% + 2px);
+      background: var(--border); opacity: 0.5;
+    }
+    .jantt-lane { display: flex; align-items: center; height: 20px; margin-bottom: 2px; }
+    .jantt-lane-label {
+      width: 132px; flex: 0 0 132px; font-size: 0.56rem; color: var(--text-secondary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 6px;
+      font-family: 'Space Mono', monospace;
+    }
+    .jantt-lane-label .kind { color: var(--text-dim); font-size: 0.48rem; }
+    .jantt-track { position: relative; flex: 1; height: 100%; background: rgba(255,255,255,0.015); border-radius: 2px; }
+    .jbar {
+      position: absolute; top: 3px; height: 13px; border-radius: 2px;
+      width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      font-size: 0.5rem; line-height: 13px; padding: 0 3px; color: #0c0d0b;
+      animation: jbar-grow 620ms cubic-bezier(.22,.9,.3,1) forwards;
+      animation-delay: calc(var(--i, 0) * 9ms);
+      min-width: 2px;
+    }
+    @keyframes jbar-grow { from { width: 0; opacity: .2; } to { width: var(--w, 2px); opacity: 1; } }
+    .jbar.cron { background: #E4BB3A; }
+    .jbar.edge { background: #63C7D4; }
+    .jbar.request { background: #8FC97A; }
+    .jbar.tool { background: #A98AD6; }
+    .jbar.err { background: #E4695A; }
+    .jbar.warn { background: #DC8A1E; }
+    .jantt-now {
+      position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent-orange);
+      box-shadow: 0 0 6px var(--accent-orange-glow); opacity: .8;
+      animation: jantt-pulse 2.4s ease-in-out infinite;
+    }
+    @keyframes jantt-pulse { 0%,100% { opacity: .35; } 50% { opacity: .95; } }
+
+    /* ── Bars and rows ─────────────────────────────────────────────────── */
+    .intel-bar-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+      font-size: 0.6rem; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.035); }
+    .intel-bar-track { grid-column: 1 / -1; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
+    .intel-bar-fill { height: 100%; border-radius: 2px; width: 0;
+      animation: jbar-grow 700ms cubic-bezier(.22,.9,.3,1) forwards;
+      animation-delay: calc(var(--i, 0) * 22ms); }
+    .intel-name { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .intel-num { font-family: 'Space Mono', monospace; color: var(--text-muted); font-size: 0.55rem; white-space: nowrap; }
+    .intel-row { display: flex; gap: 6px; align-items: baseline; font-size: 0.58rem; padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.035); }
+    .intel-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .intel-badge {
+      font-family: 'Space Mono', monospace; font-size: 0.5rem; padding: 0 4px; border-radius: 3px;
+      border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap;
+    }
+    .intel-empty { color: var(--text-dim); font-size: 0.6rem; padding: 6px 0; }
+
+    /* ── Sparkline ─────────────────────────────────────────────────────── */
+    .intel-spark { width: 100%; height: 54px; display: block; }
+    .spark-line { fill: none; stroke: var(--accent-orange); stroke-width: 2;
+      stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: spark-draw 1100ms ease-out forwards;
+      stroke-linejoin: round; }
+    @keyframes spark-draw { to { stroke-dashoffset: 0; } }
+    .spark-area { fill: url(#sparkfill); opacity: 0; animation: spark-fade 900ms ease-out 300ms forwards; }
+    @keyframes spark-fade { to { opacity: .5; } }
+    .spark-err { fill: none; stroke: var(--accent-red); stroke-width: 1.6; }
+    .intel-tail {
+      margin-top: 4px; max-height: 190px; overflow: auto; background: #0A0A12;
+      border: 1px solid var(--border); border-radius: 4px; padding: 5px 6px;
+      font-family: 'Space Mono', monospace; font-size: 0.5rem; color: var(--text-secondary);
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .intel-filebtn {
+      background: transparent; border: 1px solid var(--border); color: var(--text-secondary);
+      border-radius: 3px; cursor: pointer; font-size: 0.5rem; padding: 0 5px;
+      font-family: 'Space Mono', monospace;
+    }
+    .intel-filebtn:hover { color: var(--accent-orange); border-color: var(--border-hover); }
+
+    /* ── Log stream ────────────────────────────────────────────────────── */
+    .intel-log { font-family: 'Space Mono', monospace; font-size: 0.56rem; }
+    .intel-log-row {
+      display: grid; grid-template-columns: 62px 108px 1fr auto; gap: 6px; align-items: baseline;
+      padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03);
+      animation: log-fade 300ms ease-out both;
+    }
+    @keyframes log-fade { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+    .intel-log-row .t { color: var(--text-dim); }
+    .intel-log-row .who { color: var(--accent-teal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .intel-log-row .what { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .intel-log-row .meta { color: var(--text-muted); white-space: nowrap; }
+    .intel-log-row .meta .err { color: var(--accent-red); }
+    .intel-log-row .meta .warn { color: var(--accent-yellow); }
+    .intel-log-row .meta .ok { color: #8FC97A; }
+
+    /* ── File versions ─────────────────────────────────────────────────── */
+    .file-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: 0.58rem;
+      padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.035); }
+    .file-row .path { color: var(--text-primary); font-family: 'Space Mono', monospace; font-size: 0.55rem; }
+    .file-row .ver { color: var(--accent-teal); font-family: 'Space Mono', monospace; font-size: 0.5rem; }
+    .file-row .detail { grid-column: 1 / -1; color: var(--text-dim); font-size: 0.52rem;
+      display: flex; gap: 8px; flex-wrap: wrap; }
+    .file-row .churn { color: var(--accent-yellow); }
+
+    .intel-kv { display: flex; gap: 8px; font-size: 0.56rem; color: var(--text-muted); flex-wrap: wrap; }
+    .intel-kv b { color: var(--text-primary); font-weight: 600; font-family: 'Space Mono', monospace; }
+
 </style>
 </head>
 <body>
@@ -1083,9 +1262,14 @@ export function createCampusHandler(deps) {
   <!-- Middle row: Activity Log (Campus Watch was promoted to its own
        top-level tile (#watch, p6) on 2026-10-11, restart control included) -->
   <div class="quarterdeck-mid">
-    <!-- Activity Log (centralized log viewer) -->
+    <!-- Activity Log (centralized log viewer)
+         The expand button opens the Activity Intelligence board — the
+         fullscreen view with the Jantt timeline, the function leaderboard,
+         the recurring errors, the key-file versions, the commits, and the
+         ship logs. The tile below it stays a summary so the page does not
+         turn into a wall of numbers. -->
     <div style="background:var(--bg-card);border-radius:6px;padding:8px;border:1px solid var(--border);">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:6px;flex-wrap:wrap;">
         <h4 style="color:var(--accent-yellow);font-size:0.75rem;margin:0;text-transform:uppercase;letter-spacing:0.05em;">📡 Activity Log</h4>
         <div style="display:flex;gap:4px;align-items:center;">
           <select id="log-filter-type" style="background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:0.6rem;">
@@ -1094,17 +1278,22 @@ export function createCampusHandler(deps) {
             <option value="ai_chat">AI Chat</option>
             <option value="system_health_check">Health</option>
             <option value="tool_execution">Tool</option>
+            <option value="tool_failed">Tool Fail</option>
             <option value="edge_function">Edge Fn</option>
             <option value="cron_execution">Cron</option>
             <option value="email">Email</option>
             <option value="http_error">HTTP Error</option>
+            <option value="slow_request">Slow</option>
+            <option value="api_call">API Call</option>
             <option value="db_error">DB Error</option>
             <option value="auth_failure">Auth</option>
           </select>
           <input id="log-search" type="text" placeholder="Search..." style="background:var(--bg-card);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.6rem;width:100px;">
-          <button onclick="refreshLogViewer()" style="background:var(--bg-card);color:var(--accent-blue);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.6rem;cursor:pointer;">↻</button>
+          <button onclick="refreshLogViewer()" title="Refresh" style="background:var(--bg-card);color:var(--accent-blue);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.6rem;cursor:pointer;">↻</button>
+          <button onclick="openActivityIntel()" title="Open the Activity Intelligence board" style="background:var(--bg-card);color:var(--accent-orange);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:0.6rem;cursor:pointer;">⛶</button>
         </div>
       </div>
+      <div id="qds-activity-stats" style="display:flex;gap:10px;flex-wrap:wrap;font-size:0.55rem;color:var(--text-dim);margin-bottom:5px;font-family:'Space Mono',monospace;"></div>
       <div id="qds-activity-log" style="font-size:0.6rem;max-height:400px;overflow-y:auto;">
         <div class="stat"><span class="label">Loading activity...</span></div>
       </div>
@@ -1679,8 +1868,83 @@ export function createCampusHandler(deps) {
             <script src="/static/fleet-announcer.js?v=${dashboardJsVersion('fleet-announcer.js')}"></script>
 
             <script src="/static/markdown.js"></script>
-  
-  
+
+  <!-- ═══ ACTIVITY INTELLIGENCE — the fullscreen Activity Log board ═══
+       Everything the tile in Campus Command summarises, expanded: a Jantt
+       timeline of what ran when, the traffic shape, the hot functions, the
+       recurring errors with the file that owns them, the version of every
+       key infra file, the commits, the ship logs on disk, and which log
+       sources exist at all.
+
+       The markup is a skeleton with empty containers. dashboard.js fills
+       them; if dashboard.js fails to load the board shows its own text
+       rather than an empty frame, because an empty frame reads as "no data"
+       and the truth would be "the renderer is broken". -->
+  <div id="intel-overlay" role="dialog" aria-modal="true" aria-label="Activity Intelligence">
+    <div id="intel-head">
+      <h3>📡 Activity Intelligence</h3>
+      <span class="intel-sub" id="intel-generated">loading…</span>
+      <span class="spacer"></span>
+      <button class="intel-btn" data-window="15" onclick="setIntelWindow(15)">15m</button>
+      <button class="intel-btn on" data-window="60" onclick="setIntelWindow(60)">1h</button>
+      <button class="intel-btn" data-window="180" onclick="setIntelWindow(180)">3h</button>
+      <button class="intel-btn" data-window="720" onclick="setIntelWindow(720)">12h</button>
+      <button class="intel-btn" onclick="refreshIntel(true)">↻</button>
+      <button class="intel-btn" onclick="closeActivityIntel()">✕ close</button>
+    </div>
+    <div id="intel-body">
+      <div class="intel-card" style="margin-bottom:10px;">
+        <h4>🧱 Jantt Timeline <span class="hint" id="intel-jantt-hint">who ran what, and when</span></h4>
+        <div id="intel-jantt" class="jantt"><div class="intel-empty">No timeline yet.</div></div>
+      </div>
+
+      <div class="intel-grid">
+        <div class="intel-card">
+          <h4>📈 Traffic <span class="hint">every request, counted live</span></h4>
+          <div id="intel-traffic"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🔥 Most Used Functions <span class="hint">calls · failures · avg ms</span></h4>
+          <div id="intel-functions" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🚨 Most Common Errors <span class="hint">grouped · with the file that owns the route</span></h4>
+          <div id="intel-errors" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🗂 Key File Versions <span class="hint">lines · fingerprint · last commit</span></h4>
+          <div id="intel-files" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🐙 GitHub Activity <span class="hint">recent commits across the org</span></h4>
+          <div id="intel-github" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🛟 Ship Logs <span class="hint">files on disk that never reach the database</span></h4>
+          <div id="intel-ship" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🗃 Log Source Coverage <span class="hint">what exists, and what the feed actually shows</span></h4>
+          <div id="intel-coverage" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🐢 Slowest Endpoints</h4>
+          <div id="intel-slow" class="intel-scroll"></div>
+        </div>
+        <div class="intel-card">
+          <h4>🧭 Who Is Talking <span class="hint">the callers that had no agent id</span></h4>
+          <div id="intel-sources" class="intel-scroll"></div>
+        </div>
+      </div>
+
+      <div class="intel-card" style="margin-top:10px;">
+        <h4>📜 Detailed Log Stream <span class="hint" id="intel-log-hint"></span></h4>
+        <div id="intel-log" class="intel-log intel-scroll" style="max-height:340px;"></div>
+      </div>
+    </div>
+  </div>
+
+
             </body>
             </html>`);
   };

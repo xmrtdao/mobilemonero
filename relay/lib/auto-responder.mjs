@@ -39,6 +39,18 @@ function isAutoReply(subject, from) {
 }
 
 // ── Send acknowledgment ─────────────────────────────────────
+//
+// This is OFF for every tenant.
+//
+// The acknowledgment told a lead their message had reached Joe and then
+// repeated the Stripe booking link. It was noise in the PFP inbox and noise
+// in the shared agent inbox, and it was sent to people who had not asked to
+// hear from us. The sender is switched off per domain in EMAIL_DOMAINS
+// (auto_ack), and no domain has it on.
+//
+// Nothing else about inbound mail depends on this file. Inbound capture into
+// app.inbox_emails, the PFP lead model, and the Joe handoff are all separate
+// paths and all still run.
 async function sendAck(originalEmail) {
   if (!RESEND_API_KEY) return false;
 
