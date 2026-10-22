@@ -77,7 +77,7 @@ import { runOpencodePrompt } from './lib/opencode-runner.mjs';
 import { sendMail } from './lib/agent-email.mjs';
 import { renderEmail, sanitizeHtml, markdownToHtml } from './lib/rich-email.mjs';
 import {
-  resolveRecipient, knownAddress, rememberAddress, openEscalation, recordEscalation,
+  resolveRecipient, knownAddress, rememberAddress, openEscalation, recordEscalation, answeredEscalation,
 } from './lib/task-escalation.mjs';
 import { TENANTS } from './lib/tenants.mjs';
 import { brandGuide, guideFor } from './lib/brand-guide.mjs';
@@ -208,6 +208,8 @@ import {
 import {
   scanInfraFiles, recordVersions, versionAt, versionHistory,
 } from './lib/infra-files.mjs';
+// The constellation: trust, burn, activity and the galaxy, in one picture.
+import { buildConstellation } from './lib/constellation.mjs';
 
 import pg from 'pg';
 const { Client: PgClient, Pool: PgPool } = pg;
@@ -409,27 +411,79 @@ async function logEdgeFunctionCall(functionName, status, durationMs, metadata = 
 }
 
 // ── Log relay HTTP requests ─────────────────────────────────
+//
+// A REFUSAL IS NOT A FAULT.
+//
+// This logs every 4xx as an `http_error` row in the activity feed, and the
+// activity feed is what the Activity Intelligence board and Alice read. So a
+// request that the relay correctly REFUSED — a path that does not exist, an
+// image that is not on the allowlist — landed in the same bucket as a
+// request that FAILED: a route that exists, that should have worked, and
+// did not.
+//
+// The visible consequence was that the board's "most common errors" was a
+// list of the internet's curiosity and our own test suite's security
+// probes, and Alice opened tasks to "fix" them.
+//
+// So there are three kinds of response and they are kept apart:
+//
+//   http_error  a fault. The route exists and the request should have
+//               worked. 5xx, and 4xx from inside a handler.
+//   refused     the relay said no, by design. A path that does not exist, a
+//               file that is not on an allowlist. Still recorded, still
+//               countable, and shown — as security signal, not as a fault.
+//   selftest    our own test suite proving the allowlists hold. Recorded,
+//               attributed, and not counted as anything else.
+//
+// `refusal` is set by the route that refused (or by the catch-all, when
+// nothing matched). `selftest` is set by the request logger itself, and only
+// for a request that came from THIS machine — an attacker on the internet
+// cannot tag its traffic out of the log.
 async function logRelayRequest(method, path, statusCode, durationMs, agentId = 'unknown', extra = {}) {
-  // Only log interesting events: errors, slow requests, and key endpoints
   const isError = statusCode >= 400;
   const isSlow = durationMs > 5000;
   const isKeyEndpoint = ['/tools/run', '/api/fleet-chat', '/ai-chat', '/api/suite'].some(p => path.startsWith(p));
   // Skip dashboard polling (every 3s, drowns the Ships Log)
   if (path === '/api/fleet-chat/messages' && agentId === 'dashboard') return;
   if (!isError && !isSlow && !isKeyEndpoint) return;
-  
-  const activityType = isError ? 'http_error' : (isSlow ? 'slow_request' : 'api_call');
+
+  const isSelftest = !!extra.selftest;
+  const isRefusal = !!extra.refusal && statusCode === 404;
+
+  let activityType;
+  let severity;
+  if (isSelftest) {
+    activityType = 'selftest';
+    severity = 'info';
+  } else if (isRefusal) {
+    activityType = 'refused';
+    severity = 'info';
+  } else if (isError) {
+    activityType = 'http_error';
+    severity = 'error';
+  } else if (isSlow) {
+    activityType = 'slow_request';
+    severity = 'warning';
+  } else {
+    activityType = 'api_call';
+    severity = 'info';
+  }
+
   // The source is the client that made the call, and it is recorded even
   // when the agent is known — "hermes called /tools/run" and "the Nexus
   // dashboard called /api/suite/tasks" are different facts, and a log that
   // keeps only the first one cannot tell you who is loading the stack.
   await logToDb(activityType, `${method} ${path}`,
     `${method} ${path} → ${statusCode} (${durationMs}ms)`,
-    isError ? 'error' : (isSlow ? 'warning' : 'info'),
+    severity,
     {
       method, path, status_code: statusCode, duration_ms: durationMs,
       source: extra.source || null, actor_kind: extra.actor_kind || null,
       ip: extra.ip || null, user_agent: extra.user_agent || null,
+      // Why it was refused, when it was. "no-such-route" and
+      // "not-allowlisted" are different facts.
+      refusal_reason: isRefusal ? extra.refusal : null,
+      self_test: isSelftest || null,
     },
     agentId
   );
@@ -1249,6 +1303,28 @@ const toolHandlers = {
         to: already.to_address,
         sent_at: already.sent_at,
         note: 'this task is already waiting on somebody; it has not been sent again',
+      };
+    }
+
+    // And a task that has ALREADY BEEN ANSWERED is not asked again.
+    //
+    // The open-escalation check above is not enough on its own, and the
+    // difference is the whole loop. The answer closes the escalation, so
+    // "is there an open escalation?" is false the moment Joe replies - and
+    // the watcher read that as "nobody has been asked yet" and asked again.
+    // Nine times for one task on 2026-10-21, each answer within minutes,
+    // each one followed by another email.
+    //
+    // The task is not waiting for Joe now. It is waiting for the fleet to
+    // act on what he said, and asking him again cannot help with that.
+    const answered = await answeredEscalation(taskId);
+    if (answered) {
+      return {
+        success: true,
+        already_answered: true,
+        to: answered.to_address,
+        answered_at: answered.answered_at,
+        note: 'this task has already been answered; it is not being asked again',
       };
     }
 
@@ -2465,6 +2541,79 @@ const toolHandlers = {
       sql += ' ORDER BY created_at DESC LIMIT ' + Math.min(parseInt(limit) || 20, 100);
       const rows = await localQuery(sql, params);
       return { success: true, count: rows.length, entries: rows };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  // The activity intelligence, for agents.
+  //
+  // The dashboard has a fullscreen board that draws the traffic timeline,
+  // the hot functions, the recurring errors and the version of every key
+  // file. Agents could not see any of it: they had activity-log (a list of
+  // rows) and ship_logs (text files), and neither one answers "what is
+  // broken right now and who owns it".
+  //
+  // This is that board, as a tool. It is deliberately a SUMMARY and not the
+  // raw bundle - the bundle is 126KB and a tool response goes into a model's
+  // context. The compact shape is what an agent needs to decide whether to
+  // act: what is failing, how often, which file owns it, and what version
+  // of that file was live when it fired.
+  'activity-intel': async (args) => {
+    const { window = 60, mode = 'summary', limit = 10 } = args || {};
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 25);
+    try {
+      const data = await buildIntel({
+        windowMinutes: Math.min(Math.max(parseInt(window, 10) || 60, 5), 1440),
+        root: __dirname + '/..',
+      });
+      const errors = (data.errors || []).slice(0, safeLimit).map((e) => ({
+        error: e.sample,
+        count: e.count,
+        last_seen: e.last_at,
+        ongoing: !e.stale,
+        owner_file: (e.files || [])[0] || null,
+        file_version: e.file_version ? e.file_version.version : null,
+        file_lines: e.file_version ? e.file_version.lines : null,
+        estimated_version: e.file_version ? !!e.file_version.estimated : null,
+      }));
+      const functions = (data.functions || []).slice(0, safeLimit).map((f) => ({
+        name: f.name, calls: f.calls, failures: f.failures, avg_ms: f.avg_ms, sources: f.sources,
+      }));
+      const slowest = (data.slowest || []).slice(0, safeLimit).map((s) => ({
+        path: s.path, calls: s.calls, avg_ms: s.avg_ms, max_ms: s.max_ms, over_5s: s.over_5s,
+      }));
+      const callers = (data.unknown_sources || []).slice(0, safeLimit).map((u) => ({
+        client: u.source, calls: u.calls, failures: u.failures, paths: (u.paths || []).slice(0, 4),
+      }));
+      const files = (data.infra || []).map((f) => ({
+        path: f.path, lines: f.lines, bytes: f.bytes, version: f.version, changed: f.age_minutes,
+        last_commit: f.git ? f.git.short : null, commits_this_week: f.git ? f.git.week_commits : null,
+      }));
+
+      const summary = {
+        window_minutes: data.window_minutes,
+        generated_at: data.generated_at,
+        totals: data.totals,
+      };
+
+      if (mode === 'errors') return { success: true, mode, ...summary, errors };
+      if (mode === 'functions') return { success: true, mode, ...summary, functions };
+      if (mode === 'slowest') return { success: true, mode, ...summary, slowest };
+      if (mode === 'callers') return { success: true, mode, ...summary, callers };
+      if (mode === 'files') return { success: true, mode, ...summary, files };
+      if (mode === 'coverage') return { success: true, mode, ...summary, coverage: data.coverage };
+
+      return {
+        success: true,
+        mode,
+        ...summary,
+        errors,
+        functions: functions.slice(0, 5),
+        slowest: slowest.slice(0, 5),
+        callers: callers.slice(0, 5),
+        files: files.map((f) => ({ path: f.path, lines: f.lines, version: f.version })),
+      };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -5009,13 +5158,24 @@ app.use((req, res, next) => {
   // request hit — and the path-based answer is labelled as a *client*, not
   // passed off as an agent.
   const { actor, actor_kind, source } = classifyRequest(req);
+  // A self-test is our own test suite proving an allowlist holds. It is
+  // tagged with a header, and the tag is only honoured for a request that
+  // came from THIS machine and did not arrive through the tunnel — so an
+  // attacker on the internet cannot tag its traffic out of the log and
+  // hide. A tunnel request always carries cf-connecting-ip, and that is
+  // what makes it external.
+  const isSelftest = req.headers['x-relay-selftest'] === '1'
+    && !req.headers['cf-ray'] && !req.headers['cf-connecting-ip']
+    && isLoopbackAddress(requestIp(req));
   const originalEnd = res.end;
   res.end = function(...args) {
     const duration = Date.now() - start;
     const statusCode = res.statusCode;
     // Log interesting requests to activity feed with agent attribution
     logRelayRequest(req.method, req.path, statusCode, duration, actor, {
-      source, actor_kind, ip: req.ip, user_agent: req.headers['user-agent'] || null,
+      source, actor_kind, ip: requestIp(req), user_agent: req.headers['user-agent'] || null,
+      refusal: req.refusal || null,
+      selftest: isSelftest,
     }).catch(() => {});
     // Every request is counted in memory, whether or not it is worth a row
     // in the database, so the traffic timeline shows the whole shape of the
@@ -5063,10 +5223,18 @@ const PUBLIC_IMAGES = new Set(['xmrtdao.png', 'pfp.png']);
 app.get('/images/:name', (req, res) => {
   const name = req.params.name;
   if (!PUBLIC_IMAGES.has(name)) {
+    // A refusal, not a fault. The allowlist did exactly what it exists to
+    // do. It is still recorded and still counted — but as a refusal, so it
+    // does not sit in the same list as the relay's own broken routes and
+    // does not send Alice off to fix a scanner.
+    req.refusal = 'not-allowlisted';
     return res.status(404).send('/* image not found */');
   }
   const filePath = join(PUBLIC_DIR, name);
   if (!existsSync(filePath)) {
+    // This one IS a fault: the file is allowlisted and missing. The logo was
+    // missing for weeks and the page still looked fine.
+    req.refusal = null;
     return res.status(404).send('/* image not found */');
   }
   // Both are PNGs, and both are content-addressed by the client after first load,
@@ -9736,6 +9904,7 @@ function getToolDescription(name) {
     'resolve-entity': 'Unified entity resolver — the ONE lookup for "who is X". Searches pfp_leads, pfp_contacts, pfp_partnerships, knowledge_entities, fleet_memory and shared_context, merges records that share a hard identifier (CRM record id or email — never just a first name), and returns canonical entities with current_email, superseded_emails, aliases, organization, relationship, per-field source provenance, and conflict_state. Args: query, limit. Prefer this over querying any single memory store.',
     'recall_context': 'Pull structured context across all memory stores: fleet_memory (agent memories), knowledge_entities (knowledge base), and shared_context (key-value store). Pass agent_id (optional filter) and topic (search term). Returns memories, knowledge entries, and context values matching the topic. If no topic, returns recent memories for the agent_id.',
     'activity-log': 'Query the persistent activity feed. Filter by activity_type (tool_execution, edge_function, cron_execution, email, http_error, fleet_message, etc.), status (completed, error, info, warning), since (ISO timestamp), or agent_id. Returns recent entries with timestamps.',
+    'activity-intel': 'The activity intelligence, summarised for an agent: what is failing right now, how often, which file owns the failing route, and what version of that file was live when it fired. Also the hot functions, the slowest endpoints, the callers that send no agent id, and the version and line count of every key infra file. Args: window (minutes, default 60), mode (summary|errors|functions|slowest|callers|files|coverage), limit (default 10). Use this before claiming the system is healthy — activity-log is a list of rows, this is the state of the stack.',
     'agent-profile': 'Read agent profiles from the database (agent_id or list all)',
     'trust-trajectory': 'Get the full TrustGraph trajectory — per-agent trust score series over time, token usage, and ecosystem summary. Args: agent (optional, single agent name e.g. "eliza"), action (optional, "summary" for compact per-agent current score). No args returns full series for all agents. Best for: "show trust trajectory", "what is eliza trust score trend", "trust graph summary".',
     'get_agent_key': 'Retrieve this agent XMRT-DAO API key for authenticating CORE-level tool calls. Returns the xrt_ prefixed key.',
@@ -9829,7 +9998,7 @@ function getToolDescription(name) {
     'inbox_write': 'Write to the shared agent inbox. Args: agent, message, type, metadata.',
     'tasks_list': 'List tasks. Args: assignee, status, priority, limit.',
     'tasks_update': 'Update a task. Args: task_id, and any of status/assignee/priority/notes.',
-    'pfp_bookings': 'PFP (Party Favor Photo) bookings. Args: action (list/get/add/update), booking fields.',
+    'pfp_bookings': 'PFP (Party Favor Photo) bookings. Args: action (list/get/create), and for create: client_name, client_email, event_date, hours, total_fee, event_start_time, event_end_time, event_type, event_name, venue, address, package_type, deposit_paid, deposit_date, status, notes. The table uses pending/confirmed/completed for status, and times are LOCAL.',
     'hb_properties': '31 Harbor property inventory and availability. Args: action (list/get/search), property fields.',
     'links_create': 'Create a tracking link. Args: url, campaign/source, optional slug.',
     'links_list': 'List tracking links. Args: campaign, limit.',
@@ -11087,29 +11256,48 @@ function autoCreateBoardTopic(agent, message) {
 }
 
 // Load persisted messages on startup
+//
+// WHY THIS IS A MERGE AND NOT AN APPEND.
+//
+// The campus comms panel reads the buffer with slice(-limit), so whatever
+// is LAST in the buffer is what the operator sees as the newest message.
+// The old query was:
+//
+//   SELECT ... FROM public.fleet_messages ORDER BY created_at ASC LIMIT 500
+//
+// ASC LIMIT 500 is the 500 OLDEST rows, not the newest 500. The table holds
+// 22,000+ messages, so every reload pushed month-old rows onto the end of
+// the buffer, and the newest thing the panel showed was a hermes-agent scan
+// from July. That is the "stale information posts to fleet chat on reload"
+// report, and it was true on every single restart.
+//
+// So: take the newest rows, merge them with whatever is already in the
+// buffer by id, and sort the result into one chronological list. The
+// newest message ends up last, which is where a reader expects it.
 function loadFleetChatHistory() {
+  const merged = new Map();
+  const add = (m) => { if (m && m.id && !merged.has(m.id)) merged.set(m.id, m); };
+
+  // Anything posted live since the process started must survive the load.
+  for (const m of fleetChatMessages) add(m);
+
   try {
     const saved = state.get('fleet-chat-history');
-    if (Array.isArray(saved) && saved.length > 0) {
-      fleetChatMessages.push(...saved);
-    }
+    if (Array.isArray(saved)) for (const m of saved) add(m);
   } catch {}
-  // Defer DB load to after server starts — don't block initialization
+
   setImmediate(async () => {
     try {
       const result = await queryLocalPg(
         `SELECT id, topic as channel, agent_id as agent, agent_name as agentLabel, message, payload, created_at as time
-         FROM public.fleet_messages ORDER BY created_at ASC LIMIT 500`
+         FROM public.fleet_messages ORDER BY created_at DESC LIMIT 500`
       );
       const rows = result && result.rows ? result.rows : (Array.isArray(result) ? result : []);
-      if (!rows || rows.length === 0) return;
-      const existingIds = new Set(fleetChatMessages.map(m => m.id));
-      let added = 0;
       for (const row of rows) {
-        if (existingIds.has(row.id)) continue;
+        if (!row.id || merged.has(row.id)) continue;
         let payload = {};
         try { payload = JSON.parse(row.payload || '{}'); } catch {}
-        fleetChatMessages.push({
+        add({
           id: row.id,
           agent: row.agent,
           agentLabel: row.agentLabel || row.agent,
@@ -11121,18 +11309,16 @@ function loadFleetChatHistory() {
           time: row.time,
           attachments: payload.attachments || [],
         });
-        existingIds.add(row.id);
-        added++;
-      }
-      if (added > 0) {
-        console.log(`[fleet-db] Loaded ${added} messages from DB (${fleetChatMessages.length} total)`);
-        if (fleetChatMessages.length > FLEET_CHAT_MAX) {
-          fleetChatMessages.splice(0, fleetChatMessages.length - FLEET_CHAT_MAX);
-        }
       }
     } catch (e) {
       console.log(`[fleet-db] Load error: ${e.message}`);
     }
+
+    const ordered = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    fleetChatMessages.length = 0;
+    fleetChatMessages.push(...ordered.slice(-FLEET_CHAT_MAX));
+    const newest = ordered.length ? new Date(ordered[ordered.length - 1].ts || 0).toISOString() : 'none';
+    console.log(`[fleet-db] Loaded ${fleetChatMessages.length} messages (newest ${newest})`);
   });
 }
 loadFleetChatHistory();
@@ -16900,6 +17086,21 @@ const relayHttpServer = app.listen(PORT, '0.0.0.0', async () => {
     '  State keys: ' + state.keys().length + '\n');
   logActivity('system', '-', 'STARTUP', 'Relay v2 listening on port ' + PORT);
 
+  // ── Warm the log-intelligence bundle ─────────────────────────────────────
+  //
+  // The first /api/log-intel call after a restart used to take thirty
+  // seconds: it created the version table, fingerprinted every key file,
+  // ran git, and read the ship logs, all inside the operator's request.
+  // The dashboard's slowest-endpoints panel then showed the dashboard's own
+  // request as the slowest thing in the stack, which is both true and
+  // useless. Warming it here moves that cost to a moment nobody is waiting
+  // on.
+  setTimeout(() => {
+    buildIntel({ windowMinutes: 60, root: __dirname + '/..' })
+      .then(() => console.log('[log-intel] bundle warm'))
+      .catch((e) => console.warn('[log-intel] warm-up failed:', e.message));
+  }, 5000).unref?.();
+
   // ── Cron engine: owned by the supervisor, NOT started here ──
   // 2026-06-07: this block used to start cron-engine-v2 in-process, because the
   // old cron-engine.mjs hung on `psql -U postgres` spawns.
@@ -19130,6 +19331,88 @@ app.post('/api/migrate/copy-data', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Signal constellation ───────────────────────────────────────────────────
+//
+// One picture of the fleet, from four signals that live in four places:
+// trust (the TrustGraph trajectory), token burn (the Campus Rations tile),
+// activity (the Activity Intelligence board) and the XMRT Galaxy.
+//
+// The Training & Security tile used to show trust as a number and the other
+// three on other tiles. Holding four tiles in your head to answer "is this
+// agent in trouble" is the job a picture is supposed to do.
+//
+// It costs about a second to build, and there is no reason for two callers
+// in the same minute to each pay it.
+const constellationCache = { at: 0, key: '', data: null };
+const CONSTELLATION_TTL_MS = 20_000;
+
+app.get('/api/signal-constellation', async (req, res) => {
+  trackRequest('/api/signal-constellation');
+  try {
+    const burnDays = Math.min(Math.max(parseInt(req.query.burn_days, 10) || 30, 1), 365);
+    const activityHours = Math.min(Math.max(parseInt(req.query.activity_hours, 10) || 24, 1), 168);
+    const maxNodes = Math.min(Math.max(parseInt(req.query.max_nodes, 10) || 30, 5), 60);
+    const includeGraph = req.query.graph !== '0';
+    const key = `${burnDays}|${activityHours}|${maxNodes}|${includeGraph}`;
+
+    if (!req.query.refresh && constellationCache.key === key
+        && Date.now() - constellationCache.at < CONSTELLATION_TTL_MS) {
+      return res.json(constellationCache.data);
+    }
+    const data = await buildConstellation({
+      burnDays,
+      activityHours,
+      maxNodes,
+      includeGraph,
+    });
+    constellationCache.at = Date.now();
+    constellationCache.key = key;
+    constellationCache.data = data;
+    res.json(data);
+  } catch (e) {
+    console.error('[constellation] build failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Task confirmations ────────────────────────────────────────────────────
+//
+// The human-confirmation artifact carries a URL that points at a
+// confirmation record, and the evidence gate only checks that the URL is
+// not empty. That is a SHAPE check, and shape is not enough: an artifact
+// pointing at a 404 is a pointer at nothing, which is exactly the hollow
+// completion the confirmation trigger was written to prevent.
+//
+// So the record is served here, and it says what a reader needs: who
+// answered, when, what they wrote, which task it was about, and which
+// question it answered.
+app.get('/api/suite/task-confirmations/:id', async (req, res) => {
+  trackRequest('/api/suite/task-confirmations/:id');
+  try {
+    const { confirmationById } = await import('./lib/task-confirmation.mjs');
+    const row = await confirmationById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'no such confirmation' });
+    res.json({
+      success: true,
+      confirmation: {
+        id: row.id,
+        task_id: row.task_id,
+        task_title: row.task_title,
+        escalation_id: row.escalation_id,
+        confirmed_by: row.confirmed_by,
+        reply_text: row.reply_text,
+        reading_intent: row.reading_intent,
+        reading_summary: row.reading_summary,
+        read_by: row.read_by,
+        confirmed_at: row.confirmed_at,
+      },
+    });
+  } catch (e) {
+    console.error('[task-confirmations] read failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Activity Log ──
 //
 // The Activity Log used to return seven columns and cap at fifty rows. That
@@ -19157,6 +19440,39 @@ app.get('/api/activity-log', async (req, res) => {
   } catch (e) {
     console.warn('[activity-log] query failed:', e.message);
     res.json([]);
+  }
+});
+
+// POST /api/activity-log — write a row into the feed.
+//
+// This route did not exist. relay/trustgraph-scanner.mjs has been posting
+// its scan results here, inside a try/catch, since before the feed existed
+// as an endpoint — so every scan result was dropped by a 404 that nobody
+// saw, and the scanner reported itself as working. A caller that logs into
+// a log and gets no error is worse than one that fails loudly.
+app.post('/api/activity-log', express.json(), async (req, res) => {
+  trackRequest('POST /api/activity-log');
+  try {
+    const { activity_type, title, description, status, agent_id, metadata } = req.body || {};
+    if (!activity_type && !title) {
+      return res.status(400).json({ error: 'activity_type or title is required' });
+    }
+    await logToDb(
+      String(activity_type || 'system').slice(0, 60),
+      String(title || activity_type || 'system').slice(0, 200),
+      // logToDb's signature is (activityType, title, status, description, ...).
+      // Passing description into the status slot writes the description into
+      // the status column, which is exactly the kind of quiet swap that makes
+      // a log lie.
+      String(status || 'info').slice(0, 60),
+      String(description || '').slice(0, 500),
+      (metadata && typeof metadata === 'object') ? metadata : {},
+      agent_id ? String(agent_id).slice(0, 80) : (req.headers['x-agent-id'] || null)
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.warn('[activity-log] write failed:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -19206,8 +19522,7 @@ app.get('/api/ship-logs', async (req, res) => {
   }
 });
 
-// ── Infra file versions ───────────────────────────────────────────────────
-//
+// ── Infra file versions ───────────────────────────────────────────────────//
 // "Which version of the file was live when this error fired?" — the file
 // list, its current fingerprint, the git commit that last touched it, the
 // functions and routes it defines, and the history of its past versions.
@@ -19509,6 +19824,56 @@ registerUniversityBridge(app, {
   localQuery,
   trackRequest: typeof trackRequest === 'function' ? trackRequest : () => {},
   logActivity: typeof logActivity === 'function' ? logActivity : () => {},
+});
+
+// ── The end of the road: a path that does not exist ───────────────────────
+//
+// Express's default 404 is a bare HTML page, and — this is the part that
+// mattered — it is indistinguishable from every other 404 the relay
+// produces. So a request for /.env (a scanner), a request for a path that
+// was renamed (our bug) and a request to a route that exists and refused
+// (a policy) all looked the same in the activity feed, and all looked the
+// same to Alice.
+//
+// This is the last handler in the stack, so it only runs when nothing
+// matched. It keeps Express's response shape so nothing that parses the
+// default 404 breaks.
+//
+// The question it has to answer is: whose mistake is this?
+//
+//   In one of the relay's OWN namespaces — /api, /tools, /state, /cron,
+//   /webhook, /suite — a 404 means something in this system is asking for
+//   something that is not there. That is OUR fault and it stays a fault:
+//   the Alice daemon posting to /api/alice/tick, which does not exist, is
+//   a broken client and must be visible as one.
+//
+//   Anywhere else, the path was never ours to serve. A request for /.env
+//   or /.git/config or /wp-admin is somebody else's curiosity, correctly
+//   refused. It is recorded and counted — as a REFUSAL, not a fault — so
+//   the error panel stays a list of our problems and the refusals can be
+//   read as the security view they are.
+const RELAY_NAMESPACES = [
+  '/api', '/tools', '/state', '/dispatch', '/cron', '/webhook', '/suite',
+  '/book', '/bookings', '/elze', '/cuttlefishclaws', '/inbox', '/inbox',
+  '/resend', '/pfp', '/mining', '/mesh', '/ollama', '/scrape', '/web-search',
+  '/eliza', '/eliza-ping', '/monitor', '/status', '/health', '/ontology',
+  '/functions', '/browser', '/studio', '/intake', '/radar', '/hottiehouse',
+  '/cashdapp', '/local-runtime', '/log', '/ping', '/probe.sh', '/assets',
+  '/spatial', '/static', '/images',
+];
+
+app.use((req, res) => {
+  const p = req.path;
+  const ours = RELAY_NAMESPACES.some((ns) => p === ns || p.startsWith(ns + '/'));
+  if (ours) {
+    // A 404 inside our own namespace. Not a refusal: something we run is
+    // asking for something we do not have.
+    req.refusal = null;
+    req.fault = 'no-such-route-in-our-namespace';
+  } else {
+    req.refusal = req.refusal || 'no-such-route';
+  }
+  res.status(404).type('html').send('Cannot ' + req.method + ' ' + req.path);
 });
 
 // Export functions for use by other modules (e.g., cron-engine-v2.mjs)

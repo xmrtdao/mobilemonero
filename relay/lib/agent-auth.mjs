@@ -363,6 +363,13 @@ export const TOOL_SECURITY = {
   'sql-migrate': TRUST_LEVELS.CORE,
   'db-rest': TRUST_LEVELS.TRUSTED,
   'shared-context': TRUST_LEVELS.TRUSTED,
+  // The activity intelligence: what is failing, which file owns it, and the
+  // version of that file that was live when it fired. Read-only telemetry
+  // about the stack the agent is running on, at the same level as db-query —
+  // an agent that can query the database can already read all of it. It is
+  // NOT public: the file paths and error strings in it should not be
+  // readable by anyone on the internet.
+  'activity-intel': TRUST_LEVELS.TRUSTED,
   'resolve-entity': TRUST_LEVELS.TRUSTED,
   'recall_context': TRUST_LEVELS.TRUSTED,
   'knowledge-dedup': TRUST_LEVELS.TRUSTED,

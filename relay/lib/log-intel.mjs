@@ -553,7 +553,7 @@ export async function buildIntel({ windowMinutes = 60, root, refresh = false } =
   const [
     totals, types, unknownSources, timeline, timelineByType,
     cronBars, edgeBars, activityBars, functionsTool, functionsEdge, functionsCron,
-    slowEndpoints, coverage, ship, infra,
+    slowEndpoints, coverage, refusals, ship, infra,
   ] = await Promise.all([
     safe('totals', async () => {
       const r = await query(`
@@ -562,6 +562,7 @@ export async function buildIntel({ windowMinutes = 60, root, refresh = false } =
           COUNT(*) FILTER (WHERE status IN ('error','failed'))::int failures,
           COUNT(*) FILTER (WHERE status='warning')::int warnings,
           COUNT(*) FILTER (WHERE activity_type='slow_request')::int slow,
+          COUNT(*) FILTER (WHERE activity_type IN ('refused','selftest'))::int refusals,
           COUNT(DISTINCT activity_type)::int type_count,
           COUNT(DISTINCT COALESCE(NULLIF(agent_id,''),'unknown'))::int actor_count
         FROM public.eliza_activity_log WHERE created_at > $1`, [sinceIso]);
@@ -701,6 +702,32 @@ export async function buildIntel({ windowMinutes = 60, root, refresh = false } =
     }, []),
 
     safe('coverage', () => coverageFor(sinceIso), []),
+    safe('refusals', async () => {
+      // What the relay refused, and why. This is the security view of the
+      // traffic: someone asking for /.env, or for a file that is not on an
+      // allowlist, is not a fault — it is the allowlist working. It is
+      // counted separately so the operator can see it WITHOUT it looking
+      // like something is broken.
+      const r = await query(
+        `SELECT COALESCE(metadata->>'refusal_reason', 'unknown') AS reason,
+           COALESCE(metadata->>'path', title) AS path,
+           COUNT(*)::int AS hits,
+           COUNT(DISTINCT COALESCE(metadata->>'ip', 'unknown'))::int AS sources,
+           MAX(created_at) AS last_at
+         FROM public.eliza_activity_log
+         WHERE created_at > $1 AND activity_type IN ('refused','selftest')
+         GROUP BY 1,2 ORDER BY hits DESC LIMIT 15`, [sinceIso]
+      );
+      const rows = r.rows || [];
+      return {
+        total: rows.reduce((n, x) => n + (x.hits || 0), 0),
+        by_reason: rows.reduce((acc, x) => {
+          acc[x.reason] = (acc[x.reason] || 0) + x.hits;
+          return acc;
+        }, {}),
+        paths: rows,
+      };
+    }, { total: 0, by_reason: {}, paths: [] }),
     safe('ship', () => scanShipLogs({ root, limit: 12 }), null),
     safe('infra', async () => {
       const files = scanInfraFiles(root);
@@ -745,6 +772,12 @@ export async function buildIntel({ windowMinutes = 60, root, refresh = false } =
           OR activity_type IN ('http_error','tool_failed','db_error','email_error',
             'fleet_error','memory_error','kg_error','system_error','ollama_error',
             'mesh_rejection','auth_failure'))
+        -- A refusal is the relay saying no on purpose: a path that does not
+        -- exist, a file that is not on an allowlist. It is not a fault, and
+        -- counting it as one put the internet's curiosity and our own test
+        -- suite's security probes at the top of the error panel — and sent
+        -- Alice to open tasks for them.
+        AND activity_type NOT IN ('refused','selftest')
       ORDER BY created_at DESC LIMIT 400`, [sinceIso]);
     return r.rows || [];
   }, []);
@@ -953,6 +986,7 @@ export async function buildIntel({ windowMinutes = 60, root, refresh = false } =
     errors,
     slowest: slowEndpoints,
     coverage,
+    refusals,
     ship,
     infra: (infra || []).map((f) => ({
       path: f.path, label: f.label, kind: f.kind, repo: f.repo, exists: f.exists,

@@ -39,9 +39,9 @@ function apiKey() {
   return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
 }
 
-async function probe(path, { withKey = false, binary = false } = {}) {
+async function probe(path, { withKey = false, binary = false, headers: extra = {} } = {}) {
   try {
-    const headers = withKey ? { 'x-api-key': apiKey() } : {};
+    const headers = { ...extra, ...(withKey ? { 'x-api-key': apiKey() } : {}) };
     const res = await fetch(BASE + path, { headers, signal: AbortSignal.timeout(20000) });
     if (binary) {
       // Binary assets must not go through text(). Decoding a PNG as UTF-8 replaces
@@ -133,6 +133,16 @@ section('images resolve, and cannot be used to read other files');
 
   // A path parameter joined onto a directory and read is directory traversal, and
   // relay/.env is the thing worth stealing. The allowlist is what prevents it.
+  //
+  // These probes are tagged `x-relay-selftest`, and the relay honours that
+  // tag only for a request that came from this machine and did not arrive
+  // through the tunnel. Without the tag, five probes per suite run landed in
+  // the PRODUCTION activity feed as `http_error` rows — indistinguishable
+  // from an outside scanner — and the Activity Intelligence board listed
+  // them as "the most common errors" with the relay's own faults.
+  //
+  // The tag does not weaken the check: the request still goes to the real
+  // route, and the assertions below are about what came back.
   for (const attempt of [
     '/images/../.env',
     '/images/..%2F.env',
@@ -140,7 +150,7 @@ section('images resolve, and cannot be used to read other files');
     '/images/../../.cloudflared/config.yml',
     '/images/....//....//relay/.env',
   ]) {
-    const r = await probe(attempt);
+    const r = await probe(attempt, { headers: { 'x-relay-selftest': '1' } });
     const leaked = /RELAY_API_KEY|RESEND_API_KEY|JOBBY_TOKEN_KEY/.test(r.body);
     check(`${attempt} does not leak a secret`, !leaked, `status ${r.status}`);
     check(`  and is refused`, r.status === 404 || r.status === 400, `status ${r.status}`);

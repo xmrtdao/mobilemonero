@@ -435,44 +435,113 @@ const TOOLS = {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'create'], default: 'list', description: 'Action to perform' },
+        action: { type: 'string', enum: ['list', 'get', 'create'], default: 'list', description: 'Action to perform' },
+        id:     { type: 'string', description: 'Booking id (get)' },
         // list filters
-        status:         { type: 'string', description: 'Filter by booking status (list)' },
-        payment_status: { type: 'string', description: 'Filter by payment_status (list)' },
+        status:         { type: 'string', description: "Filter by booking status (list). This table uses 'pending', 'confirmed' and 'completed'." },
+        payment_status: { type: 'string', enum: ['paid', 'unpaid', 'partial'], description: "Filter by the state of the money (list). Not a column: it means deposit_paid against total_fee." },
         limit:          { type: 'number', description: 'Max rows (list, default 50)' },
         // create fields
-        client_name:    { type: 'string', description: 'Client name (create)' },
-        client_email:   { type: 'string', description: 'Client email (create)' },
-        client_phone:   { type: 'string', description: 'Client phone (create)' },
-        lead_id:        { type: 'number', description: 'Associated lead id (create)' },
-        package_id:     { type: 'number', description: 'Service package id (create)' },
-        event_date:     { type: 'string', description: 'Event date YYYY-MM-DD (create)' },
-        event_location: { type: 'string', description: 'Event location (create)' },
-        duration_hours: { type: 'number', description: 'Duration in hours (create)' },
-        total_price:    { type: 'number', description: 'Total price (create)' },
-        notes:          { type: 'string', description: 'Booking notes (create)' },
+        client_name:     { type: 'string', description: 'Client name (create)' },
+        client_email:    { type: 'string', description: 'Client email (create)' },
+        client_phone:    { type: 'string', description: 'Client phone (create)' },
+        lead_id:         { type: 'string', description: 'Associated lead id (create)' },
+        event_date:      { type: 'string', description: 'Event date YYYY-MM-DD (create)' },
+        event_start_time:{ type: 'string', description: 'Runtime start, LOCAL time HH:MM:SS (create)' },
+        event_end_time:  { type: 'string', description: 'Runtime end, LOCAL time HH:MM:SS (create)' },
+        event_type:      { type: 'string', description: 'Event type, e.g. Holiday Party (create)' },
+        event_name:      { type: 'string', description: 'Event name (create)' },
+        venue:           { type: 'string', description: 'Venue or location (create)' },
+        address:         { type: 'string', description: 'Venue address (create)' },
+        package_type:    { type: 'string', description: 'Service package, e.g. StudioStation (create)' },
+        hours:           { type: 'number', description: 'Service hours (create)' },
+        total_fee:       { type: 'number', description: 'Total fee (create)' },
+        deposit_paid:    { type: 'number', description: 'Amount paid to date (create)' },
+        deposit_date:    { type: 'string', description: 'Date the deposit was paid, YYYY-MM-DD (create)' },
+        status:          { type: 'string', description: "Booking status (create). This table uses 'pending', 'confirmed' and 'completed'." },
+        attendants:      { type: 'number', description: 'How many people are on the job (create). Leave it out when it is not known - it is better to say nothing than to assert one.' },
+        event_name_is_placeholder: { type: 'boolean', description: 'TRUE when the event name is a description rather than the name the client uses (create)' },
+        notes:           { type: 'string', description: 'Booking notes (create)' },
+        // The other bookings table's names, still accepted.
+        duration_hours:  { type: 'number', description: 'Alias for hours (create)' },
+        total_price:     { type: 'number', description: 'Alias for total_fee (create)' },
+        event_location:  { type: 'string', description: 'Alias for venue (create)' },
       },
     },
-    handler: async (args) => {
+handler: async (args) => {
       const { action = 'list' } = args;
 
       if (action === 'create') {
-        const { client_name, client_email, client_phone, lead_id, package_id,
-                event_date, event_location, duration_hours, total_price, notes } = args;
-        if (!client_name || !client_email || !event_date || !duration_hours || !total_price) {
-          return { error: 'Required: client_name, client_email, event_date, duration_hours, total_price' };
+        // THE COLUMN NAMES THIS TOOL USED WERE NOT THIS TABLE'S.
+        //
+        // It inserted into package_id, event_location, duration_hours,
+        // total_price and payment_status. public.pfp_bookings has none of
+        // those - they belong to app.pfp_bookings, the OTHER bookings
+        // table. So every create failed with
+        //
+        //   column "package_id" of relation "pfp_bookings" does not exist
+        //
+        // and the booking was never created. The list query failed the
+        // same way whenever it was asked for a payment_status.
+        //
+        // That is why a task whose checklist said "create the missing
+        // pfp_bookings row" could not do it: the only way in was broken.
+        // The names below are this table's, and the old ones are still
+        // accepted so that a caller using either spelling works.
+        const client_name = args.client_name;
+        const client_email = args.client_email;
+        const event_date = args.event_date;
+        const hours = args.hours ?? args.duration_hours ?? null;
+        const total_fee = args.total_fee ?? args.total_price ?? null;
+        const venue = args.venue ?? args.event_location ?? null;
+
+        if (!client_name || !client_email || !event_date || !hours || !total_fee) {
+          return {
+            error: 'Required: client_name, client_email, event_date, hours, total_fee',
+            note: 'hours is also accepted as duration_hours, total_fee as total_price, '
+              + 'venue as event_location - those are the names the other bookings table uses.',
+          };
         }
-        const rows = await dbQuery(
-          `INSERT INTO public.pfp_bookings
-             (lead_id, client_name, client_email, client_phone, package_id, event_date,
-              event_location, duration_hours, total_price, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           RETURNING *`,
-          [lead_id || null, client_name, client_email, client_phone || null,
-           package_id || null, event_date, event_location || null,
-           duration_hours, total_price, notes || null]
-        );
-        return { success: true, booking: rows[0] };
+
+        try {
+          const rows = await dbQuery(
+            `INSERT INTO public.pfp_bookings
+               (lead_id, client_name, client_email, client_phone, event_name, event_type,
+                event_date, event_start_time, event_end_time, venue, address, package_type,
+                hours, total_fee, deposit_paid, deposit_date, status, attendants,
+                event_name_is_placeholder, notes)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+             RETURNING *`,
+            [args.lead_id || null, client_name, client_email, args.client_phone || null,
+              args.event_name || null, args.event_type || null, event_date,
+              args.event_start_time || null, args.event_end_time || null,
+              venue, args.address || null, args.package_type || null,
+              hours, total_fee,
+              args.deposit_paid ?? null, args.deposit_date || null,
+              args.status || 'confirmed',
+              // How many people are on the job. Left NULL when it is not
+              // known: the default is 1, and a booking that asserts one
+              // attendant when nobody counted is a wrong fact about a
+              // client's shoot.
+              args.attendants ?? null,
+              // TRUE when the event name is a description rather than the
+              // name the client uses.
+              args.event_name_is_placeholder === true,
+              args.notes || null],
+          );
+          return { success: true, booking: rows[0] };
+        } catch (e) {
+          // Loudly. A booking that was not created must not look like one
+          // that was.
+          return { success: false, error: `the booking was not created: ${e.message}`, code: e.code || null };
+        }
+      }
+
+      if (action === 'get') {
+        const id = args.id;
+        if (!id) return { error: 'id is required' };
+        const rows = await dbQuery('SELECT * FROM public.pfp_bookings WHERE id = $1', [id]);
+        return { booking: rows[0] || null, found: !!rows[0] };
       }
 
       // list
@@ -481,9 +550,18 @@ const TOOLS = {
       let sql = 'SELECT * FROM public.pfp_bookings WHERE 1=1';
       const params = [];
       let idx = 1;
-      if (status)         { sql += ` AND status = $${idx++}`;          params.push(status); }
-      if (payment_status) { sql += ` AND payment_status = $${idx++}`;  params.push(payment_status); }
-      sql += ` ORDER BY created_at DESC LIMIT $${idx}`;
+      if (status) { sql += ` AND status = $${idx++}`; params.push(status); }
+      // payment_status is not a column. What it means here is the state of
+      // the money, which this table records as deposit_paid against
+      // total_fee.
+      if (payment_status) {
+        const ps = String(payment_status).toLowerCase();
+        if (ps === 'paid') sql += ` AND coalesce(deposit_paid, 0) > 0`;
+        else if (ps === 'unpaid') sql += ` AND coalesce(deposit_paid, 0) = 0`;
+        else if (ps === 'partial') sql += ` AND coalesce(deposit_paid, 0) > 0 AND coalesce(deposit_paid, 0) < coalesce(total_fee, 0)`;
+        else return { error: 'payment_status must be one of: paid, unpaid, partial' };
+      }
+      sql += ` ORDER BY event_date DESC NULLS LAST, created_at DESC LIMIT $${idx}`;
       params.push(rowLimit);
       const rows = await dbQuery(sql, params);
       return { bookings: rows, count: rows.length };

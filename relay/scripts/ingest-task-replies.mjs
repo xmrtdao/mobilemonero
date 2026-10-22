@@ -25,12 +25,31 @@
  *     escalation watcher's is every ten minutes, which is the right tempo for
  *     a conversation.
  *
- * IT DOES NOT CLOSE ANYTHING
- * --------------------------
- * The reading is recorded, the answer is attached to the task, and the task
- * stays where the evidence gate put it. Marking a task done is the board's
- * job and it has a rule about what counts as proof. This script has no
- * opinion about whether any of this work was finished.
+ * IT DOES NOT DECIDE WHETHER THE WORK WAS DONE — BUT IT DOES MOVE THE TASK
+ * -----------------------------------------------------------------------
+ * The reading is recorded and the answer is attached to the task. The task
+ * then goes where the ANSWER says it goes, and not one step further:
+ *
+ *   "yes, that is right"   -> the task is completed. The person said so, and
+ *                              the human-confirmation artifact that carries
+ *                              their words is the evidence the board's
+ *                              completion rule asks for.
+ *   "there is more to do"   -> back to EXECUTION, for the fleet to work on.
+ *   "we have a question"    -> back to DISCUSS, for the answer to be
+ *                              discussed.
+ *   "we could not read it"  -> it stays exactly where it is, and says why.
+ *
+ * This script does not decide whether any of the WORK was finished - that is
+ * the board's rule, and the board's rule is unchanged. What this script does
+ * is stop the ANSWER from being a dead end.
+ *
+ * Until it did that, a reply was recorded, the escalation was closed, a
+ * confirmation was written - and the task stayed in REVIEW at stage
+ * COMPLETION for ever. Nothing moved it: the only job that advances tasks
+ * selects status IN ('PENDING','CLAIMED','IN_PROGRESS'), and a task parked
+ * in REVIEW is invisible to it. Five tasks were in that state on the morning
+ * of 2026-10-22, each with a human confirmation already recorded against
+ * it, each of them waiting for something that was never going to happen.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +57,8 @@ import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RELAY = path.join(__dirname, '..');
+// The relay's own address, for the loopback calls this script makes.
+const RELAY_BASE = process.env.RELAY_BASE_URL || 'http://127.0.0.1:8080';
 
 const { query } = await import(pathToFileURL(path.join(RELAY, 'lib', 'localDb.mjs')).href);
 const {
@@ -53,6 +74,7 @@ const {
 } = await import(pathToFileURL(path.join(RELAY, 'lib', 'reply-ingest.mjs')).href);
 const {
   recordConfirmation,
+  releaseTaskForAnswer,
 } = await import(pathToFileURL(path.join(RELAY, 'lib', 'task-confirmation.mjs')).href);
 
 /**
@@ -184,6 +206,101 @@ async function main() {
 
     // And close the escalation, so it is not answered twice.
     await answerEscalation(esc.id, replyText, { from });
+
+    // A CONFIRMATION IS EVIDENCE.
+    //
+    // Until this, the answer stopped at the task's metadata: the reading
+    // was attached, the escalation was closed, and the task stayed in
+    // REVIEW with the same reason it had before. Nothing could complete it,
+    // because the completion gate wants an artifact carrying a resolvable
+    // URL, and a sentence in a metadata column is not one.
+    //
+    // So the confirmation is recorded as its own row and attached as a
+    // human-confirmation artifact. The trigger on that artifact checks the
+    // substance: that the question was put to somebody, that it was
+    // answered, that the words recorded are the words that were answered
+    // with, and that the address that answered is the address the question
+    // went to. A confirmation cannot be invented.
+    //
+    // It has to come AFTER the escalation is closed, because the trigger
+    // refuses a confirmation of a question that has not been answered.
+    if (reading.intent === 'confirmed_complete') {
+      // The address that answered has to be the address the question went
+      // to. The reply may carry a display name around it - "Joe <joe@x>"
+      // is the same person as "joe@x" - so the comparison is on the
+      // address part, and the canonical form of the address is what is
+      // recorded.
+      const answeredAddress = String(from || '').match(/<([^>]+)>/)?.[1] || String(from || '').trim();
+      const askedAddress = String(esc.to_address || '').trim();
+      if (answeredAddress && askedAddress && answeredAddress.toLowerCase() !== askedAddress.toLowerCase()) {
+        console.warn(`[ingest] the reply came from ${answeredAddress}, but the question went to ${askedAddress}`
+          + ' - not recording a confirmation');
+      } else {
+        const confirmation = await recordConfirmation({
+          task,
+          escalation: esc,
+          reading,
+          replyText,
+          from: askedAddress || answeredAddress || null,
+          answeredAt: r.received_at ? new Date(r.received_at).toISOString() : null,
+        });
+        if (confirmation) {
+          console.log(`        ✓ recorded as a confirmation: ${confirmation.source_url}`);
+        } else {
+          console.error('        ! the confirmation could not be recorded');
+        }
+      }
+    }
+
+    // ── AND THEN MOVE THE TASK ────────────────────────────────────────────
+    //
+    // Recording the answer was the end of the loop and not the end of the
+    // job. The task was parked as "checklist complete, awaiting
+    // confirmation"; the confirmation has now arrived, so the task is not
+    // waiting for a person any more.
+    //
+    // Without this, the task stays in REVIEW at stage COMPLETION with a
+    // complete checklist, a 100% progress bar, a recorded confirmation and
+    // a human-confirmation artifact - and it stays there forever, because
+    // the only job that moves tasks forward selects
+    // status IN ('PENDING','CLAIMED','IN_PROGRESS') and REVIEW is not in
+    // that list. Five tasks were in exactly that state on the morning of
+    // 2026-10-22.
+    //
+    // The release happens for EVERY reading, not only for "yes": a reply
+    // that asks for more work sends the task back to EXECUTION, and a reply
+    // that asks us something sends it back to DISCUSS. Only an answer we
+    // could not read leaves it parked, and it says why.
+    {
+      const release = await releaseTaskForAnswer({
+        task,
+        reading,
+        replyText,
+        from: String(esc.to_address || from || '').trim(),
+        confirmation: null,
+      });
+      if (release.released) {
+        console.log(`        ✓ released the task: ${release.status} at stage ${release.stage}`);
+        // Say so on the bus. A task that completed because a person said so
+        // is worth the fleet knowing, and the board change is not otherwise
+        // visible anywhere an agent looks.
+        try {
+          await fetch(`${RELAY_BASE}/api/fleet-chat/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent: 'alice-daemon',
+              message: `✅ **Task completed by human confirmation** — ${task.title}\n`
+                + `The client replied: "${String(replyText).slice(0, 200)}"`,
+              channel: 'fleet',
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+        } catch { /* the announcement is a courtesy, not the mechanism */ }
+      } else if (release.reason) {
+        console.log(`        · task not released: ${release.reason}`);
+      }
+    }
 
     // Mark the mail read, so it is not read again. The reply is recorded in
     // three places now; this only stops the next pass repeating the work.

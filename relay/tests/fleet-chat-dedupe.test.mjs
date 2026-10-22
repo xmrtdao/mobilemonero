@@ -33,6 +33,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import { localDbUrl, isScratchDatabase } from '../lib/local-db-url.mjs';
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -40,21 +41,41 @@ const check = (name, cond, extra = '') => {
   failures += 1;
   console.log('  FAIL  ' + name + (extra ? '  -> ' + extra : ''));
 };
+const skip = (name, why) => console.log('  SKIP  ' + name + ' — ' + why);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RELAY = join(__dirname, '..');
 const MIGRATION = join(RELAY, 'migrations', 'jobby_010_task_dedupe.sql');
 const JOBS_FILE = join(RELAY, '..', 'relay-data', 'cron-jobs.json');
 
+// The connection comes from the repo's own resolver, which always yields a
+// URL.
+//
+// It used to be `process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL`,
+// which is undefined when neither is set. An undefined connectionString
+// makes libpq fall back to the OS username, and the cluster answered
+// `FATAL: role "PureTrek" does not exist` — a failure that says nothing
+// about the thing being tested. The resolver's fallback names the role
+// explicitly, so the test either connects or says why it cannot.
 const pool = new pg.Pool({
-  connectionString: process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL,
+  connectionString: localDbUrl(),
+  connectionTimeoutMillis: 5000,
 });
 const PROBE = 'zz-dedupe-test-' + Date.now();
+
+// The database-mutating half of this test applies a migration and writes
+// rows. Against the live database that is a side effect on production, so
+// it only runs against a scratch database — which is what `tests/_run.mjs`
+// arranges by pointing LOCAL_DATABASE_URL at xmrt_suite_test.
+const scratch = isScratchDatabase();
 
 try {
   // ───────────────────────────────────────────────────────────────────────
   console.log('\n--- one open task per title, enforced by the database ---');
-  {
+  if (!scratch) {
+    skip('the database checks', 'this test writes rows and applies a migration, so it needs a scratch database. '
+      + 'Run `node tests/_run.mjs fleet-chat-dedupe` (it points LOCAL_DATABASE_URL at xmrt_suite_test).');
+  } else {
     await pool.query(readFileSync(MIGRATION, 'utf8'));
 
     const mk = () => pool.query(
@@ -228,7 +249,7 @@ try {
   console.log('  FAIL  suite threw: ' + (e && e.stack ? e.stack : e));
 } finally {
   await pool.query(`DELETE FROM app.tasks WHERE lower(title)=lower($1)`, [PROBE]).catch(() => {});
-  await pool.end();
+  await pool.end().catch(() => {});
 }
 
 console.log(failures === 0

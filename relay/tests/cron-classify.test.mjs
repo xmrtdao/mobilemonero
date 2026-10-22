@@ -25,6 +25,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { classifyCommand } from '../cron-engine-v2.mjs';
+import { localDbUrl } from '../lib/local-db-url.mjs';
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -98,7 +99,12 @@ console.log('\n--- the trailing \\s stops prefix words being captured ---');
 
 console.log('\n--- no live command is mis-classified ---');
 {
-  const pool = new pg.Pool({ connectionString: process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL });
+  // The repo's own resolver, so the connection always names a role. An
+  // undefined connectionString falls back to the OS username, and the
+  // cluster answers `role "<os user>" does not exist` — which the catch
+  // below turns into a silent SKIP, so the check quietly stops checking
+  // anything at all.
+  const pool = new pg.Pool({ connectionString: localDbUrl(), connectionTimeoutMillis: 5000 });
   try {
     const r = await pool.query(
       'SELECT id, name, command FROM cron.job WHERE command IS NOT NULL ORDER BY id');

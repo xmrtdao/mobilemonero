@@ -541,6 +541,134 @@ async function checkFleetMentions() {
   } catch (e) { /* mentions check best-effort */ }
 }
 
+// ── Activity Intelligence ────────────────────────────────────────────────────
+//
+// WHAT ALICE WATCHES, AND WHY IT CHANGED.
+//
+// Alice used to watch services: is the relay up, is the tunnel answering, is
+// the balance topped up. Those are the bones of the system. They are not the
+// interesting part.
+//
+// The relay now counts every request, groups every recurring fault by shape,
+// knows which file owns the route that failed, and knows which VERSION of
+// that file was live when it fired. That is a far better instrument than
+// "is the service up": a service can be perfectly up and failing 16 times
+// an hour on a route nobody wired up.
+//
+// So Alice watches the faults now, and she does three things with them:
+//
+//   1. says them out loud, ONCE, in fleet chat — a summary, not a firehose;
+//   2. opens ONE task for the worst one (the relay refuses a second open
+//      task with the same title, so this cannot become a pile of dupes);
+//   3. remembers what she has already said, so the same fault is never
+//      announced twice.
+//
+// A fault is only worth saying when it is RECURRING (twice or more) and
+// STILL HAPPENING (not stale). One 404 from a scanner is not a fault; one
+// 404 every thirty seconds for an hour is a fault with an owner.
+async function checkActivityIntelligence() {
+  let intel;
+  try {
+    intel = await fetchJSON(`http://localhost:${RELAY_PORT}/api/log-intel?window=60`, { timeout: 20000 });
+  } catch (e) {
+    log('[INTEL] Could not read the activity intelligence: ' + e.message);
+    return null;
+  }
+  if (!intel || intel.error) {
+    log('[INTEL] Activity intelligence unavailable: ' + (intel && intel.error ? intel.error : 'no data'));
+    return null;
+  }
+
+  const state = loadState();
+  state.reportedErrors = state.reportedErrors || {};
+
+  const all = intel.errors || [];
+  const recurring = all.filter((e) => (e.count || 0) >= 2);
+  const ongoing = recurring.filter((e) => !e.stale);
+  const unseen = ongoing.filter((e) => !state.reportedErrors[e.fingerprint]);
+
+  // Remember every fault she has seen, with the last count. A fault that
+  // comes back stronger later is worth saying again.
+  for (const e of all) {
+    const prev = state.reportedErrors[e.fingerprint];
+    const wasCount = prev && prev.count ? prev.count : 0;
+    state.reportedErrors[e.fingerprint] = {
+      count: e.count || 0,
+      last_at: e.last_at,
+      first_seen: prev && prev.first_seen ? prev.first_seen : new Date().toISOString(),
+      at: new Date().toISOString(),
+    };
+    if (e.count > wasCount + 2 && !e.stale && wasCount > 0) {
+      // It got materially worse — say so again, even if it is not new.
+      unseen.push(e);
+    }
+  }
+  // Keep the memory bounded: a fingerprint per fault, not per fault-hour.
+  const keys = Object.keys(state.reportedErrors);
+  if (keys.length > 200) {
+    const sorted = keys.sort((a, b) => (state.reportedErrors[a].at || '').localeCompare(state.reportedErrors[b].at || ''));
+    for (const k of sorted.slice(0, keys.length - 200)) delete state.reportedErrors[k];
+  }
+  saveState(state);
+
+  const totals = intel.totals || {};
+  log(`[INTEL] ${totals.activity || 0} events, ${(intel.errors || []).length} distinct faults, ${recurring.length} recurring, ${unseen.length} new`);
+
+  if (!unseen.length) return null;
+
+  const lines = unseen.slice(0, 5).map((e) => {
+    const owner = (e.files && e.files[0]) ? e.files[0].replace(/^relay\//, '') : null;
+    const ver = e.file_version ? ` @ ${e.file_version.version}` : '';
+    const lines = e.file_version && e.file_version.lines ? ` (${e.file_version.lines} lines)` : '';
+    return `- **${String(e.sample).slice(0, 110)}** — ${e.count}×${owner ? ` · ${owner}${ver}${lines}` : ' · no watched file owns this route'}`;
+  });
+
+  const callers = (intel.unknown_sources || []).slice(0, 3).map((u) => `${u.source} (${u.calls})`).join(', ');
+  const msg = `🩺 **Activity intelligence** — ${unseen.length} recurring fault(s) in the last hour:\n\n${lines.join('\n')}\n`
+    + `Events ${totals.activity || 0} · errors ${totals.errors || 0} · slow ${totals.slow || 0}`
+    + (callers ? `\nBusiest callers without an agent id: ${callers}` : '')
+    + `\nFull board: /api/log-intel (or the ⛶ button on the Activity Log tile).`;
+
+  await postToFleetChat(msg);
+  log('[INTEL] Announced ' + unseen.length + ' new recurring fault(s) to fleet chat');
+
+  // One task for the worst fault. The relay has a unique index on open task
+  // titles, so a 409 means "there is already an open task for this" — which
+  // is the answer we wanted, not a failure.
+  const worst = unseen[0];
+  const title = `Fix recurring fault: ${String(worst.sample).slice(0, 70)}`;
+  try {
+    const owner = (worst.files && worst.files[0]) ? worst.files[0] : null;
+    const ver = worst.file_version ? `${worst.file_version.version} (${worst.file_version.lines} lines)` : 'unknown version';
+    const res = await fetchJSON(`http://localhost:${RELAY_PORT}/api/suite/tasks`, {
+      method: 'POST', timeout: 10000,
+      body: {
+        title,
+        description: [
+          `Recurring fault seen ${worst.count} times in the last hour.`,
+          `Last seen: ${worst.last_at}.`,
+          owner ? `Owning file: ${owner}` : 'No watched file owns the route that failed.',
+          `Version live at the time of the failure: ${ver}.`,
+          `Detail: ${String(worst.sample).slice(0, 400)}`,
+          '',
+          'Opened by Alice from the Activity Intelligence board. The board has the',
+          'full timeline, the function leaderboard and the file history.',
+        ].join('\n'),
+        stage: 'DISCUSS',
+        status: 'PENDING',
+        priority: (worst.count || 0) >= 5 ? 2 : 1,
+        category: 'infrastructure',
+      },
+    });
+    if (res && res.id) log('[INTEL] Opened task for: ' + title);
+    else if (res && res.error) log('[INTEL] Task not opened (' + res.error + ')');
+  } catch (e) {
+    log('[INTEL] Task creation failed: ' + e.message);
+  }
+
+  return unseen;
+}
+
 // ── Daemon Loop ───────────────────────────────────────────
 async function daemonLoop() {
   log('========================================');
@@ -620,6 +748,14 @@ async function daemonLoop() {
     
     // Check for @alice mentions in fleet chat
     await checkFleetMentions();
+
+    // Watch the faults, not just the services. A service can be up and
+    // failing 16 times an hour on a route nobody wired up.
+    try {
+      await checkActivityIntelligence();
+    } catch (e) {
+      log('[INTEL] Error: ' + e.message);
+    }
 
     // Per-cycle: persist structured observations to shared memory
     // (app.fleet_memory) and ask local Ollama to synthesize a terse

@@ -148,6 +148,35 @@ export async function openEscalation(taskId) {
   return rows[0] || null;
 }
 
+/**
+ * Has this task already been ANSWERED?
+ *
+ * This is the other half of the rule above, and it is the half that was
+ * missing.
+ *
+ * An open escalation means the question is still out there. An ANSWERED one
+ * means the person has already replied, and the task is now waiting for the
+ * fleet to catch up - not for the person to answer again.
+ *
+ * The two were confused, and the confusion is a loop. The answer closes the
+ * escalation, so "is there an open escalation?" goes from true to false the
+ * moment Joe replies, and the next watcher pass reads that as "nobody has
+ * been asked" and asks again. Nine questions went to Joe about one task on
+ * the afternoon of 2026-10-21, each answered within minutes, each followed
+ * by another email.
+ *
+ * So the question is asked once and answered once, and after that the task
+ * is released by the evidence path rather than by asking again.
+ */
+export async function answeredEscalation(taskId) {
+  const rows = await localQuery(
+    `SELECT id, to_address, subject, sent_at, answered_at, answered_text
+       FROM app.task_escalations
+      WHERE task_id = $1 AND answered_at IS NOT NULL
+      ORDER BY answered_at DESC LIMIT 1`, [taskId]).catch(() => []);
+  return rows[0] || null;
+}
+
 /** Record an escalation, so nobody is told twice. */
 export async function recordEscalation(row) {
   const rows = await localQuery(

@@ -1329,6 +1329,32 @@ export function createCampusHandler(deps) {
           <div class="stat"><span class="label">🎓 University</span><span class="value" id="sec-uni-status" style="color:#a78bfa;font-size:0.65rem;">checking...</span></div>
           <div class="stat"><span class="label">Gate</span><span class="value" id="sec-gate" style="color:#4ade80;font-size:0.65rem;">● fail-closed</span></div>
         </div>
+
+        <!-- ── Signal constellation ──────────────────────────────────────
+             Four signals that live in four different places, drawn as one
+             picture: trust on the x axis, token burn on the y axis, node
+             size is how much the agent does, colour is its trust band, and
+             the links are who talks to whom and who breaks together.
+
+             "Activity Events", "IAL Level" and "Gate" were static
+             placeholders — three rows that read like live numbers and were
+             not. They are wired to real readings now: the activity count
+             comes from the same intelligence the constellation draws, the
+             IAL level from the trust registry, and the gate row says
+             plainly that it is a policy rather than a measurement. -->
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <span style="color:var(--accent-yellow);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">✦ Signal Constellation</span>
+            <span style="color:var(--text-dim);font-size:0.55rem;">trust × burn × activity × graph</span>
+            <span id="constellation-meta" style="color:var(--text-dim);font-size:0.55rem;margin-left:auto;font-family:'Space Mono',monospace;"></span>
+          </div>
+          <div style="position:relative;">
+            <canvas id="constellation-canvas" style="width:100%;height:230px;border-radius:6px;background:#08080e;cursor:default;"></canvas>
+            <div id="constellation-tooltip" style="display:none;position:absolute;background:#1a1a2a;border:1px solid #3a3a5a;border-radius:6px;padding:6px 10px;font-size:11px;color:#e0e0f0;pointer-events:none;white-space:nowrap;z-index:100;max-width:320px;line-height:1.5;"></div>
+          </div>
+          <div id="constellation-legend" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:0.52rem;color:var(--text-dim);font-family:'Space Mono',monospace;"></div>
+          <div id="constellation-agents" style="margin-top:4px;font-size:0.55rem;"></div>
+        </div>
       </div>
     </div>
   </div>

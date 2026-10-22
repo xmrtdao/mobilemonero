@@ -27,6 +27,13 @@ for (const d of [INBOX_DIR, OUTBOX_DIR]) {
 
 // ── RELAY SIDE ────────────────────────────────────────────────
 
+// A Hermes result that has been sitting in the outbox for longer than this
+// is not news. It is a reply to a question the fleet asked hours ago, and
+// posting it as if it were fresh is how "stale information" ends up on the
+// bus. Past this age it is posted, but labelled as old, so nobody reads it
+// as a response to something they just asked.
+const STALE_RESULT_MS = 15 * 60_000;
+
 /**
  * Handle an incoming agent prompt. Called from the relay's POST /api/hermes/prompt.
  * Writes the prompt to the inbox and returns immediately with a tracking ID.
@@ -48,21 +55,50 @@ export function handleAgentPrompt(prompt, sender, channel = 'fleet') {
 /**
  * Poll the outbox for completed prompts and deliver results to fleet chat.
  * Called periodically from the relay (setInterval).
+ *
+ * DELIVERY IS AT-MOST-ONCE, ON PURPOSE.
+ *
+ * The old order was: post the message, then delete the file. A relay
+ * restart in between left the file on disk with status "completed", and the
+ * next poll posted the SAME result again — and again on every restart
+ * after that. The alternative (mark first, then post) can lose a message if
+ * the process dies in the gap, and a lost message is a smaller harm than a
+ * message that keeps reappearing: the operator can ask again, but they
+ * cannot unsee the third copy.
  */
 export function pollOutbox(addFleetMessage, publishToMesh) {
   const files = readdirSync(OUTBOX_DIR).filter(f => f.endsWith('.json'));
   for (const file of files) {
+    const path = join(OUTBOX_DIR, file);
     try {
-      const entry = JSON.parse(readFileSync(join(OUTBOX_DIR, file), 'utf8'));
-      if (entry.status === 'completed') {
-        // Deliver result to fleet chat
-        const msg = `🤖 **Hermes response** to ${entry.sender}:\n\n${entry.result}`;
-        addFleetMessage('hermes', msg, entry.channel || 'fleet');
-        publishToMesh('fleet-broadcast', { agent: 'hermes', message: msg, channel: entry.channel || 'fleet', ts: Date.now() }).catch(() => {});
-        // Clean up
-        unlinkSync(join(OUTBOX_DIR, file));
-        console.log(`[hermes-bridge] Delivered result for ${entry.id}`);
+      const entry = JSON.parse(readFileSync(path, 'utf8'));
+      if (entry.status !== 'completed') continue;
+
+      if (entry.deliveryAttemptedAt) {
+        // Already handed to the bus. Remove the file so it is never posted
+        // a second time, whatever happens next.
+        try { unlinkSync(path); } catch { /* already gone */ }
+        continue;
       }
+
+      const completedAt = entry.completedAt || entry.ts || Date.now();
+      const ageMs = Date.now() - completedAt;
+      const stale = ageMs > STALE_RESULT_MS;
+      const ageMin = Math.round(ageMs / 60000);
+      const msg = stale
+        ? `⏳ **Hermes response (stale — completed ${ageMin} min ago)** to ${entry.sender}:\n\n${entry.result}`
+        : `🤖 **Hermes response** to ${entry.sender}:\n\n${entry.result}`;
+
+      // Mark BEFORE posting. See the note above on why.
+      entry.deliveryAttemptedAt = Date.now();
+      try { writeFileSync(path, JSON.stringify(entry, null, 2)); } catch { /* best effort */ }
+
+      addFleetMessage('hermes', msg, entry.channel || 'fleet');
+      publishToMesh('fleet-broadcast', {
+        agent: 'hermes', message: msg, channel: entry.channel || 'fleet', ts: Date.now(),
+      }).catch(() => {});
+      try { unlinkSync(path); } catch { /* best effort */ }
+      console.log(`[hermes-bridge] Delivered result for ${entry.id}${stale ? ' (stale)' : ''}`);
     } catch (e) {
       console.error(`[hermes-bridge] Error processing outbox ${file}:`, e.message);
     }

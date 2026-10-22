@@ -330,6 +330,7 @@
       var trusted = 0, cautious = 0, banned = 0;
       var topScore = 0, topName = '—', lowScore = 100, lowName = '—';
       var anchor = 0, builder = 0, explorer = 0;
+      var ialCount = {};
       agents.forEach(function(a) {
         var s = a.trustScore !== undefined ? a.trustScore : 50;
         if (s >= 80) trusted++;
@@ -341,8 +342,21 @@
         if (tier === 'anchor') anchor++;
         else if (tier === 'builder') builder++;
         else if (tier === 'explorer') explorer++;
+        if (a.ial) ialCount[a.ial] = (ialCount[a.ial] || 0) + 1;
       });
       var el = function(id) { return document.getElementById(id); };
+      // The IAL level used to be a hardcoded "IAL2" that no script ever
+      // wrote. It is a real field on the registry, so it is read now — and
+      // it says what the fleet's level actually is, not what it was assumed
+      // to be.
+      if (el('sec-ial')) {
+        var bestIal = null, bestCount = 0;
+        for (var ial in ialCount) {
+          if (ialCount[ial] > bestCount) { bestCount = ialCount[ial]; bestIal = ial; }
+        }
+        el('sec-ial').textContent = bestIal ? bestIal + ' (' + bestCount + ' agents)' : '—';
+        el('sec-ial').style.color = bestIal ? '#fbbf24' : '#9AA091';
+      }
       if (el('sec-agent-count')) el('sec-agent-count').textContent = total;
       if (el('sec-cac-anchor')) el('sec-cac-anchor').textContent = anchor;
       if (el('sec-cac-builder')) el('sec-cac-builder').textContent = builder;
@@ -784,13 +798,14 @@
             logEl.innerHTML = '<div class="stat"><span class="label" style="color:#9AA091;">No activity yet</span></div>';
             return;
           }
-          // Filter out the noise: dashboard polling every 3s drowns the log.
-          // The actor is now resolved, so this matches on the resolved actor
-          // — the dashboard's own fleet-chat poll is the row that was
-          // drowning everything else out.
+          // Filter out the noise: dashboard polling every 3s drowns the log,
+          // and our own test suite's security probes are not what an operator
+          // is watching this tile for. Both are still recorded, and both are
+          // visible in the full board — this tile is a summary.
           rows = rows.filter(function(a) {
             var title = (a.title || '').toLowerCase();
             if (title === 'get /api/fleet-chat/messages' && (a.actor === 'dashboard' || a.actor === 'nexus-dashboard')) return false;
+            if (a.activity_type === 'selftest') return false;
             if (search && !(a.title || '').toLowerCase().includes(search)
                 && !(a.actor || '').toLowerCase().includes(search)
                 && !(a.description || '').toLowerCase().includes(search)) return false;
@@ -1279,6 +1294,22 @@ loadAgentExperienceCard();
                 msgsEl.innerHTML = msgs.slice(-100).map(function(m){
                           var name = m.agentLabel || m.agent || 'Unknown';
                           var time = m.time ? new Date(m.time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}) : '';
+                          // How old this message actually is. A wall of messages
+                          // that all say "3:45 PM" can be five minutes old or
+                          // five days old, and the reader cannot tell. The
+                          // clock time alone made a stale bus look live.
+                          var age = '';
+                          var ageColor = '#6C7263';
+                          if (m.ts) {
+                            var ageMin = Math.floor((Date.now() - m.ts) / 60000);
+                            if (ageMin >= 60) {
+                              age = (Math.floor(ageMin / 60) + 'h');
+                              ageColor = ageMin > 720 ? '#E4695A' : '#DC8A1E';
+                            } else if (ageMin >= 10) {
+                              age = ageMin + 'm';
+                              ageColor = '#DC8A1E';
+                            }
+                          }
                           // Tool-call system messages contain structured HTML (cards,
                           // collapsible details, color spans). Other messages get
                           // plain-text-escaped for safety.
@@ -1290,10 +1321,10 @@ loadAgentExperienceCard();
                           if (m.agent === 'system') {
                             nameColor = '#6C7263';
                             name = isToolCard ? '🔧 tool' : 'system';
-                          } else if (m.agent === 'hermes') nameColor = '#C9A227';
+                          } else if (m.agent === 'hermes' || m.agent === 'hermes-agent') nameColor = '#C9A227';
                           else if (m.agent === 'eliza') nameColor = '#A98AD6';
                           else if (m.agent === 'vex') nameColor = '#8FC97A';
-                          else if (m.agent === 'alice') nameColor = '#63C7D4';
+                          else if (m.agent === 'alice' || m.agent === 'alice-daemon') nameColor = '#63C7D4';
                           else if (m.agent === 'trib') nameColor = '#DC8A1E';
                           else if (m.agent === 'arch') nameColor = '#A98AD6';
                           else if (m.agent === 'builder') nameColor = '#8FC97A';
@@ -1305,7 +1336,8 @@ loadAgentExperienceCard();
                           var cardBg = isToolCard ? 'background:#111310;border-left:2px solid #8FC97A;' : '';
                           return '<div style="margin-bottom:6px;padding:6px 4px;border-bottom:1px solid #111310;' + cardBg + 'border-radius:3px;">' +
                             '<span style="color:' + nameColor + ';font-weight:500;font-size:11px;">' + name + '</span> ' +
-                            '<span style="color:#9AA091;font-size:10px;float:right;">' + time + '</span><br/>' +
+                            '<span style="color:#9AA091;font-size:10px;float:right;">' + time +
+                            (age ? ' <span style="color:' + ageColor + ';">· ' + age + '</span>' : '') + '</span><br/>' +
                             '<span style="color:#D8DACE;font-size:12px;line-height:1.45;word-break:break-word;">' + body + '</span>' +
                             '</div>';
                         }).join('');
@@ -2714,9 +2746,16 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     other: '#9AA091'
   };
 
+  // The TrustGraph engine's band names, and the colours the rest of the
+  // dashboard uses for them. The engine's names are case-sensitive and
+  // mixed — 'Trusted', 'Standard', 'Monitored', 'Cautious' in title case,
+  // but 'SUSPENDED' and 'REVOKED' in caps — so the map has to match them
+  // exactly. The old map had 'Suspended' in title case, which could never
+  // match, and no entry for REVOKED at all.
   const TRUST_BAND_COLORS = {
     Trusted: '#8FC97A', Standard: '#63C7D4', Monitored: '#DC8A1E',
-    Cautious: '#E4695A', Suspended: '#9AA091'
+    Cautious: '#E4695A', SUSPENDED: '#9AA091', Suspended: '#9AA091',
+    REVOKED: '#E4695A', Revoked: '#E4695A',
   };
 
   // ── Coordinate transforms ──
@@ -3131,7 +3170,13 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
     for (const n of simNodes) {
       // Filter effect: skip low-trust agents and unconnected nodes
       if (effectFilter) {
-        var trustInfo = trustScores[n.label] || trustScores[n.id] || null;
+        var trustInfo = trustScores[n.label] || trustScores[n.id] ||
+          // The Galaxy calls its agents "Vex Agent", "Alice Agent" and so
+          // on, while the trust registry calls them "vex" and "alice". The
+          // first word of the label is the agent's name, and without this
+          // lookup the graph's agent nodes never found their trust score at
+          // all — which is why the trust arcs never appeared.
+          (n.label ? trustScores[String(n.label).split(/[\s-]+/)[0].toLowerCase()] : null) || null;
         if (!trustInfo && n.category === 'agent') continue;
         if (trustInfo && trustInfo.score < 30) continue;
         if (n.category !== 'agent' && !edges.some(function(e){ return e.source === n.id || e.target === n.id; })) continue;
@@ -3168,13 +3213,20 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       // If it's a cool purple/blue, shift toward golden for agents
       if (n.category === 'agent') {
         warmColor = '#C9A227';
-        if (trustInfo) {
-          // Map trust bands to golden/warm spectrum
-          if (trustInfo.band === 'Pioneer') warmColor = '#63C7D4';
-          else if (trustInfo.band === 'Builder') warmColor = '#8FC97A';
-          else if (trustInfo.band === 'Contributor') warmColor = '#C9A227';
-          else if (trustInfo.band === 'Participant') warmColor = '#DC8A1E';
-          else warmColor = '#B87333';
+        if (trustInfo && trustInfo.known) {
+          // Map trust bands to golden/warm spectrum.
+          //
+          // The band names here used to be 'Pioneer', 'Builder',
+          // 'Contributor' and 'Participant' — a vocabulary the TrustGraph
+          // engine does not use. It emits Trusted / Standard / Monitored /
+          // Cautious / SUSPENDED / REVOKED. Every agent therefore fell
+          // through to the copper fallback, and the graph showed one colour
+          // for the whole fleet however trusted anyone was.
+          //
+          // The colours below are the same ones the rest of the dashboard
+          // uses for the same bands, so a band means the same thing in
+          // every picture.
+          warmColor = TRUST_BAND_COLORS[trustInfo.band] || '#C9A227';
         }
       }
 
@@ -3225,7 +3277,9 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
       }
 
       // ── Agent nodes: golden ring + score gauge ──
-      if (n.category === 'agent' && trustInfo && trustInfo.score !== undefined && effectTrust) {
+      // `known` guards it: an agent with no trust score on record gets no
+      // arc, rather than an empty one that reads as a score of zero.
+      if (n.category === 'agent' && trustInfo && trustInfo.known && trustInfo.score != null && effectTrust) {
         const score = Math.max(0, Math.min(100, trustInfo.score));
         // Outer ring (glowing golden) — shadow only on hover/select to avoid GPU choke
         ctx.beginPath();
@@ -3317,21 +3371,45 @@ setTimeout(function() { loadInboxTiles(); setInterval(loadInboxTiles, 15000); },
         agents.forEach(function(a) {
           var name = a.name || a.agent_id || a.id;
           if (!name) return;
-          var score = a.trust_score !== undefined ? a.trust_score : (a.score !== undefined ? a.score : 0.5);
-          var band = a.trust_band || a.band || 'Standard';
+          // The endpoint returns trustScore and trustBand — camelCase, on a
+          // 0-100 scale. This used to read a.trust_score and a.score, so
+          // every agent fell through to the 0.5 fallback: the trust arcs in
+          // the Galaxy drew 0.5% of a circle for the whole fleet, and no
+          // agent's real trust was visible anywhere in the graph.
+          var raw = a.trustScore !== undefined ? a.trustScore
+            : (a.trust_score !== undefined ? a.trust_score
+              : (a.score !== undefined ? a.score : null));
+          // A score can arrive on a 0-1 scale from other sources. Anything
+          // at or below 1 with no band is one of those, not a near-zero
+          // trust score.
+          var band = a.trustBand || a.trust_band || a.band || null;
+          if (raw != null && raw <= 1 && !band) raw = raw * 100;
+          var known = raw != null && !isNaN(raw);
+          var score = known ? Math.max(0, Math.min(100, raw)) : null;
+          if (!band) band = score == null ? 'Unknown' : (score >= 90 ? 'Trusted' : score >= 70 ? 'Standard' : score >= 50 ? 'Monitored' : score >= 20 ? 'Cautious' : 'REVOKED');
           var color = TRUST_BAND_COLORS[band] || '#63C7D4';
-          trustScores[name] = { score: score, band: band, color: color };
+          trustScores[name] = { score: score, band: band, color: color, known: known };
           trustScores[name.toLowerCase()] = trustScores[name];
           var firstWord = name.split(/[\s-]+/)[0].toLowerCase();
           if (firstWord && firstWord !== name.toLowerCase()) trustScores[firstWord] = trustScores[name];
+          // And the "Agent"-suffixed form, which is how the Galaxy labels
+          // them: "Vex Agent" -> vex.
+          var bare = name.toLowerCase().replace(/\s+agent$/, '');
+          if (bare && bare !== name.toLowerCase()) trustScores[bare] = trustScores[name];
         });
       } else if (typeof agents === 'object') {
         Object.keys(agents).forEach(function(k) {
           var a = agents[k];
-          var score = a.trust_score !== undefined ? a.trust_score : (a.score !== undefined ? a.score : 0.5);
-          var band = a.trust_band || a.band || 'Standard';
+          var raw = a.trustScore !== undefined ? a.trustScore
+            : (a.trust_score !== undefined ? a.trust_score
+              : (a.score !== undefined ? a.score : null));
+          var band = a.trustBand || a.trust_band || a.band || null;
+          if (raw != null && raw <= 1 && !band) raw = raw * 100;
+          var known = raw != null && !isNaN(raw);
+          var score = known ? Math.max(0, Math.min(100, raw)) : null;
+          if (!band) band = score == null ? 'Unknown' : (score >= 90 ? 'Trusted' : score >= 70 ? 'Standard' : score >= 50 ? 'Monitored' : score >= 20 ? 'Cautious' : 'REVOKED');
           var color = TRUST_BAND_COLORS[band] || '#63C7D4';
-          trustScores[k] = { score: score, band: band, color: color };
+          trustScores[k] = { score: score, band: band, color: color, known: known };
           trustScores[k.toLowerCase()] = trustScores[k];
           var firstWord = k.split(/[\s-]+/)[0].toLowerCase();
           if (firstWord && firstWord !== k.toLowerCase()) trustScores[firstWord] = trustScores[k];
@@ -3855,6 +3933,477 @@ window.openBrowserPane = function(u, title) {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SIGNAL CONSTELLATION — the Training & Security picture.
+//
+// The tile this lives in used to show trust as one number and leave the
+// other three signals (burn, activity, graph) on other tiles. Four tiles to
+// hold in your head is the job a picture is meant to do, and the picture
+// turns out to be more interesting than the tiles: an agent that is trusted
+// AND expensive AND failing is a different animal from one that is trusted
+// and quiet, and no single number says so.
+//
+//   x     trust score          left is bad, right is good
+//   y     token burn           log scale, up is expensive
+//   r     activity volume      how much it does
+//   colour trust band          the same vocabulary as the rest of the page
+//   links who talks to whom, and who breaks together
+//
+// The placement is computed on the server so that two operators looking at
+// two screens are looking at the same picture.
+// ═══════════════════════════════════════════════════════════════════════════
+(function () {
+  var BAND_COLORS = {
+    Trusted: '#8FC97A', Standard: '#63C7D4', Monitored: '#DC8A1E',
+    Cautious: '#E4695A', SUSPENDED: '#9AA091', REVOKED: '#E4695A',
+  };
+  var data = null;
+  var nodes = [];
+  var links = [];
+  var hitPoints = [];
+  var hovered = null;
+  var anim = 0;
+
+  function el(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmtNum(n) {
+    if (n == null) return '—';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+  function fmtAge(iso) {
+    if (!iso) return 'never';
+    var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function resize() {
+    var canvas = el('constellation-canvas');
+    if (!canvas) return;
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.parentElement.getBoundingClientRect();
+    var w = Math.max(320, rect.width || 600);
+    var h = 230;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    canvas._w = w; canvas._h = h;
+  }
+
+  function draw() {
+    var canvas = el('constellation-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas._w || 600, h = canvas._h || 230;
+    var pad = { top: 14, bottom: 22, left: 34, right: 10 };
+    var iw = w - pad.left - pad.right;
+    var ih = h - pad.top - pad.bottom;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // The grid, and the trust divider. The trust axis is linear and
+    // labelled 0-100; the burn axis is log and labelled in tokens.
+    var trustLine = 70; // the engine's Trusted/Standard boundary
+    ctx.strokeStyle = '#111310';
+    ctx.lineWidth = 0.5;
+    ctx.font = '9px monospace';
+    ctx.fillStyle = '#3A3F31';
+    for (var g = 0; g <= 4; g++) {
+      var gy = pad.top + (ih * g / 4);
+      ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(w - pad.right, gy); ctx.stroke();
+      var gx = pad.left + (iw * g / 4);
+      ctx.beginPath(); ctx.moveTo(gx, pad.top); ctx.lineTo(gx, pad.top + ih); ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillText(String(g * 25), gx - 8, h - 8);
+    }
+    ctx.strokeStyle = 'rgba(201,162,39,0.16)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    var tx = pad.left + (trustLine / 100) * iw;
+    ctx.beginPath(); ctx.moveTo(tx, pad.top); ctx.lineTo(tx, pad.top + ih); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '8px monospace';
+    ctx.fillStyle = 'rgba(201,162,39,0.4)';
+    ctx.textAlign = 'left';
+    ctx.fillText('trusted', tx + 3, pad.top + 9);
+    ctx.textAlign = 'right';
+    ctx.fillText('watch', tx - 3, pad.top + 9);
+
+    // Zero-burn baseline. Everything with no token usage sits on it, and
+    // that is a fact worth seeing rather than a gap in the data.
+    ctx.strokeStyle = '#2A2E25';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, pad.top + ih);
+    ctx.lineTo(w - pad.right, pad.top + ih);
+    ctx.stroke();
+
+    // Quadrant guide. The picture has two axes that mean something on
+    // their own — trust and spend — and the four corners of those axes are
+    // four different situations: trusted and expensive, trusted and cheap,
+    // distrusted and expensive, distrusted and cheap. Drawing the crosshairs
+    // turns a scatter plot into a reading.
+    var medianBurn = 0;
+    var burning = nodes.filter(function (n) { return n.tokens > 0; });
+    if (burning.length) {
+      var toks = burning.map(function (n) { return n.tokens; }).sort(function (a, b) { return a - b; });
+      medianBurn = toks[Math.floor(toks.length / 2)] || 0;
+    }
+
+    var logMaxBurn = Math.log10(Math.max(1, ...nodes.map(function (n) { return n.tokens; })) + 1);
+    // The y axis is token burn on a log scale, so the gridlines are labelled
+    // with the token value they stand for. An unlabelled log axis is a
+    // mystery, and a mystery axis is worse than no axis.
+    ctx.font = '8px monospace';
+    ctx.fillStyle = '#3A3F31';
+    ctx.textAlign = 'right';
+    for (var gy2 = 0; gy2 <= 4; gy2++) {
+      var frac = 1 - (gy2 / 4);
+      var toksAt = Math.round(Math.pow(10, frac * logMaxBurn));
+      var yAt = pad.top + (ih * gy2 / 4);
+      ctx.fillText(fmtNum(toksAt), pad.left - 3, yAt + 3);
+    }
+    var medianY = medianBurn > 0 ? Math.log10(medianBurn + 1) / logMaxBurn : 0;
+    if (medianY > 0.02) {
+      var my = pad.top + ih - medianY * ih;
+      ctx.strokeStyle = 'rgba(99,199,212,0.14)';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(pad.left, my); ctx.lineTo(w - pad.right, my); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(99,199,212,0.4)';
+      ctx.textAlign = 'left';
+      ctx.fillText('median spender · ' + fmtNum(medianBurn) + ' tok', pad.left + 3, my - 3);
+    }
+
+    var px = function (x) { return pad.left + x * iw; };
+    var py = function (y) { return pad.top + ih - y * ih; };
+    // Display positions: the relaxed ones. The server's x/y are the truth
+    // and they are not overwritten.
+    var dx = function (n) { return n._dx != null ? n._dx : n.x; };
+    var dy = function (n) { return n._dy != null ? n._dy : n.y; };
+
+    // Links first, under the nodes. A link is a relationship; a node is a
+    // thing. The relationship is the less solid of the two, so it is drawn
+    // under.
+    hitPoints = [];
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      var a = nodeByName(l.source), b = nodeByName(l.target);
+      if (!a || !b) continue;
+      var pulse = 0.25 + 0.2 * Math.sin(anim / 700 + i);
+      var isHover = hovered && (hovered.agent === l.source || hovered.agent === l.target);
+      ctx.beginPath();
+      ctx.moveTo(px(dx(a)), py(dy(a)));
+      ctx.lineTo(px(dx(b)), py(dy(b)));
+      ctx.strokeStyle = l.kind === 'shared-fault'
+        ? 'rgba(228,106,90,' + (isHover ? 0.75 : 0.3 + pulse * 0.3) + ')'
+        : 'rgba(160,120,60,' + (isHover ? 0.65 : 0.16 + pulse * 0.2) + ')';
+      ctx.lineWidth = l.kind === 'shared-fault' ? (isHover ? 2 : 1.2) : (isHover ? 1.5 : 0.8);
+      ctx.stroke();
+    }
+
+    // Nodes.
+    var drawnLabels = [];
+    for (var n = 0; n < nodes.length; n++) {
+      var node = nodes[n];
+      var cx = px(dx(node)), cy = py(dy(node));
+      var color = BAND_COLORS[node.trust_band] || '#9AA091';
+      var isHover = hovered && hovered.agent === node.agent;
+      var r = node.r + (isHover ? 3 : 0);
+
+      if (node.kind === 'client') {
+        // A client is not an agent: hollow, so the two are never confused.
+        // Its radius is capped — the busiest clients do the most work, and
+        // an uncapped radius draws a circle the size of the plot and hides
+        // everything behind it.
+        var cr = Math.min(r, 11);
+        ctx.beginPath();
+        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+        ctx.fillStyle = color + '10';
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 2]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // A halo for the trusted-and-failing quadrant: an agent that is
+        // both trusted and erroring is the one worth seeing first.
+        if (node.errors > 0 && node.trust_score != null && node.trust_score >= 70) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(228,106,90,' + (0.35 + 0.25 * Math.sin(anim / 500 + n)) + ')';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = color + '33';
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isHover ? 2 : 1.2;
+        ctx.stroke();
+        // The trust score as an arc, the way the Galaxy draws it: the
+        // number the node's trust score is, drawn as the node.
+        if (node.trust_score != null) {
+          var end = -Math.PI / 2 + (Math.max(0, Math.min(100, node.trust_score)) / 100) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r * 0.6, -Math.PI / 2, end);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(1.5, r * 0.22), 0, Math.PI * 2);
+        ctx.fillStyle = '#ECEDE6';
+        ctx.fill();
+      }
+
+      // Label the ones a human would want to read, and only when the label
+      // has room: a constellation where every node is named is a list with
+      // circles in it.
+      if (node.kind === 'agent' && (isHover || node.r > 8)) {
+        var lw = ctx.measureText(node.agent.slice(0, 14)).width;
+        var lx = cx - lw / 2, ly = cy + r + 9;
+        var clash = false;
+        for (var li = 0; li < drawnLabels.length; li++) {
+          var dl = drawnLabels[li];
+          if (lx < dl.x + dl.w + 3 && lx + lw + 3 > dl.x && ly < dl.y + 10 && ly + 8 > dl.y - 8) { clash = true; break; }
+        }
+        if (!clash) {
+          drawnLabels.push({ x: lx, y: ly, w: lw });
+          ctx.font = (isHover ? 'bold ' : '') + '9px monospace';
+          ctx.fillStyle = isHover ? '#ECEDE6' : '#6C7263';
+          ctx.textAlign = 'left';
+          ctx.fillText(node.agent.slice(0, 14), lx, ly);
+        }
+      }
+
+      hitPoints.push({ node: node, x: cx, y: cy, r: r });
+    }
+  }
+
+  function nodeByName(name) {
+    for (var i = 0; i < nodes.length; i++) if (nodes[i].agent === name) return nodes[i];
+    return null;
+  }
+
+  // ── Overlap relaxation ───────────────────────────────────────────────────
+  //
+  // Two agents with the same trust and the same burn land on the same
+  // pixel, and one of them becomes invisible. A few passes of pushing
+  // overlapping nodes apart is enough — it is the same idea as the force
+  // layout in the Galaxy, done once instead of every frame.
+  //
+  // Two rules that this got wrong the first time:
+  //
+  //   the distance is measured in PIXELS and the correction is applied in
+  //   pixels too, because the two axes have different scales (the plot is
+  //   three times wider than it is tall) and a correction in normalised
+  //   units over-corrects the short axis by that factor — which flattened
+  //   every node onto the baseline;
+  //
+  //   and the relaxation writes to DISPLAY positions, never to the
+  //   server's numbers, so a picture that is re-rendered every thirty
+  //   seconds does not drift further apart each time.
+  function relax() {
+    var canvas = el('constellation-canvas');
+    var w = (canvas && canvas._w) || 600, h = (canvas && canvas._h) || 230;
+    var pad = { top: 14, bottom: 22, left: 34, right: 10 };
+    var iw = w - pad.left - pad.right;
+    var ih = h - pad.top - pad.bottom;
+
+    var placed = nodes.map(function (n) {
+      return { x: n.x, y: n.y, dx: n.x, dy: n.y, r: n.r, node: n };
+    });
+    for (var pass = 0; pass < 30; pass++) {
+      var moved = false;
+      for (var i = 0; i < placed.length; i++) {
+        for (var j = i + 1; j < placed.length; j++) {
+          var a = placed[i], b = placed[j];
+          var dxpx = (b.dx - a.dx) * iw;
+          var dypx = (b.dy - a.dy) * ih;
+          var dist = Math.sqrt(dxpx * dxpx + dypx * dypx);
+          var min = a.r + b.r + 3;
+          if (dist >= min) continue;
+          if (dist < 0.001) { dxpx = (i % 2 ? 1 : -1); dypx = 0; dist = 1; }
+          var pushPx = (min - dist) / 2;
+          var ux = dxpx / dist, uy = dypx / dist;
+          a.dx -= (ux * pushPx) / iw; a.dy -= (uy * pushPx) / ih;
+          b.dx += (ux * pushPx) / iw; b.dy += (uy * pushPx) / ih;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    for (var k = 0; k < placed.length; k++) {
+      placed[k].node._dx = Math.max(0.01, Math.min(0.99, placed[k].dx));
+      placed[k].node._dy = Math.max(0.02, Math.min(0.99, placed[k].dy));
+    }
+  }
+
+  function render(d) {
+    data = d;
+    nodes = d.nodes || [];
+    links = d.links || [];
+    relax();
+    var meta = el('constellation-meta');
+    if (meta) {
+      meta.textContent = (d.totals ? d.totals.agents : nodes.length) + ' agents · '
+        + (d.totals ? d.totals.linked : 0) + ' linked · '
+        + (d.totals ? d.totals.failing : 0) + ' failing';
+    }
+
+    // Legend
+    var legend = el('constellation-legend');
+    if (legend) {
+      var parts = [];
+      var seen = {};
+      for (var i = 0; i < nodes.length; i++) {
+        var b = nodes[i].trust_band;
+        if (!b || seen[b]) continue;
+        seen[b] = true;
+        parts.push('<span style="color:' + (BAND_COLORS[b] || '#9AA091') + ';">● ' + esc(b) + '</span>');
+      }
+      parts.push('<span style="color:#9AA091;">○ client (no trust score)</span>');
+      parts.push('<span style="color:#E4695A;">— shared fault</span>');
+      legend.innerHTML = parts.join('');
+    }
+
+    // The list under the picture: the same signals as numbers, for the
+    // agents you actually want to read about.
+    var list = el('constellation-agents');
+    if (list) {
+      var rows = nodes.slice().sort(function (a, b) {
+        var av = (a.errors || 0) * 100 + (a.events || 0);
+        var bv = (b.errors || 0) * 100 + (b.events || 0);
+        return bv - av;
+      }).slice(0, 8);
+      list.innerHTML = rows.map(function (n) {
+        var color = BAND_COLORS[n.trust_band] || '#9AA091';
+        var slope = n.trust_slope;
+        var slopeTxt = slope == null ? '' :
+          (slope > 0.5 ? ' <span style="color:#8FC97A;">▲' + slope.toFixed(1) + '</span>'
+            : slope < -0.5 ? ' <span style="color:#E4695A;">▼' + Math.abs(slope).toFixed(1) + '</span>'
+              : ' <span style="color:#6C7263;">▬</span>');
+        return '<div style="display:grid;grid-template-columns:96px 1fr auto;gap:6px;align-items:center;padding:1px 0;border-bottom:1px solid rgba(255,255,255,0.03);">'
+          + '<span style="color:' + color + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(n.agent) + '">'
+          + (n.kind === 'client' ? '○ ' : '● ') + esc(n.agent.slice(0, 13)) + '</span>'
+          + '<span style="color:#9AA091;">'
+          + (n.trust_score != null ? 'trust ' + n.trust_score.toFixed(1) : 'trust —')
+          + ' · ' + fmtNum(n.tokens) + ' tok · ' + fmtNum(n.events) + ' ev'
+          + (n.errors ? ' · <span style="color:#E4695A;">' + n.errors + ' err</span>' : '')
+          + (n.connections ? ' · ' + n.connections + ' links' : '')
+          + '</span>'
+          + '<span style="color:#6C7263;">' + slopeTxt + '</span>'
+          + '</div>';
+      }).join('');
+    }
+
+    resize();
+    draw();
+  }
+
+  function load() {
+    window.apiFetch('/api/signal-constellation', { signal: AbortSignal.timeout(25000) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || d.error) return;
+        render(d);
+        // Wire the three rows that used to be static placeholders.
+        var a = el('sec-activity-count');
+        if (a) {
+          var total = (d.nodes || []).reduce(function (n, x) { return n + (x.events || 0); }, 0);
+          a.textContent = total.toLocaleString() + ' / 24h';
+          a.style.color = '#8FC97A';
+        }
+        var gate = el('sec-gate');
+        if (gate) { gate.textContent = '● fail-closed (policy)'; gate.style.color = '#8FC97A'; }
+      })
+      .catch(function (err) {
+        // Not silently. A swallowed error in a diagnostic panel is how a
+        // broken panel looks like an empty system.
+        console.warn('[constellation] load failed:', err && err.message);
+      });
+  }
+
+  function init() {
+    var canvas = el('constellation-canvas');
+    if (!canvas) return;
+    resize();
+    window.addEventListener('resize', function () { resize(); draw(); });
+
+    canvas.addEventListener('mousemove', function (e) {
+      var cr = canvas.getBoundingClientRect();
+      var mx = e.clientX - cr.left;
+      var my = e.clientY - cr.top;
+      var nearest = null, minDist = 14;
+      hitPoints.forEach(function (hp) {
+        var dx = mx - hp.x, dy = my - hp.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < hp.r + 6 && dist < minDist) { minDist = dist; nearest = hp; }
+      });
+      var tooltip = el('constellation-tooltip');
+      hovered = nearest ? nearest.node : null;
+      canvas.style.cursor = nearest ? 'pointer' : 'default';
+      if (nearest && tooltip) {
+        var n = nearest.node;
+        var html = '<b style="color:' + (BAND_COLORS[n.trust_band] || '#9AA091') + ';">' + esc(n.agent) + '</b>'
+          + (n.kind === 'client' ? ' <span style="color:#6C7263;">client</span>' : '');
+        if (n.trust_score != null) {
+          html += '<br>trust <b>' + n.trust_score.toFixed(1) + '</b> · ' + esc(n.trust_band || '?')
+            + (n.trust_slope ? ' (' + (n.trust_slope > 0 ? '+' : '') + n.trust_slope.toFixed(1) + ' / 7d)' : '');
+        } else {
+          html += '<br><span style="color:#6C7263;">no trust score on record</span>';
+        }
+        html += '<br>burn ' + fmtNum(n.tokens) + ' tok · ' + n.calls + ' calls · $' + (n.cost || 0).toFixed(4);
+        html += '<br>activity ' + n.events + ' ev' + (n.errors ? ' · <span style="color:#E4695A;">' + n.errors + ' failed</span>' : '');
+        if (n.connections) html += '<br>galaxy ' + n.connections + ' connections';
+        if (n.last_activity) html += '<br><span style="color:#6C7263;">last seen ' + fmtAge(n.last_activity) + '</span>';
+        tooltip.innerHTML = html;
+        tooltip.style.display = 'block';
+        tooltip.style.left = Math.min(nearest.x + 12, (canvas._w || 600) - 240) + 'px';
+        tooltip.style.top = Math.max(nearest.y - 40, 0) + 'px';
+      } else if (tooltip) {
+        tooltip.style.display = 'none';
+      }
+      draw();
+    });
+
+    canvas.addEventListener('mouseleave', function () {
+      hovered = null;
+      var tooltip = el('constellation-tooltip');
+      if (tooltip) tooltip.style.display = 'none';
+      draw();
+    });
+
+    // A slow animation, so a node that is failing pulses and the links
+    // breathe. This is the only motion in the tile: the picture is a
+    // readout, not a screensaver.
+    (function tick() {
+      anim++;
+      if (document.getElementById('constellation-canvas')) draw();
+      requestAnimationFrame(tick);
+    })();
+
+    load();
+    setInterval(load, 30000);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ACTIVITY INTELLIGENCE — the fullscreen board behind the Activity Log tile.
 //
 // What it shows, and why each piece is here:
@@ -3928,6 +4477,23 @@ window.openBrowserPane = function(u, title) {
     if (intelTimer) clearInterval(intelTimer);
     intelTimer = setInterval(function () { refreshIntel(false); }, 15000);
   };
+
+  // A deep link, so an agent can send the operator a URL that opens the
+  // board rather than a description of it. "?intel=1" on the dashboard.
+  //
+  // It waits for the document: dashboard.js is loaded BEFORE the overlay
+  // markup, so at parse time there is no #intel-overlay to open, and a
+  // deep link that silently does nothing is worse than no deep link.
+  function openFromDeepLink() {
+    try {
+      if (/(?:^|[?&])intel=1\b/.test(window.location.search)) window.openActivityIntel();
+    } catch (e) { /* a malformed URL is not worth breaking the page over */ }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', openFromDeepLink);
+  } else {
+    openFromDeepLink();
+  }
   window.closeActivityIntel = function () {
     var overlay = el('intel-overlay');
     if (overlay) overlay.classList.remove('open');
@@ -4182,8 +4748,35 @@ window.openBrowserPane = function(u, title) {
     var host = el('intel-errors');
     if (!host) return;
     var errs = d.errors || [];
-    if (!errs.length) { setHtml('intel-errors', '<div class="intel-empty">No errors in this window.</div>'); return; }
-    var html = errs.slice(0, 16).map(function (e) {
+    var html = '';
+
+    // Refusals first. A request the relay said no to on purpose — a path
+    // that does not exist, a file that is not on an allowlist — is not a
+    // fault, and it was never ours to fix. It is security signal: somebody
+    // is asking for /.env. Shown here, labelled as what it is, so it stops
+    // looking like something broken.
+    var refusals = d.refusals || { total: 0, by_reason: {}, paths: [] };
+    if (refusals.total) {
+      var reasons = Object.keys(refusals.by_reason || {}).map(function (r) {
+        return esc(r.replace(/-/g, ' ')) + ' ' + refusals.by_reason[r];
+      }).join(' · ');
+      html += '<div style="border:1px solid #2A2E25;border-left:2px solid #63C7D4;border-radius:4px;padding:4px 6px;margin-bottom:6px;">'
+        + '<div style="color:#63C7D4;font-size:0.55rem;">🛡️ <b>' + refusals.total + '</b> refused (not faults)</div>'
+        + '<div style="color:#6C7263;font-size:0.5rem;">' + reasons + '</div>';
+      (refusals.paths || []).slice(0, 4).forEach(function (p) {
+        html += '<div style="color:#9AA091;font-size:0.5rem;font-family:\'Space Mono\',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          + esc(String(p.path).slice(0, 60)) + ' · ' + p.hits + '× · ' + p.sources + ' src</div>';
+      });
+      html += '</div>';
+    }
+
+    if (!errs.length) {
+      html += '<div class="intel-empty">No faults in this window.</div>';
+      setHtml('intel-errors', html);
+      return;
+    }
+
+    html += errs.slice(0, 16).map(function (e) {
       var owner = (e.files && e.files.length) ? e.files[0] : null;
       var ver = e.file_version
         ? '<span class="intel-badge" title="the version of this file that was live when the error fired' + (e.file_version.estimated ? ' (estimated — watching started later)' : '') + '">@ ' + esc(e.file_version.version || '?')
@@ -4197,6 +4790,7 @@ window.openBrowserPane = function(u, title) {
         + '<span class="intel-num">' + fmtAge(e.last_at) + '</span>'
         + '</div>';
     }).join('');
+
     var unresolved = errs.filter(function (e) { return !(e.files && e.files.length); }).length;
     if (unresolved) {
       html += '<div class="intel-empty" style="margin-top:4px;">' + unresolved + ' of these have no watched file owning the route.</div>';

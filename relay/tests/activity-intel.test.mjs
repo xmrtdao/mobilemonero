@@ -108,7 +108,7 @@ section('versions: the file that owns a route, and the version that was live');
 section('the endpoints are wired');
 {
   const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-  for (const route of ['/api/log-intel', '/api/ship-logs', '/api/infra-files']) {
+  for (const route of ['/api/log-intel', '/api/ship-logs', '/api/infra-files', '/api/signal-constellation']) {
     check(`${route} is registered`, server.includes(`'${route}'`), route);
   }
   check('the activity log returns the metadata column',
@@ -121,6 +121,96 @@ section('the endpoints are wired');
   check('the intel module classifies clients', logIntel.includes('export function classifyPath'));
   check('the intel module counts live traffic', logIntel.includes('export function recordTraffic'));
   check('the intel module reads the ship logs', logIntel.includes('export async function scanShipLogs'));
+}
+
+section('agents can read the intelligence themselves');
+{
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  check('there is a tool for it', server.includes("'activity-intel': async"), 'no tool');
+  check('the tool is described for the model',
+    server.includes("'activity-intel': 'The activity intelligence"), 'no description');
+  const auth = readFileSync(new URL('../lib/agent-auth.mjs', import.meta.url), 'utf8');
+  check('the tool is available to the fleet, not to the public',
+    /'activity-intel': TRUST_LEVELS\.TRUSTED/.test(auth),
+    (auth.match(/'activity-intel': TRUST_LEVELS\.\w+/) || [])[0]);
+  check('the tool is not CORE (which would lock agents out)',
+    !/'activity-intel': TRUST_LEVELS\.CORE/.test(auth));
+}
+
+section('Alice watches the faults, not just the services');
+{
+  const alice = readFileSync(new URL('../alice.mjs', import.meta.url), 'utf8');
+  check('Alice reads the activity intelligence', alice.includes('checkActivityIntelligence'));
+  check('she runs it in her cycle', /await checkActivityIntelligence\(\)/.test(alice));
+  check('she says them in fleet chat', /postToFleetChat\(msg\)/.test(alice));
+  check('she opens a task for the worst one',
+    /\/api\/suite\/tasks/.test(alice) && /Fix recurring fault/.test(alice));
+  check('she only reports faults that recur',
+    /\(e\.count \|\| 0\) >= 2/.test(alice));
+  check('she only reports faults that are still happening',
+    /!e\.stale/.test(alice));
+  check('she remembers what she has already said',
+    /state\.reportedErrors/.test(alice));
+  check('the message names the file version that was live',
+    /file_version/.test(alice));
+}
+
+section('the constellation correlates the four signals');
+{
+  // The constellation is a picture of the LIVE fleet: trust events, token
+  // burn, activity and the graph. The scratch database the suite runs
+  // against is schema-only — no rows at all — so asserting that the picture
+  // has content there asserts that the fleet is empty.
+  //
+  // So the content checks read the live database, the same way the
+  // cron-classify test reads cron.job for the schedule that actually runs.
+  const LIVE_URL = process.env.LIVE_DATABASE_URL
+    || 'postgres://postgres@127.0.0.1:5432/xmrt_suite';
+  const { buildConstellation } = await import('../lib/constellation.mjs');
+
+  let c = null;
+  let liveError = null;
+  try {
+    const { Pool } = await import('pg');
+    const live = new Pool({ connectionString: LIVE_URL, connectionTimeoutMillis: 5000 });
+    try {
+      c = await buildConstellation({ includeGraph: false, queryFn: (sql, params) => live.query(sql, params) });
+    } finally {
+      await live.end().catch(() => {});
+    }
+  } catch (e) {
+    liveError = e.message;
+  }
+
+  if (!c) {
+    console.log('  SKIP  the constellation checks — the live database is not reachable: ' + liveError);
+  } else {
+    check('it produces nodes', (c.nodes || []).length > 0, (c.nodes || []).length);
+    check('it produces links', Array.isArray(c.links));
+    const node = c.nodes.find((n) => n.kind === 'agent');
+    check('a node carries trust, burn, activity and graph',
+      node && 'trust_score' in node && 'tokens' in node && 'events' in node && 'connections' in node, node);
+    check('positions are normalised to the plot',
+      c.nodes.every((n) => n.x >= 0 && n.x <= 1 && n.y >= 0 && n.y <= 1));
+    check('an agent with no trust score says so',
+      c.nodes.some((n) => n.unknown_trust) || c.nodes.every((n) => n.trust_score != null));
+    check('clients are not agents',
+      c.nodes.every((n) => n.kind === 'agent' || n.kind === 'client'));
+    check('a client never carries a trust score',
+      c.nodes.filter((n) => n.kind === 'client').every((n) => n.trust_score == null));
+    check('the burn axis uses the real token counts',
+      c.nodes.some((n) => n.tokens > 0), 'nobody is burning anything');
+  }
+
+  const dash = readFileSync(new URL('../public/dashboard.js', import.meta.url), 'utf8');
+  check('the dashboard draws it', dash.includes('constellation-canvas'));
+  check('the picture has both axes', dash.includes("'trust ▶'") === false && dash.includes("'watch'"));
+  check('the nodes are relaxed apart so none is hidden', dash.includes('function relax()'));
+  check('the relaxation measures in pixels', /dxpx/.test(dash));
+  check('the relaxation does not overwrite the server numbers',
+    /_dx != null/.test(dash) && !/placed\[k\]\.node\.x =/.test(dash));
+  check('a failure in the picture is not swallowed',
+    /console\.warn\('\[constellation\] load failed/.test(dash));
 }
 
 section('the dashboard renders it');

@@ -12,6 +12,19 @@
  * there is ONE way to escalate a task: the agent calls it, and this calls it.
  * The tool sends once per task, so running this every few minutes is safe -
  * a task already waiting on somebody is not emailed again.
+ *
+ * A TASK THAT HAS BEEN ANSWERED IS NOT ASKED AGAIN
+ * -------------------------------------------------
+ * The query below excludes any task whose escalation has been answered. It
+ * used to leave them in, and that was the loop: the answer CLOSES the
+ * escalation, so "is there an open escalation?" goes from true to false the
+ * moment the person replies - and the tool read that as "nobody has been
+ * asked" and asked again. One task was asked nine times in an afternoon, and
+ * every one of those answers was already in hand.
+ *
+ * A task with an answer is not waiting for a person. It is waiting for the
+ * fleet to act on what the person said, and asking again cannot help with
+ * that.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,6 +67,11 @@ async function main() {
       WHERE status = 'REVIEW'
         AND (metadata->>'terminal_reason' ILIKE '%awaiting%'
              OR metadata->>'terminal_reason' ILIKE '%confirm%')
+        AND NOT EXISTS (
+          SELECT 1 FROM app.task_escalations e
+           WHERE e.task_id = app.tasks.id
+             AND e.answered_at IS NOT NULL
+        )
       ORDER BY updated_at ASC
       LIMIT 10`);
 

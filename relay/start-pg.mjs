@@ -33,6 +33,42 @@ console.log(`[start-pg] starting postgres: ${PG_BIN} -D ${PG_DATA} -p 5432`);
 
 // Stale postmaster.pid cleanup
 const PID_FILE = join(PG_DATA, 'postmaster.pid');
+// ── Make sure the person who owns the machine can log in ──────────────────
+//
+// The cluster has one superuser, `postgres`, and every connection string in
+// this project names it. Anything that connects WITHOUT naming a user falls
+// back to the OS username and is told the role does not exist — which is
+// what a test run without a connection string, a `psql` in a terminal, and
+// pgAdmin all hit.
+//
+// So the role is made here, at boot, where it survives the cluster being
+// re-initialised. A role created by hand lasts until the next rebuild, and
+// a role that only exists until the next rebuild is a role that will bite
+// again.
+//
+// It must never be able to take the database down: every failure here is
+// logged and swallowed. A missing role is an inconvenience; a boot script
+// that throws is an outage.
+async function ensureOperatorRole() {
+  try {
+    const { ensureOsUserRole } = await import('./lib/pg-role.mjs');
+    // Postgres needs a moment before it accepts connections. Retry for a
+    // while, because the alternative is a boot race: the role is missing on
+    // the one boot where the cluster was rebuilt.
+    for (let attempt = 1; attempt <= 12; attempt++) {
+      const result = await ensureOsUserRole({ logger: console });
+      if (result.ok) return;
+      if (attempt === 12) {
+        console.warn(`[start-pg] could not create the operator role: ${result.reason}`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (e) {
+    console.warn(`[start-pg] operator role check failed: ${e.message}`);
+  }
+}
+
 if (existsSync(PID_FILE)) {
   try {
     const fs = await import('node:fs');
@@ -42,6 +78,11 @@ if (existsSync(PID_FILE)) {
         process.kill(pid, 0);
         // process exists — don't start a second one
         console.log(`[start-pg] postgres already running (pid ${pid}), exiting`);
+        // The cluster is already up, so the operator's role can be ensured
+        // right now. This path is the one that runs when the supervisor
+        // re-launches the wrapper around a live cluster, and it is exactly
+        // the path that would otherwise skip the role.
+        await ensureOperatorRole();
         process.exit(0);
       } catch {
         // pid is dead — clean stale file
@@ -90,7 +131,12 @@ process.on('SIGINT', () => { try { child.kill('SIGINT'); } catch {} process.exit
 process.on('SIGTERM', () => { try { child.kill('SIGTERM'); } catch {} process.exit(0); });
 
 // Keep the wrapper process alive until postgres exits
+// The child exited before we could hand it the operator's role — there is
+// nothing to do.
 child.on('exit', (code, signal) => {
   console.log(`[start-pg] postgres exited (code=${code}, signal=${signal})`);
   process.exit(code || 0);
 });
+
+ensureOperatorRole();
+
