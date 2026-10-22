@@ -102,7 +102,15 @@ section('versions: the file that owns a route, and the version that was live');
   const owner = findRouteOwner('/api/suite/tasks/ec372cfc');
   check('a parameterised route is matched', owner && owner.file === 'relay/server.js', owner);
   check('an exact route is matched', findRouteOwner('/tools/run')?.file === 'relay/server.js');
-  check('a route nobody owns has no owner', findRouteOwner('/api/alice/tick') === null);
+
+  // The tick used to be the example of a route nobody owns, because nothing
+  // registered it: the relay's own Alice loop posted to it every hour and
+  // every post was a 404 in our own namespace, which the board counted as a
+  // fault sixteen times an hour. The route is registered now, so the example
+  // has to be a route that really is unowned — and the tick has an owner.
+  check('a route nobody owns has no owner', findRouteOwner('/api/nobody/registered/this') === null);
+  check('the tick route has an owner', findRouteOwner('/api/alice/tick')?.file === 'relay/server.js',
+    findRouteOwner('/api/alice/tick'));
 }
 
 section('the endpoints are wired');

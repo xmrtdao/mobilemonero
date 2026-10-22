@@ -19826,6 +19826,189 @@ registerUniversityBridge(app, {
   logActivity: typeof logActivity === 'function' ? logActivity : () => {},
 });
 
+// ── Alice's tick ────────────────────────────────────────────────────────────
+//
+// THE ROUTE THAT WAS NEVER WIRED UP.
+//
+// The relay runs its own copy of Alice's loop (relay/lib/consolidate.mjs),
+// and that loop has been posting to POST /api/alice/tick every hour — and at
+// every relay restart, which is often — since the consolidation landed. The
+// route did not exist. Every one of those posts was a 404 inside the
+// relay's own namespace, which the relay counts as a FAULT and not as a
+// refusal, so the Activity Intelligence board showed "POST /api/alice/tick →
+// 404" sixteen times an hour and Alice opened a task about it.
+//
+// What the tick DOES
+//
+// It runs Alice's cycle — the same cycle the supervised daemon runs, in the
+// same file (relay/alice.mjs), in its own process. Not a second
+// implementation of the cycle, and not a stub: the tick is the daemon's
+// cycle, run once, on demand.
+//
+// Whether a cycle is DUE is not decided here. relay/lib/alice-cycle.mjs keeps
+// one ledger of the last cycle for the whole system, and both drivers ask
+// it. So a tick that arrives while the daemon cycled recently is SKIPPED,
+// and says so, rather than dispatching every pending task twice an hour and
+// mailing a human twice for one outage.
+//
+//   POST /api/alice/tick   ask for a cycle now.
+//                          202 — the cycle is running (or is not due).
+//                          200 — not due; the body says why and when the
+//                                next one is.
+//   GET  /api/alice/tick   the last cycle, and when the next one is due.
+const ALICE_TICK_SCRIPT = join(__dirname, 'alice.mjs');
+const ALICE_TICK_TIMEOUT_MS = 10 * 60 * 1000;
+
+// The tick this relay started, and how it went. It is here so that
+// GET /api/alice/tick can answer "did the thing I asked for actually
+// happen?" without anybody having to read a log file.
+let aliceTick = {
+  running: false,
+  ticket: null,
+  pid: null,
+  started_at: null,
+  finished_at: null,
+  exit_code: null,
+  result: null,
+  output: '',
+};
+
+// The tick's own result line, as printed by relay/alice.mjs --tick.
+function readAliceTickResult(output) {
+  const lines = String(output || '').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith('__ALICE_TICK__')) continue;
+    try { return JSON.parse(line.slice('__ALICE_TICK__'.length)); } catch { return null; }
+  }
+  return null;
+}
+
+app.post('/api/alice/tick', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/alice/tick');
+
+  const { decideCycle, nextDueAt, minGapMs } = await import('./lib/alice-cycle.mjs');
+
+  // One tick at a time in this relay. A second request while one is in
+  // flight is not an error — the work is already being done — but it is not
+  // a second cycle either.
+  if (aliceTick.running) {
+    return res.status(202).json({
+      ok: true,
+      status: 'already-running',
+      ran: false,
+      reason: 'a tick is already running in this relay',
+      ticket: aliceTick.ticket,
+      started_at: aliceTick.started_at,
+    });
+  }
+
+  // Is a cycle due? The ledger answers, and it is the same ledger the
+  // daemon asks, so the two of them cannot both decide to run.
+  const decision = decideCycle({ source: 'relay-tick' });
+  if (!decision.run) {
+    return res.status(200).json({
+      ok: true,
+      status: 'not-due',
+      ran: false,
+      reason: decision.reason,
+      last_cycle: decision.last,
+      next_due_at: nextDueAt(),
+      min_gap_minutes: Math.round(minGapMs() / 60000),
+    });
+  }
+
+  const ticket = `tick-${Date.now().toString(36)}`;
+  aliceTick = {
+    running: true, ticket, pid: null,
+    started_at: new Date().toISOString(),
+    finished_at: null, exit_code: null, result: null, output: '',
+  };
+
+  let child;
+  try {
+    child = spawn(process.execPath, [ALICE_TICK_SCRIPT, '--tick'], {
+      cwd: join(__dirname, '..'),
+      env: process.env,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    aliceTick = { ...aliceTick, running: false, finished_at: new Date().toISOString(), exit_code: -1, output: String(e.message) };
+    return res.status(500).json({ ok: false, status: 'failed-to-start', error: e.message });
+  }
+
+  aliceTick.pid = child.pid;
+  const chunks = [];
+  const collect = (buf) => {
+    chunks.push(buf.toString());
+    if (chunks.join('').length > 64_000) chunks.splice(0, chunks.length - 32);
+  };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
+
+  // A cycle that hangs must not take the relay with it, and it must not
+  // leave a "running" mark behind for ever.
+  const killer = setTimeout(() => {
+    console.warn(`[alice-tick] ${ticket} exceeded ${ALICE_TICK_TIMEOUT_MS}ms — killing it`);
+    try { child.kill(); } catch { /* already gone */ }
+  }, ALICE_TICK_TIMEOUT_MS);
+
+  child.on('close', (code) => {
+    clearTimeout(killer);
+    const output = chunks.join('');
+    const result = readAliceTickResult(output);
+    aliceTick = {
+      running: false,
+      ticket,
+      pid: child.pid,
+      started_at: aliceTick.started_at,
+      finished_at: new Date().toISOString(),
+      exit_code: code,
+      result,
+      output: output.slice(-4000),
+    };
+    console.log(`[alice-tick] ${ticket} finished (exit ${code})${result ? ` — ${result.ran ? 'ran' : 'skipped'}: ${result.reason || 'ok'}` : ' — no result line'}`);
+    logToDb(
+      'alice-tick',
+      `Alice tick ${ticket}`,
+      code === 0 ? 'completed' : 'failed',
+      result
+        ? (result.ran ? `cycle ${result.cycle} ran in ${result.duration_ms}ms` : `not due — ${result.reason}`)
+        : `the tick process exited with code ${code}`,
+      { ticket, exit_code: code, ran: result ? !!result.ran : null, duration_ms: result ? result.duration_ms : null },
+      'alice-daemon'
+    ).catch(() => {});
+  });
+
+  res.status(202).json({
+    ok: true,
+    status: 'started',
+    accepted: true,
+    ticket,
+    pid: child.pid,
+    started_at: aliceTick.started_at,
+    status_url: '/api/alice/tick',
+    note: 'the cycle runs in its own process; GET /api/alice/tick shows what it did',
+  });
+});
+
+app.get('/api/alice/tick', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  trackRequest('/api/alice/tick');
+  const { readCycleMark, nextDueAt, minGapMs } = await import('./lib/alice-cycle.mjs');
+  const mark = readCycleMark();
+  res.json({
+    ok: true,
+    running: aliceTick.running,
+    last_cycle: mark,
+    last_tick: aliceTick,
+    next_due_at: nextDueAt(),
+    min_gap_minutes: Math.round(minGapMs() / 60000),
+  });
+});
+
 // ── The end of the road: a path that does not exist ───────────────────────
 //
 // Express's default 404 is a bare HTML page, and — this is the part that
@@ -19844,8 +20027,11 @@ registerUniversityBridge(app, {
 //   In one of the relay's OWN namespaces — /api, /tools, /state, /cron,
 //   /webhook, /suite — a 404 means something in this system is asking for
 //   something that is not there. That is OUR fault and it stays a fault:
-//   the Alice daemon posting to /api/alice/tick, which does not exist, is
-//   a broken client and must be visible as one.
+//   a client of ours posting to a route we never wired up is a broken
+//   client and must be visible as one. (It was this line that made the
+//   unwired /api/alice/tick visible at all: the relay's own Alice loop had
+//   been posting to it every hour, and every post was a 404 in our own
+//   namespace. The route is wired now, and that fault is gone.)
 //
 //   Anywhere else, the path was never ours to serve. A request for /.env
 //   or /.git/config or /wp-admin is somebody else's curiosity, correctly

@@ -77,7 +77,13 @@ export async function registerMcpTools(toolHandlers) {
 
 /**
  * Start Alice's daemon loop as a setInterval in the relay process.
- * Calls Alice's /api/alice/tick endpoint instead of importing alice.mjs directly.
+ * Calls Alice's /api/alice/tick endpoint instead of importing alice.mjs
+ * directly.
+ *
+ * The endpoint answers with what it did, and this logs that answer. It used
+ * to log only the status code, so "404" was the whole story the relay had
+ * about its own Alice loop for months: the route was never wired up, and
+ * every post this made was a fault in the relay's own namespace.
  */
 export function startAliceDaemon() {
   const ALICE_CYCLE_MS = 60 * 60 * 1000; // 60 min default
@@ -86,11 +92,22 @@ export function startAliceDaemon() {
     try {
       const res = await fetch('http://127.0.0.1:8080/api/alice/tick', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(30000),
       });
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.log(`[consolidate] Alice tick returned HTTP ${res.status}`);
+        console.log(`[consolidate] Alice tick returned HTTP ${res.status}: ${body.error || body.reason || 'no detail'}`);
+        return;
       }
+      // The tick is not a promise that a cycle ran: it is not due until the
+      // ledger says so, and it says so in the answer. Log the answer.
+      const what = body.status === 'not-due'
+        ? `not due — ${body.reason}`
+        : body.status === 'already-running'
+          ? 'a tick was already running'
+          : `started (${body.ticket || 'no ticket'})`;
+      console.log(`[consolidate] Alice tick: ${what}`);
     } catch (e) {
       console.log('[consolidate] Alice tick error:', e.message);
     }

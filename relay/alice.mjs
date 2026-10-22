@@ -26,6 +26,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ollamaChat } from './tools/ollama-chat.mjs';
+import { decideCycle, markCycleStart, markCycleEnd, minGapMs } from './lib/alice-cycle.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -61,6 +62,11 @@ const MUAPI_KEY = process.env.MUAPI_API_KEY || '';
 const RELAY_PORT = 8080;
 const ALICE_ID = 'alice-daemon';
 const ALICE_NAME = 'Alice';
+
+// Which driver is running this process. The daemon is 'daemon'; a tick run
+// by the relay is 'relay-tick'. It is recorded in the cycle ledger, so the
+// answer to "who cycled?" is in the ledger and not in a guess.
+let cycleSource = 'daemon';
 
 // ── State ─────────────────────────────────────────────────
 function loadState() {
@@ -670,7 +676,17 @@ async function checkActivityIntelligence() {
 }
 
 // ── Daemon Loop ───────────────────────────────────────────
-async function daemonLoop() {
+//
+// `once: true` runs ONE cycle and returns. That is the tick: the relay asks
+// for it over POST /api/alice/tick, and the cycle runs in its own process, so
+// the daemon's memory and the relay's memory are never the same process.
+//
+// The two drivers share one ledger (relay/lib/alice-cycle.mjs). A tick that
+// arrives while the daemon cycled recently is SKIPPED, and says so, rather
+// than doing the daemon's work a second time: the cycle dispatches tasks,
+// parses email and mails a human when a service is down, and twice an hour
+// is not the same as once an hour.
+async function daemonLoop({ once = false, source = 'daemon' } = {}) {
   log('========================================');
   log('Alice Sidecar Agent starting...');
   log('Reports to: Isabella Rodriguez (CMO)');
@@ -680,7 +696,10 @@ async function daemonLoop() {
   const state = loadState();
   
   // Step 1: Initial service check
-  await checkServices();
+  //
+  // A tick does not do this. The cycle checks the services itself, and doing
+  // it twice would mean two "the relay is DOWN" emails for one outage.
+  if (!once) await checkServices();
   
   // Step 2: Send heartbeat to relay
   try {
@@ -696,6 +715,15 @@ async function daemonLoop() {
   // Step 4: Main loop
   let cycle = 0;
   const runCycle = async () => {
+    // Is a cycle due at all? The ledger is shared with the other driver, so
+    // this is the one place that decides - not the caller, and not a guess.
+    const decision = decideCycle({ source });
+    if (!decision.run) {
+      log(`[CYCLE] Skipped — ${decision.reason}`);
+      return { ok: true, ran: false, source, reason: decision.reason, last_cycle: decision.last };
+    }
+    const startedAt = Date.now();
+    markCycleStart({ source });
     cycle++;
     log(`[CYCLE ${cycle}] Starting...`);
     
@@ -857,13 +885,20 @@ async function daemonLoop() {
     }
 
     log(`[CYCLE ${cycle}] Complete. Next in 60 minutes.`);
+    const duration_ms = Date.now() - startedAt;
+    markCycleEnd({ source, ok: true, duration_ms, cycle });
+    return { ok: true, ran: true, source, cycle, duration_ms };
   };
   
   // Run first cycle immediately
-  await runCycle();
+  const first = await runCycle();
+  
+  // A tick is one cycle and out. It leaves no timers behind, so the process
+  // finishes and the relay can read the result of what it asked for.
+  if (once) return first;
   
   // Then every 60 minutes
-  setInterval(runCycle, 60 * 60 * 1000);
+  setInterval(() => { runCycle().catch((e) => log(`[CYCLE] Error: ${e.message}`)); }, 60 * 60 * 1000);
   
   // Also check for mentions every 2 minutes (outside main cycle)
   setInterval(async () => {
@@ -930,6 +965,21 @@ async function main() {
     process.on('exit', () => { try { fs.unlinkSync(LOCK_FILE); } catch {} });
 
     await daemonLoop();
+  } else if (args.includes('--tick')) {
+    // ONE cycle, then out. This is what the relay's tick endpoint runs.
+    //
+    // The result is printed on the last line of stdout, prefixed, so the
+    // caller can read it without parsing the rest of the log:
+    //
+    //   __ALICE_TICK__{"ok":true,"ran":true,"cycle":1,"duration_ms":40122}
+    //
+    // A cycle that was not due says so, in the same line: `ran: false` and
+    // the reason. A tick that quietly did nothing and a tick that worked are
+    // not the same answer, and the caller is entitled to tell them apart.
+    cycleSource = 'relay-tick';
+    const result = await daemonLoop({ once: true, source: 'relay-tick' });
+    result.min_gap_minutes = Math.round(minGapMs() / 60000);
+    process.stdout.write(`__ALICE_TICK__${JSON.stringify(result)}\n`);
   } else {
     // One-shot: check services, print status
     await printStatus();
@@ -942,6 +992,12 @@ async function main() {
   }
 }
 
-main().catch(err => { console.error('Alice fatal:', err); process.exit(1); });
+main().catch(err => {
+  console.error('Alice fatal:', err);
+  // A cycle that died must not go on looking like a cycle that is still
+  // running, and it must not block the next one: a failure is not a stop.
+  markCycleEnd({ source: cycleSource, ok: false, error: err.message });
+  process.exit(1);
+});
 
 export { daemonLoop, checkServices, printStatus };
